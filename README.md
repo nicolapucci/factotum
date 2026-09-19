@@ -3,9 +3,9 @@
 A self-hosted voice assistant that answers from **your own documents** and from the **web**, performs
 **actions** on your devices, and runs on **the models you choose**.
 
-> Status: foundations done (Slice 0). The shared contracts, the authorization rules and the tooling
-> exist and are tested; the services are not built yet. See the roadmap in
-> [`docs/design.md`](docs/design.md).
+> Status: foundations (Slice 0) and the model gateway (Slice 1) are done. The gateway talks to
+> OpenAI, Anthropic, Gemini, Ollama and any OpenAI-compatible server behind one API; the other
+> services are not built yet. See the roadmap in [`docs/design.md`](docs/design.md).
 
 ## Principles
 
@@ -25,6 +25,7 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 | | |
 | --- | --- |
 | [`docs/design.md`](docs/design.md) | The design: architecture, identity and permissions, devices, skills, models, roadmap |
+| [`docs/model-gateway.md`](docs/model-gateway.md) | The model gateway: bindings, providers, structured output, streaming, API |
 | [`docs/decisions/`](docs/decisions/README.md) | Why the big decisions were taken |
 | [`docs/development.md`](docs/development.md) | Setup, the checks, layout, conventions |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreements for AI-assisted sessions |

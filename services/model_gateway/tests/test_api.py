@@ -1,5 +1,6 @@
 import json
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -11,6 +12,7 @@ from factotum.common.devauth import DEVICE_HEADER, SUBJECT_HEADER, DevAuthentica
 from factotum.contracts.chat import (
     ChatResult,
     ErrorEvent,
+    EventUnion,
     FinishEvent,
     FinishReason,
     TextDelta,
@@ -40,7 +42,13 @@ from factotum.contracts.errors import (
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.models import BindingOptions, ModelBinding, ModelRole, ProviderKind
 from factotum.contracts.testing import make_model_binding, make_tenant_id, make_user_id
-from factotum.model_gateway.api import MAX_BODY_BYTES, BodySizeLimit, create_app, status_for
+from factotum.model_gateway.api import (
+    MAX_BODY_BYTES,
+    BodySizeLimit,
+    _server_sent,
+    create_app,
+    status_for,
+)
 from factotum.model_gateway.bindings import InMemoryBindingRepository
 from factotum.model_gateway.core import ModelGateway
 from factotum.model_gateway.providers.base import EmbeddingBatch
@@ -369,6 +377,45 @@ class TestBodySizeLimit:
         was_reached, _ = await self.reached(10, {"type": "lifespan"})
 
         assert was_reached
+
+
+class Upstream:
+    """A provider stream that knows whether it was closed."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.events = self._events()
+
+    async def _events(self) -> AsyncGenerator[EventUnion]:
+        try:
+            yield TextDelta(text="a")
+            yield TextDelta(text="b")
+        finally:
+            self.closed = True
+
+
+class TestAClientThatGoesAway:
+    """A stream nobody reads any more must stop: it costs tokens."""
+
+    async def test_closing_the_response_body_closes_the_provider_stream(self) -> None:
+        upstream = Upstream()
+        body = _server_sent(await anext(upstream.events), upstream.events)
+
+        first = await anext(body)
+        await body.aclose()
+
+        assert first == 'data: {"type":"text_delta","text":"a"}\n\n'
+        assert upstream.closed
+
+    async def test_reading_it_to_the_end_closes_it_too(self) -> None:
+        upstream = Upstream()
+
+        chunks = [
+            chunk async for chunk in _server_sent(await anext(upstream.events), upstream.events)
+        ]
+
+        assert len(chunks) == 2
+        assert upstream.closed
 
 
 class TestStreaming:

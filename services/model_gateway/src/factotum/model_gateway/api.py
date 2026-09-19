@@ -8,7 +8,7 @@ configuration's (5xx).
 
 import logging
 import math
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from typing import Annotated, Any, Protocol
 
 from fastapi import Depends, FastAPI, Request, Response
@@ -112,7 +112,7 @@ def _frame(event: EventUnion) -> str:
 
 async def _server_sent(
     first: EventUnion | None, rest: AsyncGenerator[EventUnion]
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str]:
     try:
         if first is not None:
             yield _frame(first)

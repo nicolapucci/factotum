@@ -24,7 +24,9 @@ uv run ruff format && uv run ruff check
 uv run mypy
 uv run pytest                          # unit tests only need no Docker
 uv run pytest -m integration           # needs Docker services (none yet)
-FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama, opt-in; see docs/model-gateway.md
+FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
+FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```
 
 On Windows `uv` was installed with winget; a shell started before that may not have it on its PATH.
@@ -61,3 +63,7 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - YAML 1.1 reads an unquoted `on` / `off` as a boolean; quote them in skill manifests.
 - Python's `ipaddress` calls `::1` reserved; the URL guard checks loopback first.
 - Write files with LF line endings; `.gitattributes` normalizes them anyway.
+- Provider wire formats (`services/model_gateway/providers/`) come from the provider's own
+  documentation and types, never from memory. An OpenAI-compatible server is not OpenAI: declare what
+  differs on the binding rather than assuming.
+- `pytest.raises(match=...)` takes a regular expression: escape the dots (ruff's RUF043 enforces it).

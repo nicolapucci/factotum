@@ -1,8 +1,10 @@
 # Factotum: design (v1)
 
-Status: **Slice 0 is implemented** (foundations and shared contracts). The services are not started
-yet. Sections say whether something is *implemented* or *planned*. The reasons behind the biggest
-decisions live in [`decisions/`](decisions/README.md).
+Status: **Slices 0 and 1 are implemented**: the foundations and shared contracts, and the
+`model-gateway` service. The other services are not started yet. Sections say whether something is
+*implemented* or *planned*. The reasons behind the biggest decisions live in
+[`decisions/`](decisions/README.md); the gateway has its own document,
+[`model-gateway.md`](model-gateway.md).
 
 ## 1. What Factotum is
 
@@ -206,7 +208,10 @@ Markdown instructions for the model, or notes for humans.
 
 ## 7. Models
 
-*Planned*, apart from the URL guard (*implemented*: `factotum.common.urlguard`).
+*Implemented* for chat and embeddings, in `services/model_gateway`: how it works, how to configure
+it and what each provider needs are in [`model-gateway.md`](model-gateway.md). What follows is the
+design it was built from. *Planned* still: speech, reranking and web search roles, encrypted secrets
+at rest and bindings managed by the hub.
 
 - Services ask for a **role**, never a model: `chat.main`, `chat.fast`, `embedding`, `stt`, `tts`,
   `rerank`, `web_search`. Each user (or the tenant) binds a role to a **binding**: provider kind,
@@ -223,7 +228,8 @@ Markdown instructions for the model, or notes for humans.
   the user, because model catalogues change constantly.
 - **Secrets**: plaintext only in the gateway's memory, encrypted at rest, write-only APIs, always in
   headers and never in URLs, redacted from every log (*implemented*: `factotum.common.redaction`
-  and `factotum.common.logs`).
+  and `factotum.common.logs`; for now a binding names an environment variable, and the gateway
+  reads the key from it).
 - **Data policy**: each collection is `local_only` or `external_allowed`, each binding `local` or
   `remote`. A `local_only` collection is embedded only with a `local` binding; the conversation
   service does not put `local_only` excerpts in the prompt of a `remote` chat binding; the gateway
@@ -248,8 +254,9 @@ iterative index scans, which stay behind the `VectorStore` interface.
 
 ## 9. Deployment
 
-- **Compose** (*implemented for Postgres*): pinned images, no default database password, ports
-  published on loopback only. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set it
+- **Compose** (*implemented for Postgres and the model gateway*): pinned images, no default
+  database password, ports published on loopback only. The gateway image is built from the repository
+  root, runs as a non-root user, and starts only with `--profile services`. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set it
   disables developer conveniences instead of enabling them.
 - `FACTOTUM_TENANT_MODE`: `single_tenant` (on-premise: one tenant and its admin created at first
   start) or `multi_tenant` (cloud). The code paths are the same: `tenant_id` always comes from the
@@ -276,8 +283,8 @@ iterative index scans, which stay behind the `VectorStore` interface.
 | # | Content | Status |
 | --- | --- | --- |
 | 0 | Foundations: workspace, tooling, CI, shared contracts, `authorize()`, redaction and logging, settings, URL guard, `SystemDevice`, compose with Postgres | done |
-| 1 | `model-gateway` | next |
-| 2 | `knowledge` | |
+| 1 | `model-gateway`: five adapters, structured output, streaming, retries, data-locality policy, HTTP API, container image | done |
+| 2 | `knowledge` | next |
 | 3 | `conversation` (text) | |
 | 4 | `edge` and a terminal client with device profiles | |
 | 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner) | |
@@ -289,6 +296,12 @@ iterative index scans, which stay behind the `VectorStore` interface.
 | 10 | Cloud gates (optional) | |
 
 ## 12. Open questions
+
+- Asymmetric embedding models want a different prefix or task type for a query and for a document
+  (`search_query:` and `search_document:`, Gemini's task types). The gateway does not model it yet;
+  the knowledge service will decide where it belongs.
+- Token counting: the gateway leaves it to the provider (`context_too_long`) and to the caller, who
+  budgets with the profile. A tokenizer per model family is possible if that proves too coarse.
 
 - Which mechanism approves risky operations (an email to the owner, a spoken one-time code, a push
   notification, something else), and which actions require it by default.

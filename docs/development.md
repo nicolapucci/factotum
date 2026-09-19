@@ -30,7 +30,9 @@ pre-push` (ruff and mypy on commit, the unit tests on push).
 libs/contracts/   pydantic contracts shared by every service: the single source of truth
 libs/common/      authorization, redaction and logging, settings, the SSRF guard, development auth
 libs/devices/     the SystemDevice interface and a fake for tests
-docs/             design.md and the decision records
+services/         one folder per service (so far: model_gateway)
+config/           example configuration, such as the model bindings
+docs/             design.md, the decision records, one document per service
 infra/            files mounted into containers
 ```
 
@@ -50,6 +52,19 @@ coverage `source` in the root `pyproject.toml`, and run `uv sync --all-packages`
 - Builders for tests live next to the contracts (`factotum.contracts.testing`).
 - Errors derive from `FactotumError`, end in `Error` and carry a stable `code`.
 - Commits are small and conventional; the body says why.
+
+## Trying the model gateway
+
+See [`model-gateway.md`](model-gateway.md#running-it). To run its tests against a real Ollama (opt-in,
+never in CI):
+
+```bash
+ollama serve
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live
+```
+
+Services run in containers with `docker compose --profile services up -d --build --wait`; a plain
+`docker compose up` starts only the database.
 
 ## Database
 
