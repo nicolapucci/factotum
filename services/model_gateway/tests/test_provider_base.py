@@ -94,6 +94,20 @@ class TestErrorForStatus:
     def test_an_empty_message_still_says_something(self) -> None:
         assert "HTTP 500" in str(error_for_status(500, "  ", provider=OPENAI))
 
+    def test_a_provider_that_says_it_elsewhere_passes_the_delay_itself(self) -> None:
+        error = error_for_status(429, "slow", provider=OPENAI, retry_after_s=34.0)
+
+        assert isinstance(error, RateLimitedError)
+        assert error.retry_after_s == 34.0
+
+    def test_the_explicit_delay_wins_over_the_header(self) -> None:
+        error = error_for_status(
+            429, "slow", provider=OPENAI, headers={"retry-after": "7"}, retry_after_s=34.0
+        )
+
+        assert isinstance(error, RateLimitedError)
+        assert error.retry_after_s == 34.0
+
     def test_a_rate_limit_carries_the_retry_after_header(self) -> None:
         error = error_for_status(429, "slow", provider=OPENAI, headers={"retry-after": "7"})
 

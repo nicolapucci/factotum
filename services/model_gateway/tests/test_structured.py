@@ -21,6 +21,7 @@ from factotum.contracts.errors import (
 )
 from factotum.model_gateway.structured import (
     extract_json,
+    keywords_within,
     repair_messages,
     run_structured,
     strict_compatible,
@@ -385,3 +386,59 @@ class TestRunStructured:
 def test_extract_json_recovers_any_object_from_its_serialization(payload: dict[str, Any]) -> None:
     assert extract_json(json.dumps(payload)) == payload
     assert extract_json(f"Here you go:\n```json\n{json.dumps(payload)}\n```") == payload
+
+
+class TestKeywordsWithin:
+    ALLOWED = frozenset({"type", "properties", "items", "anyOf", "required", "$defs", "$ref"})
+
+    def test_a_schema_using_only_allowed_keywords_is_within(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"a": {"type": "array", "items": {"type": "string"}}},
+            "required": ["a"],
+        }
+
+        assert keywords_within(schema, self.ALLOWED)
+
+    def test_a_keyword_that_is_not_allowed_is_found_at_the_root(self) -> None:
+        assert not keywords_within({"type": "string", "pattern": "^x"}, self.ALLOWED)
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"type": "object", "properties": {"a": {"type": "string", "pattern": "^x"}}},
+            {"type": "array", "items": {"type": "string", "minLength": 1}},
+            {"anyOf": [{"type": "string"}, {"type": "string", "maxLength": 3}]},
+            {"$defs": {"x": {"type": "string", "format": "email"}}, "$ref": "#/$defs/x"},
+        ],
+        ids=["property", "items", "any-of-branch", "definition"],
+    )
+    def test_it_is_found_at_any_depth(self, schema: dict[str, Any]) -> None:
+        assert not keywords_within(schema, self.ALLOWED)
+
+    def test_a_property_named_like_a_keyword_is_a_name_and_not_a_keyword(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"pattern": {"type": "string"}, "default": {"type": "string"}},
+        }
+
+        assert keywords_within(schema, self.ALLOWED)
+
+    def test_true_and_false_are_schemas(self) -> None:
+        assert keywords_within({"type": "object", "items": True}, self.ALLOWED)
+        assert keywords_within({"type": "object", "properties": {"a": False}}, self.ALLOWED)
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            "string",
+            None,
+            {"properties": "not a map"},
+            {"properties": ["not", "a", "map"]},
+            {"anyOf": {"not": "a list"}},
+            {"anyOf": ["not a schema"]},
+            {"items": "not a schema"},
+        ],
+    )
+    def test_a_malformed_schema_is_not_within(self, schema: Any) -> None:
+        assert not keywords_within(schema, self.ALLOWED)

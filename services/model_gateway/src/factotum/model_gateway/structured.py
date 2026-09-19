@@ -81,6 +81,37 @@ def strict_compatible(schema: Any) -> bool:
     return all(strict_compatible(sub) for sub in schema.get("anyOf", []))
 
 
+_SCHEMA_MAPS = frozenset({"properties", "$defs", "patternProperties"})
+_SCHEMA_LISTS = frozenset({"anyOf", "oneOf", "allOf", "prefixItems"})
+_SCHEMA_VALUES = frozenset({"items", "additionalProperties", "not", "if", "then", "else"})
+
+
+def keywords_within(schema: Any, allowed: frozenset[str]) -> bool:
+    """Whether ``schema``, at every depth, uses only the keywords in ``allowed``.
+
+    For a provider that enforces a documented subset of JSON Schema: a schema outside it is better
+    asked for in the prompt and checked here than sent to be refused.
+    """
+    if isinstance(schema, bool):
+        return True
+    if not isinstance(schema, dict) or not set(schema) <= allowed:
+        return False
+    for key, value in schema.items():
+        if key in _SCHEMA_MAPS:
+            inside = isinstance(value, dict) and all(
+                keywords_within(sub, allowed) for sub in value.values()
+            )
+        elif key in _SCHEMA_LISTS:
+            inside = isinstance(value, list) and all(keywords_within(sub, allowed) for sub in value)
+        elif key in _SCHEMA_VALUES:
+            inside = keywords_within(value, allowed)
+        else:
+            inside = True
+        if not inside:
+            return False
+    return True
+
+
 def extract_json(text: str) -> Any:
     """The JSON value in a model's answer, tolerating a code fence or a sentence around it.
 

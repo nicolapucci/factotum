@@ -148,12 +148,15 @@ def error_for_status(
     headers: Mapping[str, str] | None = None,
     provider_code: str | None = None,
     kind: type[ProviderError] | None = None,
+    retry_after_s: float | None = None,
 ) -> ProviderError:
     """The typed error for an HTTP status. The message is redacted and cut: providers sometimes
     quote the key they were given.
 
     The status decides the kind unless the adapter knows better from what the provider said (an
-    exhausted quota arrives as a 429 and will not pass by waiting): then it passes ``kind``.
+    exhausted quota arrives as a 429 and will not pass by waiting): then it passes ``kind``. A
+    provider that says how long to wait somewhere other than the ``Retry-After`` header passes it
+    as ``retry_after_s``.
     """
     label = _label(provider, message, f"HTTP {status}")
     details: dict[str, Any] = {"provider": provider.value, "status": status}
@@ -169,9 +172,9 @@ def error_for_status(
         case 413:
             return ContextTooLongError(label, details=details)
         case 429:
-            return RateLimitedError(
-                label, retry_after_s=retry_after_seconds(headers or {}), details=details
-            )
+            if retry_after_s is None:
+                retry_after_s = retry_after_seconds(headers or {})
+            return RateLimitedError(label, retry_after_s=retry_after_s, details=details)
         case 400 | 404 | 409 | 422:
             return InvalidRequestError(label, details=details)
         case _ if status >= 500:
