@@ -195,6 +195,17 @@ def test_a_profile_says_what_a_role_can_do_without_naming_the_model() -> None:
     }
 
 
+def test_a_role_that_produces_no_text_has_no_structured_output_support() -> None:
+    profile = Profile(
+        role=ModelRole.EMBEDDING,
+        max_input_tokens=8192,
+        streaming=False,
+        locality=Locality.LOCAL,
+    )
+
+    assert profile.structured_output is None
+
+
 def test_a_profile_needs_a_positive_context() -> None:
     with pytest.raises(ValidationError):
         Profile(

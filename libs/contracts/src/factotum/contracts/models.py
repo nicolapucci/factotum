@@ -173,5 +173,7 @@ class Profile(Contract):
     max_input_tokens: int = Field(ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
     streaming: bool = True
-    structured_output: StructuredOutputSupport
+    structured_output: StructuredOutputSupport | None = None
+    """None for a role that does not produce text (embeddings, speech)."""
+
     locality: Locality
