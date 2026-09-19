@@ -1,0 +1,12 @@
+# Normalize line endings to LF everywhere (the services run in Linux containers).
+* text=auto eol=lf
+
+# Windows-only scripts need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.docx binary
