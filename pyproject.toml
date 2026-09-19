@@ -11,12 +11,17 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["libs/*"]
+members = ["libs/*", "services/*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-src = ["libs/contracts/src", "libs/common/src", "libs/devices/src"]
+src = [
+  "libs/contracts/src",
+  "libs/common/src",
+  "libs/devices/src",
+  "services/model_gateway/src",
+]
 
 [tool.ruff.lint]
 select = [
@@ -45,10 +50,15 @@ select = [
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
-mypy_path = ["libs/contracts/src", "libs/common/src", "libs/devices/src"]
+mypy_path = [
+  "libs/contracts/src",
+  "libs/common/src",
+  "libs/devices/src",
+  "services/model_gateway/src",
+]
 explicit_package_bases = true
 namespace_packages = true
-files = ["libs"]
+files = ["libs", "services"]
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
@@ -57,7 +67,7 @@ warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-testpaths = ["libs"]
+testpaths = ["libs", "services"]
 # Unit tests must never reach the network: only loopback connections are allowed.
 addopts = "-ra --strict-markers --strict-config --import-mode=importlib --allow-hosts=127.0.0.1,::1"
 asyncio_mode = "auto"
@@ -70,7 +80,12 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["libs/contracts/src", "libs/common/src", "libs/devices/src"]
+source = [
+  "libs/contracts/src",
+  "libs/common/src",
+  "libs/devices/src",
+  "services/model_gateway/src",
+]
 
 [tool.coverage.report]
 fail_under = 85
@@ -89,5 +104,6 @@ dev = [
     "pyyaml>=6.0.3",
     "respx>=0.23.1",
     "ruff>=0.16.8",
+    "types-jsonschema>=4.26.0.20260518",
     "types-pyyaml>=6.0.12.20260906",
 ]
