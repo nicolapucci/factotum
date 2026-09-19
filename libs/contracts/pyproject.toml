@@ -1,0 +1,14 @@
+[project]
+name = "factotum-contracts"
+version = "0.0.0"
+description = "Shared pydantic contracts for the Factotum services: the single source of truth for every interface between them."
+requires-python = ">=3.13"
+dependencies = ["pydantic>=2.11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# `factotum` is a PEP 420 namespace package shared by every library and service.
+packages = ["src/factotum"]

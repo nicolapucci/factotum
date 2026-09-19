@@ -1,0 +1,89 @@
+[project]
+name = "factotum"
+version = "0.0.0"
+description = "Self-hosted voice assistant that answers from your own documents and the web, using the models you choose."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.uv]
+# The root only hosts the workspace and the shared tooling; it is not a package.
+package = false
+
+[tool.uv.workspace]
+members = ["libs/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["libs/contracts/src", "libs/common/src", "libs/devices/src"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes
+  "I",        # isort
+  "N",        # pep8-naming
+  "UP",       # pyupgrade
+  "B",        # bugbear
+  "C4",       # comprehensions
+  "SIM",      # simplify
+  "RUF",      # ruff-specific
+  "PT",       # pytest style
+  "ASYNC",    # async pitfalls
+  "S",        # security (bandit)
+  "PIE", "PERF", "T20",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Asserts and obviously fake secrets are expected in tests.
+"**/tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = ["libs/contracts/src", "libs/common/src", "libs/devices/src"]
+explicit_package_bases = true
+namespace_packages = true
+files = ["libs"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["libs"]
+# Unit tests must never reach the network: only loopback connections are allowed.
+addopts = "-ra --strict-markers --strict-config --import-mode=importlib --allow-hosts=127.0.0.1,::1"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error"]
+markers = [
+  "integration: needs Docker services (deselect with -m 'not integration')",
+  "live: calls real providers with your own keys (opt-in, never runs in CI)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["libs/contracts/src", "libs/common/src", "libs/devices/src"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.168.0",
+    "mypy>=2.3.1",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-socket>=0.8.1",
+    "respx>=0.23.1",
+    "ruff>=0.16.8",
+]
