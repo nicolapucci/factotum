@@ -125,6 +125,70 @@ def test_the_text_format_is_redacted_as_well() -> None:
     assert "INFO" in stream.getvalue()
 
 
+def test_the_text_format_shows_the_extra_fields_after_the_message() -> None:
+    stream = io.StringIO()
+    configure_logging(json_format=False, stream=stream)
+
+    logging.getLogger("t").info("model call", extra={"role": "chat.main", "duration_ms": 12})
+
+    (line,) = lines(stream)
+    assert line.endswith("t: model call role=chat.main duration_ms=12")
+
+
+def test_the_text_format_redacts_the_extra_fields() -> None:
+    stream = io.StringIO()
+    configure_logging(json_format=False, stream=stream)
+
+    logging.getLogger("t").info("call", extra={"api_key": "sk-abcdefghijklmnop1234", "model": "x"})
+
+    assert "sk-abcdefghijklmnop1234" not in stream.getvalue()
+    assert f"api_key={REDACTED}" in stream.getvalue()
+    assert "model=x" in stream.getvalue()
+
+
+def test_the_text_format_keeps_a_value_with_a_line_break_on_its_line() -> None:
+    stream = io.StringIO()
+    configure_logging(json_format=False, stream=stream)
+
+    logging.getLogger("t").info("call", extra={"note": "first\nWARNING t: forged record"})
+
+    (line,) = lines(stream)
+    assert line.endswith('note="first\\nWARNING t: forged record"')
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        ("word", "word"),
+        ("two words", '"two words"'),
+        ("", '""'),
+        (7, "7"),
+        (None, "null"),
+        ([1, 2], '"[1, 2]"'),
+        ((1,), "[1]"),
+        ({"a": 1}, '"{\\"a\\": 1}"'),
+    ],
+)
+def test_the_text_format_renders_each_kind_of_value_on_one_line(value: object, shown: str) -> None:
+    stream = io.StringIO()
+    configure_logging(json_format=False, stream=stream)
+
+    logging.getLogger("t").info("call", extra={"field": value})
+
+    (line,) = lines(stream)
+    assert line.endswith(f"call field={shown}")
+
+
+def test_the_text_format_without_extra_fields_is_unchanged() -> None:
+    stream = io.StringIO()
+    configure_logging(json_format=False, stream=stream)
+
+    logging.getLogger("t").info("plain")
+
+    (line,) = lines(stream)
+    assert line.endswith("t: plain")
+
+
 def test_configuring_twice_does_not_duplicate_output() -> None:
     first, second = io.StringIO(), io.StringIO()
 

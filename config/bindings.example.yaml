@@ -1,0 +1,48 @@
+# Model bindings for development: which model serves which role.
+#
+# Copy this file to config/bindings.dev.yaml (git ignores it), adjust it, and point the gateway at
+# it with FACTOTUM_GATEWAY_BINDINGS_FILE=config/bindings.dev.yaml. The bindings belong to the
+# development tenant; give an entry a `user: <id>` and it is that user's own instead.
+#
+# Keys are never written here. `secret_ref` names an environment variable that holds the key:
+#   export OPENAI_API_KEY=sk-...
+#
+# `max_input_tokens` is what you allow the conversation to put in a prompt. It is yours to declare
+# because model catalogues change too often to be hardcoded.
+
+bindings:
+  # Models on this machine, through Ollama.
+  - role: chat.main
+    provider: ollama
+    model: llama3.1:8b-instruct-q4_K_M
+    base_url: http://localhost:11434
+    options:
+      max_input_tokens: 8192
+
+  - role: chat.fast
+    provider: ollama
+    model: llama3.2:3b-instruct-q8_0
+    base_url: http://localhost:11434
+
+  - role: embedding
+    provider: ollama
+    model: nomic-embed-text
+    base_url: http://localhost:11434
+    options:
+      max_input_tokens: 2048
+
+  # A hosted provider, with your own key. Hosted providers are always treated as remote.
+  # - role: chat.main
+  #   provider: openai        # or anthropic, gemini
+  #   model: gpt-4o-mini
+  #   secret_ref: env:OPENAI_API_KEY
+
+  # Any server that speaks the OpenAI API: vLLM, LM Studio, llama.cpp, OpenRouter, Groq...
+  # The address is the API root, /v1 included. Whether it is local is inferred from the address;
+  # declare `locality: local` or `locality: remote` to say it yourself.
+  # - role: chat.main
+  #   provider: openai_compatible
+  #   model: qwen2.5-7b-instruct
+  #   base_url: http://localhost:1234/v1
+  #   options:
+  #     native_structured_output: false   # most of these servers ignore a schema

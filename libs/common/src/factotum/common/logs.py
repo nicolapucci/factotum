@@ -57,11 +57,29 @@ class JsonFormatter(_RedactingTracebackMixin):
         return json.dumps(payload, default=str, ensure_ascii=False)
 
 
+def _render(value: Any) -> str:
+    """A value on one line: bare when it is a plain word or number, quoted when it is not, so that
+    a value with a line break in it cannot pass for a second record."""
+    text = value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False)
+    if text and text.isprintable() and " " not in text:
+        return text
+    return json.dumps(text, ensure_ascii=False)
+
+
 class TextFormatter(_RedactingTracebackMixin):
-    """A human-friendly format for development."""
+    """A human-friendly format for development: the message, then the extra fields as key=value."""
 
     def __init__(self) -> None:
         super().__init__("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+
+    def formatMessage(self, record: logging.LogRecord) -> str:  # noqa: N802 - stdlib name
+        line = super().formatMessage(record)
+        fields = " ".join(
+            f"{name}={_render(value)}"
+            for name, value in record.__dict__.items()
+            if name not in _STANDARD_ATTRIBUTES
+        )
+        return f"{line} {fields}" if fields else line
 
 
 class _FactotumHandler(logging.StreamHandler[TextIO]):

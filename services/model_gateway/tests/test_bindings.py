@@ -418,3 +418,17 @@ def test_an_error_in_a_file_names_the_file(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match=r"bindings\.yaml: binding #1"):
         load_bindings_file(path, tenant_id=TENANT)
+
+
+def test_the_example_bindings_file_of_the_repository_is_valid() -> None:
+    example = Path(__file__).resolve().parents[3] / "config" / "bindings.example.yaml"
+
+    loaded = load_bindings_file(example, tenant_id=TENANT)
+
+    assert {binding.role for binding in loaded} == {
+        ModelRole.CHAT_MAIN,
+        ModelRole.CHAT_FAST,
+        ModelRole.EMBEDDING,
+    }
+    assert len(InMemoryBindingRepository(loaded)) == 3
+    assert {binding.provider for binding in loaded} == {ProviderKind.OLLAMA}

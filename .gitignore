@@ -20,6 +20,7 @@ coverage.xml
 .env
 .env.*
 !.env.example
+config/*.dev.yaml
 *.pem
 *.key
 secrets/

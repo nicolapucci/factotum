@@ -42,7 +42,7 @@ jobs:
         run: uv run pytest -m "not integration and not live" --cov --cov-report=term-missing
 
   compose:
-    name: The compose file is valid
+    name: The compose file is valid and the images build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,3 +51,6 @@ jobs:
         run: docker compose config --quiet
         env:
           FACTOTUM_POSTGRES_PASSWORD: ci-only
+
+      - name: Build the model gateway image
+        run: docker build -f services/model_gateway/Dockerfile -t factotum-model-gateway:ci .

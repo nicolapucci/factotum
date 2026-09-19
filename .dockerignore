@@ -1,0 +1,18 @@
+# The build context is the repository root: keep out everything an image does not need.
+.git
+.github
+.venv
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+docs
+infra
+config
+**/tests

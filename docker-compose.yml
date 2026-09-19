@@ -28,5 +28,31 @@ services:
       retries: 10
       start_period: 10s
 
+  model-gateway:
+    # Not started by a plain `docker compose up`: it needs the "services" profile, and until the hub
+    # issues real credentials it only runs with FACTOTUM_ENVIRONMENT=development.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/model_gateway/Dockerfile
+    restart: unless-stopped
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_GATEWAY_BINDINGS_FILE: /etc/factotum/bindings.dev.yaml
+      # Keys reach the container only through the environment, and only the ones named here.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - ./config:/etc/factotum:ro
+    extra_hosts:
+      # A model on the host (Ollama, LM Studio) is reachable as host.docker.internal.
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Loopback only, for development. Services reach it by name on the compose network.
+      - "127.0.0.1:${FACTOTUM_GATEWAY_PORT:-8081}:8081"
+
 volumes:
   postgres_data:

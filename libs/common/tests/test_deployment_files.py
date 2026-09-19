@@ -1,0 +1,81 @@
+"""The deployment files are code too: what they promise about exposure and settings is tested."""
+
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+COMPOSE_TEXT = (REPO_ROOT / "docker-compose.yml").read_text("utf-8")
+COMPOSE: dict[str, Any] = yaml.safe_load(COMPOSE_TEXT)
+SERVICES: dict[str, dict[str, Any]] = COMPOSE["services"]
+
+
+def published_ports() -> list[tuple[str, str]]:
+    return [
+        (name, str(port)) for name, service in SERVICES.items() for port in service.get("ports", [])
+    ]
+
+
+@pytest.mark.parametrize(("service", "port"), published_ports())
+def test_a_published_port_listens_on_loopback_only(service: str, port: str) -> None:
+    assert port.startswith("127.0.0.1:"), f"{service} publishes {port} on every interface"
+
+
+@pytest.mark.parametrize("service", [name for name, spec in SERVICES.items() if "image" in spec])
+def test_an_image_is_pinned_to_an_exact_version(service: str) -> None:
+    image: str = SERVICES[service]["image"]
+
+    assert ":" in image, f"{service} does not pin a tag"
+    assert not image.endswith(":latest"), f"{service} uses latest"
+
+
+@pytest.mark.parametrize("service", [name for name, spec in SERVICES.items() if "build" in spec])
+def test_a_built_service_has_its_dockerfile(service: str) -> None:
+    build = SERVICES[service]["build"]
+
+    assert (REPO_ROOT / build["context"] / build["dockerfile"]).is_file()
+
+
+def test_the_database_starts_by_default_and_the_services_only_on_request() -> None:
+    assert "profiles" not in SERVICES["postgres"]
+    assert SERVICES["model-gateway"]["profiles"] == ["services"]
+
+
+def test_every_factotum_variable_compose_reads_is_documented_in_the_env_example() -> None:
+    read = set(re.findall(r"\$\{(FACTOTUM_[A-Z0-9_]+)", COMPOSE_TEXT))
+    documented = set(
+        re.findall(
+            r"^#?\s*(FACTOTUM_[A-Z0-9_]+)=", (REPO_ROOT / ".env.example").read_text("utf-8"), re.M
+        )
+    )
+
+    assert read <= documented, f"missing from .env.example: {sorted(read - documented)}"
+
+
+def test_the_provider_keys_compose_passes_on_are_documented_in_the_env_example() -> None:
+    passed = set(re.findall(r"\$\{([A-Z0-9]+_API_KEY)", COMPOSE_TEXT))
+    documented = set(
+        re.findall(
+            r"^#?\s*([A-Z0-9]+_API_KEY)=", (REPO_ROOT / ".env.example").read_text("utf-8"), re.M
+        )
+    )
+
+    assert passed
+    assert passed <= documented, f"missing from .env.example: {sorted(passed - documented)}"
+
+
+def test_the_image_does_not_run_as_root() -> None:
+    dockerfile = (REPO_ROOT / "services" / "model_gateway" / "Dockerfile").read_text("utf-8")
+    users = re.findall(r"^USER\s+(\S+)", dockerfile, re.M)
+
+    assert users
+    assert users[-1] not in {"root", "0"}
+
+
+def test_the_build_context_leaves_secrets_and_the_repository_history_out() -> None:
+    ignored = (REPO_ROOT / ".dockerignore").read_text("utf-8").splitlines()
+
+    assert {".env", ".git", ".venv"} <= set(ignored)
