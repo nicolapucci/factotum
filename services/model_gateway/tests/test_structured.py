@@ -125,6 +125,7 @@ class TestStrictCompatible:
                 "additionalProperties": False,
             },
             {"type": "string", "minLength": 2},
+            {"type": "array", "items": {"type": "string", "minLength": 1}},
             "not a schema",
             None,
         ],
@@ -134,7 +135,8 @@ class TestStrictCompatible:
             "pattern",
             "ref",
             "minLength",
-            "string",
+            "loose-items",
+            "not-a-schema",
             "none",
         ],
     )
@@ -305,12 +307,36 @@ class TestRunStructured:
 
         assert len(chat.sent) == 1
 
+    async def test_a_refusal_with_text_is_not_mistaken_for_an_invalid_answer(self) -> None:
+        chat = Scripted(answer("I can't help with that.", finish=FinishReason.CONTENT_FILTER))
+
+        with pytest.raises(ContentFilteredError):
+            await run_structured(chat, request(), native=True)
+
+        assert len(chat.sent) == 1
+
     async def test_token_usage_is_added_up_across_attempts(self) -> None:
         chat = Scripted(answer("{}", tokens=(10, 4)), answer('{"city": "Rome"}', tokens=(30, 6)))
 
         result = await run_structured(chat, request(), native=True)
 
         assert result.usage == Usage(input_tokens=40, output_tokens=10)
+
+    async def test_usage_reported_by_only_some_attempts_still_counts(self) -> None:
+        silent = ChatResult(text='{"city": "Rome"}', finish_reason=FinishReason.STOP)
+        chat = Scripted(answer("{}", tokens=(10, 4)), silent)
+
+        result = await run_structured(chat, request(), native=True)
+
+        assert result.usage == Usage(input_tokens=10, output_tokens=4)
+
+    async def test_usage_reported_only_by_the_last_attempt_counts_too(self) -> None:
+        silent = ChatResult(text="{}", finish_reason=FinishReason.STOP)
+        chat = Scripted(silent, answer('{"city": "Rome"}', tokens=(30, 6)))
+
+        result = await run_structured(chat, request(), native=True)
+
+        assert result.usage == Usage(input_tokens=30, output_tokens=6)
 
     async def test_missing_usage_is_tolerated(self) -> None:
         no_usage = ChatResult(text='{"city": "Rome"}', finish_reason=FinishReason.STOP)

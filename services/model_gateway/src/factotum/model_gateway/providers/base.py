@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import httpx
-from pydantic import SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
 
 from factotum.common.redaction import redact_text
 from factotum.contracts.chat import ChatRequest, ChatResult, EventUnion, Usage
@@ -59,6 +59,31 @@ class ResolvedBinding:
 class EmbeddingBatch:
     vectors: tuple[tuple[float, ...], ...]
     usage: Usage | None = None
+
+
+def effective_max_output_tokens(resolved: ResolvedBinding, request: ChatRequest) -> int | None:
+    """The output limit to send: the caller's, held under the cap the user set on the binding."""
+    limits = [
+        limit
+        for limit in (request.max_output_tokens, resolved.options.max_output_tokens)
+        if limit is not None
+    ]
+    return min(limits) if limits else None
+
+
+def effective_temperature(resolved: ResolvedBinding, request: ChatRequest) -> float | None:
+    """The caller's temperature, or else the one the user set on the binding, or else none: the
+    provider's own default is the safest choice (some models accept no other)."""
+    if request.temperature is not None:
+        return request.temperature
+    return resolved.options.temperature
+
+
+def usage_of(input_tokens: int | None, output_tokens: int | None) -> Usage | None:
+    """Token usage, or None when the provider reported nothing."""
+    if input_tokens is None and output_tokens is None:
+        return None
+    return Usage(input_tokens=input_tokens, output_tokens=output_tokens)
 
 
 class ProviderAdapter(Protocol):
@@ -109,14 +134,20 @@ def error_for_status(
     provider: ProviderKind,
     headers: Mapping[str, str] | None = None,
     provider_code: str | None = None,
+    kind: type[ProviderError] | None = None,
 ) -> ProviderError:
     """The typed error for an HTTP status. The message is redacted and cut: providers sometimes
-    quote the key they were given."""
-    text = redact_text(message).strip()[:_MAX_MESSAGE_CHARS] or f"HTTP {status}"
-    label = f"{provider.value}: {text}"
+    quote the key they were given.
+
+    The status decides the kind unless the adapter knows better from what the provider said (an
+    exhausted quota arrives as a 429 and will not pass by waiting): then it passes ``kind``.
+    """
+    label = _label(provider, message, f"HTTP {status}")
     details: dict[str, Any] = {"provider": provider.value, "status": status}
     if provider_code:
         details["provider_code"] = provider_code
+    if kind is not None:
+        return kind(label, details=details)
     match status:
         case 401 | 403:
             return ProviderAuthError(label, details=details)
@@ -134,6 +165,45 @@ def error_for_status(
             return ProviderUnavailableError(label, details=details)
         case _:
             return ProviderError(label, details=details)
+
+
+def _label(provider: ProviderKind, message: str, fallback: str) -> str:
+    text = redact_text(message).strip()[:_MAX_MESSAGE_CHARS] or fallback
+    return f"{provider.value}: {text}"
+
+
+def stream_error(
+    message: str,
+    *,
+    provider: ProviderKind,
+    kind: type[ProviderError] = ProviderUnavailableError,
+    provider_code: str | None = None,
+) -> ProviderError:
+    """The error for a failure a provider reports inside a stream, when the HTTP status is already
+    200 and there is no status to go by."""
+    details: dict[str, Any] = {"provider": provider.value}
+    if provider_code:
+        details["provider_code"] = provider_code
+    return kind(_label(provider, message, "the stream reported an error"), details=details)
+
+
+class WireModel(BaseModel):
+    """Base of the models that describe what a provider sends. They read only what the gateway
+    uses and ignore the rest, so a field a provider adds does not break the adapter."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+def parse_wire[W: WireModel](model: type[W], data: Any, provider: ProviderKind) -> W:
+    """Read a provider's answer into ``model``; an answer of another shape is a provider failure.
+    The data is not repeated in the error: it is the model's output."""
+    try:
+        return model.model_validate(data)
+    except ValidationError:
+        raise ProviderUnavailableError(
+            f"{provider.value}: the answer did not have the expected shape",
+            details={"provider": provider.value},
+        ) from None
 
 
 def parse_json(response: httpx.Response, provider: ProviderKind) -> Any:

@@ -1,12 +1,14 @@
 """Helpers for testing adapters and the gateway without a network."""
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
 import httpx
 from pydantic import SecretStr
 
+from factotum.contracts.chat import EventUnion
+from factotum.contracts.errors import FactotumError
 from factotum.contracts.models import Locality, ModelBinding
 from factotum.model_gateway.locality import infer_locality
 from factotum.model_gateway.providers.base import ResolvedBinding
@@ -67,9 +69,23 @@ def ndjson_response(*items: Any, status: int = 200) -> httpx.Response:
     )
 
 
+async def collect_events(
+    stream: AsyncIterator[EventUnion],
+) -> tuple[list[EventUnion], FactotumError | None]:
+    """Everything a stream delivered, and the error that ended it, if one did."""
+    got: list[EventUnion] = []
+    try:
+        async for event in stream:
+            got.append(event)  # noqa: PERF401 - what came before a failure is what is being kept
+    except FactotumError as error:
+        return got, error
+    return got, None
+
+
 __all__ = [
     "Handler",
     "Locality",
+    "collect_events",
     "json_response",
     "mock_client",
     "ndjson_body",

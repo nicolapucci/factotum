@@ -195,7 +195,7 @@ async def run_structured(
         result = await chat(sent)
         usage = _add(usage, result.usage)
 
-        if result.finish_reason is FinishReason.CONTENT_FILTER and not result.text.strip():
+        if result.finish_reason is FinishReason.CONTENT_FILTER:
             raise ContentFilteredError("the model declined to answer")
         try:
             value = extract_json(result.text)
