@@ -1,0 +1,17 @@
+"""Typed identifiers: distinct types for distinct kinds of id, all backed by UUIDs.
+
+The type checker refuses to pass a ``DeviceId`` where a ``TenantId`` is expected, which removes a
+whole class of mix-ups between services.
+"""
+
+from typing import NewType
+from uuid import UUID
+
+TenantId = NewType("TenantId", UUID)
+UserId = NewType("UserId", UUID)
+DeviceId = NewType("DeviceId", UUID)
+SpaceId = NewType("SpaceId", UUID)
+SkillId = NewType("SkillId", UUID)
+BindingId = NewType("BindingId", UUID)
+ApprovalId = NewType("ApprovalId", UUID)
+AuditId = NewType("AuditId", UUID)
