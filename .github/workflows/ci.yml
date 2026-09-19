@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, types and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to a commit: a tag can be moved, a commit cannot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.17"
+          enable-cache: true
+
+      # --locked fails the build when pyproject.toml and uv.lock disagree.
+      - name: Install
+        run: uv sync --all-packages --locked
+
+      - name: Ruff (lint)
+        run: uv run ruff check
+
+      - name: Ruff (format)
+        run: uv run ruff format --check
+
+      - name: Mypy
+        run: uv run mypy
+
+      - name: Unit tests
+        run: uv run pytest -m "not integration and not live" --cov --cov-report=term-missing
+
+  compose:
+    name: The compose file is valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate
+        run: docker compose config --quiet
+        env:
+          FACTOTUM_POSTGRES_PASSWORD: ci-only
