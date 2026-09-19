@@ -6,11 +6,13 @@ Shipping them next to the contracts keeps every service's tests short and consis
 from collections.abc import Iterable
 from uuid import uuid4
 
+from factotum.contracts.authorization import SkillRef, TargetRef
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.devices import DevicePolicy, ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.effects import Effect
 from factotum.contracts.identity import Owner, OwnerKind, Principal, Role, Subject, SubjectKind
-from factotum.contracts.ids import DeviceId, TenantId, UserId
+from factotum.contracts.ids import DeviceId, SkillId, TenantId, UserId
+from factotum.contracts.skills import ApprovalPolicy, ConfirmPolicy
 
 
 def _default_policy(owner: Owner) -> DevicePolicy:
@@ -98,5 +100,39 @@ def make_external_device(
         name=name,
         owner=device_owner,
         policy=_default_policy(device_owner),
+        sensitivity=sensitivity,
+    )
+
+
+def make_skill_ref(
+    *,
+    tenant_id: TenantId,
+    owner: Owner | None = None,
+    effect: Effect = Effect.REVERSIBLE,
+    confirm: ConfirmPolicy = ConfirmPolicy.NEVER,
+    approval: ApprovalPolicy = ApprovalPolicy.NONE,
+) -> SkillRef:
+    """A skill reference, owned by the tenant unless an owner is given."""
+    return SkillRef(
+        id=SkillId(uuid4()),
+        tenant_id=tenant_id,
+        owner=owner or Owner.of_subject(Subject.tenant(tenant_id)),
+        effect=effect,
+        confirm=confirm,
+        approval=approval,
+    )
+
+
+def make_target_ref(
+    *,
+    tenant_id: TenantId,
+    owner: Owner | None = None,
+    sensitivity: Effect = Effect.READ_ONLY,
+) -> TargetRef:
+    """A target device reference, owned by the tenant unless an owner is given."""
+    return TargetRef(
+        device_id=make_device_id(),
+        tenant_id=tenant_id,
+        owner=owner or Owner.of_subject(Subject.tenant(tenant_id)),
         sensitivity=sensitivity,
     )

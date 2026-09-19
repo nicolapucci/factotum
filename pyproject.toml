@@ -32,6 +32,7 @@ select = [
   "PT",       # pytest style
   "ASYNC",    # async pitfalls
   "S",        # security (bandit)
+  "DTZ",       # naive datetimes: every timestamp must carry a time zone
   "PIE", "PERF", "T20",
 ]
 
