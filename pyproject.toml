@@ -33,6 +33,7 @@ select = [
   "ASYNC",    # async pitfalls
   "S",        # security (bandit)
   "DTZ",       # naive datetimes: every timestamp must carry a time zone
+  "BLE",       # blind excepts
   "PIE", "PERF", "T20",
 ]
 
