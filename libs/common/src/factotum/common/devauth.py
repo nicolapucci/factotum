@@ -13,6 +13,11 @@ from factotum.contracts.errors import AuthError
 from factotum.contracts.identity import Principal, Role, Subject
 from factotum.contracts.ids import DeviceId, TenantId, UserId
 
+DEV_TENANT_ID = TenantId(UUID("00000000-0000-4000-8000-000000000001"))
+DEV_USER_ID = UserId(UUID("00000000-0000-4000-8000-000000000002"))
+"""The tenant and the user every service uses in development: the same headers mean the same
+people everywhere, and a bindings file or a fixture written for one service works for the others."""
+
 SUBJECT_HEADER = "x-factotum-dev-subject"
 """``user`` (the default) or ``tenant``: whom the simulated device acts for."""
 

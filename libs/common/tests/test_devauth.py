@@ -3,7 +3,13 @@ from uuid import uuid4
 import pytest
 
 from factotum.common.config import Environment, ServiceSettings
-from factotum.common.devauth import DEVICE_HEADER, SUBJECT_HEADER, DevAuthenticator
+from factotum.common.devauth import (
+    DEV_TENANT_ID,
+    DEV_USER_ID,
+    DEVICE_HEADER,
+    SUBJECT_HEADER,
+    DevAuthenticator,
+)
 from factotum.contracts.errors import AuthError
 from factotum.contracts.identity import Role, SubjectKind
 from factotum.contracts.testing import make_tenant_id, make_user_id
@@ -81,3 +87,18 @@ def test_an_invalid_device_id_is_refused() -> None:
 def test_an_unknown_subject_is_refused() -> None:
     with pytest.raises(AuthError, match="unknown development subject"):
         authenticator().authenticate({SUBJECT_HEADER: "root"})
+
+
+def test_the_shared_development_identities_are_distinct_valid_ids() -> None:
+    assert DEV_TENANT_ID != DEV_USER_ID
+    assert DEV_TENANT_ID.version == 4
+    assert DEV_USER_ID.version == 4
+
+
+def test_the_shared_development_identities_work_with_the_authenticator() -> None:
+    dev = DevAuthenticator(settings(Environment.TEST), tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+
+    principal = dev.authenticate({})
+
+    assert principal.tenant_id == DEV_TENANT_ID
+    assert principal.acts_as.id == DEV_USER_ID

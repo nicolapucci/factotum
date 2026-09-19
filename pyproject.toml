@@ -91,6 +91,10 @@ source = [
 fail_under = 85
 show_missing = true
 skip_covered = true
+exclude_also = [
+  # The guard of an entry point: what it calls is tested, the guard itself only runs for real.
+  "if __name__ == .__main__.:",
+]
 
 [dependency-groups]
 dev = [
