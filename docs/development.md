@@ -60,8 +60,10 @@ never in CI):
 
 ```bash
 ollama serve
-FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k ollama
 ```
+
+The tests for the hosted providers run with your own keys in the environment (`-k hosted`).
 
 Services run in containers with `docker compose --profile services up -d --build --wait`; a plain
 `docker compose up` starts only the database.

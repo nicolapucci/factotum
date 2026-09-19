@@ -24,7 +24,7 @@ uv run ruff format && uv run ruff check
 uv run mypy
 uv run pytest                          # unit tests only need no Docker
 uv run pytest -m integration           # needs Docker services (none yet)
-FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama, opt-in; see docs/model-gateway.md
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama and hosted providers, opt-in; see docs/model-gateway.md
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```

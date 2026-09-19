@@ -2,7 +2,7 @@
 
 Opt-in, because it needs a running Ollama with the models below pulled and takes a while:
 
-    FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live
+    FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k ollama
 
 Which server and models to use can be changed with FACTOTUM_LIVE_OLLAMA_URL,
 FACTOTUM_LIVE_OLLAMA_CHAT_MODEL and FACTOTUM_LIVE_OLLAMA_EMBED_MODEL.

@@ -209,12 +209,24 @@ non-root user and has a health check. The port is published on loopback only.
 - Unit tests for every module, at 100% of statements and branches for the package. Adapters are
   tested against each provider's real wire format with `httpx.MockTransport`.
 - `tests/test_adapter_contract.py`: one suite, run against every adapter, for what must not differ.
-- `tests/live/`: the whole gateway against a real Ollama (opt-in, never in CI):
+- `tests/live/`: the gateway against real providers (opt-in, never in CI). Against a real Ollama:
 
 ```bash
 ollama serve   # and the models named in the file pulled
-FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k ollama
 ```
+
+  Against the hosted providers, with your own keys in the environment (a provider without a key is
+  skipped, and each test costs a few tokens):
+
+```bash
+export OPENAI_API_KEY=... ANTHROPIC_API_KEY=... GEMINI_API_KEY=...
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k hosted
+```
+
+  One hosted test needs no key: it sends a key that cannot be valid and checks that OpenAI, Anthropic
+  and Gemini each answer with something the gateway maps to the same `provider_auth_error`. Gemini
+  reports a bad key as a 400 with `API key not valid`, and it is recognized as what it is.
 
 ## Adding a provider
 
