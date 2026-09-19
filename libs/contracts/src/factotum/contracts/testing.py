@@ -11,7 +11,14 @@ from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.devices import DevicePolicy, ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.effects import Effect
 from factotum.contracts.identity import Owner, OwnerKind, Principal, Role, Subject, SubjectKind
-from factotum.contracts.ids import DeviceId, SkillId, TenantId, UserId
+from factotum.contracts.ids import DeviceId, ModelBindingId, SkillId, TenantId, UserId
+from factotum.contracts.models import (
+    BindingOptions,
+    Locality,
+    ModelBinding,
+    ModelRole,
+    ProviderKind,
+)
 from factotum.contracts.skills import ApprovalPolicy, ConfirmPolicy
 
 
@@ -135,4 +142,31 @@ def make_target_ref(
         tenant_id=tenant_id,
         owner=owner or Owner.of_subject(Subject.tenant(tenant_id)),
         sensitivity=sensitivity,
+    )
+
+
+def make_model_binding(
+    *,
+    tenant_id: TenantId,
+    role: ModelRole = ModelRole.CHAT_MAIN,
+    provider: ProviderKind = ProviderKind.OLLAMA,
+    model: str = "llama3.1:8b",
+    base_url: str | None = "http://localhost:11434",
+    secret_ref: str | None = None,
+    owner: Owner | None = None,
+    locality: Locality | None = None,
+    options: BindingOptions | None = None,
+) -> ModelBinding:
+    """A model binding, owned by the tenant unless an owner is given; a local Ollama by default."""
+    return ModelBinding(
+        id=ModelBindingId(uuid4()),
+        tenant_id=tenant_id,
+        owner=owner or Owner.of_subject(Subject.tenant(tenant_id)),
+        role=role,
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        secret_ref=secret_ref,
+        locality=locality,
+        options=options or BindingOptions(),
     )
