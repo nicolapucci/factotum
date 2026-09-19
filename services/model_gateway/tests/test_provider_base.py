@@ -21,6 +21,8 @@ from factotum.model_gateway.providers.base import (
     ResolvedBinding,
     SseMessage,
     WireModel,
+    api_url,
+    bearer_headers,
     effective_max_output_tokens,
     effective_temperature,
     error_body,
@@ -494,3 +496,27 @@ class TestWireModels:
 
         assert "private output" not in str(caught.value)
         assert "private output" not in repr(caught.value.details)
+
+
+class TestEndpointAndKey:
+    def test_the_endpoint_is_under_the_base_url(self) -> None:
+        binding = make_model_binding(tenant_id=make_tenant_id())
+
+        assert api_url(resolved(binding, base_url="http://h:1/v1/"), "chat") == "http://h:1/v1/chat"
+
+    def test_a_key_becomes_a_bearer_header(self) -> None:
+        binding = make_model_binding(tenant_id=make_tenant_id())
+
+        headers = bearer_headers(resolved(binding, api_key="sk-secret-value"))
+
+        assert headers == {"authorization": "Bearer sk-secret-value"}
+
+    def test_no_key_means_no_header(self) -> None:
+        binding = make_model_binding(tenant_id=make_tenant_id())
+
+        assert bearer_headers(resolved(binding)) == {}
+
+    def test_the_key_is_not_part_of_the_resolved_binding_repr(self) -> None:
+        binding = make_model_binding(tenant_id=make_tenant_id())
+
+        assert "sk-secret-value" not in repr(resolved(binding, api_key="sk-secret-value"))

@@ -37,6 +37,8 @@ from factotum.model_gateway.providers.base import (
     EmbeddingBatch,
     ResolvedBinding,
     WireModel,
+    api_url,
+    bearer_headers,
     effective_max_output_tokens,
     effective_temperature,
     error_body,
@@ -174,8 +176,8 @@ class OpenAIAdapter:
     ) -> ChatResult:
         body = await post_json(
             client,
-            _url(resolved, "chat/completions"),
-            headers=_headers(resolved),
+            api_url(resolved, "chat/completions"),
+            headers=bearer_headers(resolved),
             payload=self._chat_payload(resolved, request, stream=False),
             provider=self.kind,
             map_error=self._map_error,
@@ -203,8 +205,8 @@ class OpenAIAdapter:
         usage: Usage | None = None
         async with stream_post(
             client,
-            _url(resolved, "chat/completions"),
-            headers=_headers(resolved),
+            api_url(resolved, "chat/completions"),
+            headers=bearer_headers(resolved),
             payload=self._chat_payload(resolved, request, stream=True),
             provider=self.kind,
             map_error=self._map_error,
@@ -270,8 +272,8 @@ class OpenAIAdapter:
             payload["dimensions"] = resolved.options.dimensions
         body = await post_json(
             client,
-            _url(resolved, "embeddings"),
-            headers=_headers(resolved),
+            api_url(resolved, "embeddings"),
+            headers=bearer_headers(resolved),
             payload=payload,
             provider=self.kind,
             map_error=self._map_error,
@@ -313,16 +315,6 @@ class OpenAIAdapter:
                 raise stream_error(
                     info.message, provider=self.kind, provider_code=info.provider_code
                 )
-
-
-def _url(resolved: ResolvedBinding, path: str) -> str:
-    return f"{resolved.base_url}/{path}"
-
-
-def _headers(resolved: ResolvedBinding) -> dict[str, str]:
-    if resolved.api_key is None:
-        return {}
-    return {"authorization": f"Bearer {resolved.api_key.get_secret_value()}"}
 
 
 def _response_format(schema: dict[str, Any]) -> dict[str, Any]:

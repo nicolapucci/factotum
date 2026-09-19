@@ -1,5 +1,3 @@
-import json
-from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -8,7 +6,6 @@ import pytest
 from factotum.contracts.chat import (
     ChatMessage,
     ChatRequest,
-    EventUnion,
     FinishEvent,
     FinishReason,
     MessageRole,
@@ -28,7 +25,10 @@ from factotum.contracts.testing import make_model_binding, make_tenant_id
 from factotum.model_gateway.providers.base import ResolvedBinding
 from factotum.model_gateway.providers.openai import OpenAIAdapter
 from factotum.model_gateway.testing import (
+    FakeServer,
+    ask,
     collect_events,
+    events,
     json_response,
     mock_client,
     resolved,
@@ -56,35 +56,6 @@ def binding_for(
         options=options,
     )
     return resolved(binding, base_url=OFFICIAL if official else LOCAL_SERVER, api_key=api_key)
-
-
-def ask(text: str = "hello", **fields: Any) -> ChatRequest:
-    return ChatRequest(messages=(ChatMessage(role=MessageRole.USER, content=text),), **fields)
-
-
-class Wire:
-    """A fake server: answers as told, one response per request, and keeps what it received."""
-
-    def __init__(self, *responses: httpx.Response) -> None:
-        self.requests: list[httpx.Request] = []
-        self._responses = list(responses)
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        return self._responses.pop(0)
-
-    @property
-    def client(self) -> httpx.AsyncClient:
-        return mock_client(self)
-
-    @property
-    def request(self) -> httpx.Request:
-        return self.requests[-1]
-
-    @property
-    def sent(self) -> dict[str, Any]:
-        body: dict[str, Any] = json.loads(self.request.content)
-        return body
 
 
 def completion(
@@ -122,13 +93,6 @@ USAGE_CHUNK = (
     None,
     {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}},
 )
-
-
-async def events(stream: AsyncIterator[EventUnion]) -> list[EventUnion]:
-    got, error = await collect_events(stream)
-    if error is not None:
-        raise error
-    return got
 
 
 def error_response(
@@ -177,7 +141,7 @@ class TestStructuredOutputSupport:
 
 class TestChatRequest:
     async def test_the_request_goes_to_the_chat_completions_endpoint(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask())
 
@@ -185,7 +149,7 @@ class TestChatRequest:
         assert str(wire.request.url) == f"{OFFICIAL}/chat/completions"
 
     async def test_the_key_travels_only_in_the_authorization_header(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask())
 
@@ -194,7 +158,7 @@ class TestChatRequest:
         assert KEY not in wire.request.content.decode()
 
     async def test_a_local_server_without_a_key_gets_no_authorization_header(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
         local = binding_for(ProviderKind.OPENAI_COMPATIBLE, api_key=None)
 
         await OpenAIAdapter(ProviderKind.OPENAI_COMPATIBLE).chat(wire.client, local, ask())
@@ -205,7 +169,7 @@ class TestChatRequest:
     async def test_the_model_is_the_one_of_the_binding_and_the_messages_keep_their_roles(
         self,
     ) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
         request = ChatRequest(
             messages=(
                 ChatMessage(role=MessageRole.SYSTEM, content="Be brief."),
@@ -228,14 +192,14 @@ class TestChatRequest:
         }
 
     async def test_nothing_is_sent_that_nobody_asked_for(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask())
 
         assert set(wire.sent) == {"model", "messages"}
 
     async def test_openai_takes_max_completion_tokens(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask(max_output_tokens=200))
 
@@ -243,7 +207,7 @@ class TestChatRequest:
         assert "max_tokens" not in wire.sent
 
     async def test_a_compatible_server_takes_max_tokens(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
         local = binding_for(ProviderKind.OPENAI_COMPATIBLE)
 
         await OpenAIAdapter(ProviderKind.OPENAI_COMPATIBLE).chat(
@@ -254,7 +218,7 @@ class TestChatRequest:
         assert "max_completion_tokens" not in wire.sent
 
     async def test_the_cap_of_the_binding_holds_the_callers_limit(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
         capped = binding_for(options=BindingOptions(max_output_tokens=100))
 
         await OpenAIAdapter().chat(wire.client, capped, ask(max_output_tokens=500))
@@ -262,7 +226,7 @@ class TestChatRequest:
         assert wire.sent["max_completion_tokens"] == 100
 
     async def test_the_cap_of_the_binding_applies_when_the_caller_sets_none(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
         capped = binding_for(options=BindingOptions(max_output_tokens=100))
 
         await OpenAIAdapter().chat(wire.client, capped, ask())
@@ -270,7 +234,7 @@ class TestChatRequest:
         assert wire.sent["max_completion_tokens"] == 100
 
     async def test_the_temperature_of_the_caller_wins_over_the_binding(self) -> None:
-        wire = Wire(completion(), completion())
+        wire = FakeServer(completion(), completion())
         warm = binding_for(options=BindingOptions(temperature=0.9))
 
         await OpenAIAdapter().chat(wire.client, warm, ask(temperature=0.1))
@@ -280,7 +244,7 @@ class TestChatRequest:
         assert wire.sent["temperature"] == 0.9
 
     async def test_a_zero_temperature_is_sent(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask(temperature=0))
 
@@ -297,7 +261,7 @@ STRICT_SCHEMA: dict[str, Any] = {
 
 class TestStructuredRequest:
     async def test_a_schema_that_fits_strict_mode_asks_for_it(self) -> None:
-        wire = Wire(completion('{"city": "Rome"}'))
+        wire = FakeServer(completion('{"city": "Rome"}'))
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask(response_schema=STRICT_SCHEMA))
 
@@ -308,14 +272,14 @@ class TestStructuredRequest:
 
     async def test_a_schema_outside_the_strict_subset_is_sent_without_strict(self) -> None:
         loose = {"type": "object", "properties": {"n": {"type": "integer", "minimum": 1}}}
-        wire = Wire(completion('{"n": 2}'))
+        wire = FakeServer(completion('{"n": 2}'))
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask(response_schema=loose))
 
         assert wire.sent["response_format"]["json_schema"] == {"name": "response", "schema": loose}
 
     async def test_strict_mode_needs_an_object_at_the_root(self) -> None:
-        wire = Wire(completion('["a"]'))
+        wire = FakeServer(completion('["a"]'))
         array = {"type": "array", "items": {"type": "string"}}
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask(response_schema=array))
@@ -329,7 +293,7 @@ class TestChatAnswer:
             "Hi there!", usage={"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12}
         )
 
-        result = await OpenAIAdapter().chat(Wire(answer).client, binding_for(), ask())
+        result = await OpenAIAdapter().chat(FakeServer(answer).client, binding_for(), ask())
 
         assert result.text == "Hi there!"
         assert result.finish_reason is FinishReason.STOP
@@ -349,26 +313,28 @@ class TestChatAnswer:
     )
     async def test_finish_reasons_are_mapped(self, raw: str | None, expected: FinishReason) -> None:
         result = await OpenAIAdapter().chat(
-            Wire(completion(finish=raw)).client, binding_for(), ask()
+            FakeServer(completion(finish=raw)).client, binding_for(), ask()
         )
 
         assert result.finish_reason is expected
 
     async def test_a_server_that_reports_no_usage_gives_none(self) -> None:
-        result = await OpenAIAdapter().chat(Wire(completion()).client, binding_for(), ask())
+        result = await OpenAIAdapter().chat(FakeServer(completion()).client, binding_for(), ask())
 
         assert result.usage is None
 
     async def test_a_refusal_is_a_content_filter_finish_with_the_refusal_as_text(self) -> None:
         answer = completion(None, refusal="I can't help with that.")
 
-        result = await OpenAIAdapter().chat(Wire(answer).client, binding_for(), ask())
+        result = await OpenAIAdapter().chat(FakeServer(answer).client, binding_for(), ask())
 
         assert result.text == "I can't help with that."
         assert result.finish_reason is FinishReason.CONTENT_FILTER
 
     async def test_a_null_content_is_an_empty_text(self) -> None:
-        result = await OpenAIAdapter().chat(Wire(completion(None)).client, binding_for(), ask())
+        result = await OpenAIAdapter().chat(
+            FakeServer(completion(None)).client, binding_for(), ask()
+        )
 
         assert result.text == ""
 
@@ -378,13 +344,13 @@ class TestChatAnswer:
     )
     async def test_an_answer_of_another_shape_is_a_provider_failure(self, body: Any) -> None:
         with pytest.raises(ProviderUnavailableError, match="expected shape"):
-            await OpenAIAdapter().chat(Wire(json_response(body)).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(json_response(body)).client, binding_for(), ask())
 
     async def test_an_answer_that_is_not_json_is_a_provider_failure(self) -> None:
         html = httpx.Response(200, content=b"<html>Welcome to nginx</html>")
 
         with pytest.raises(ProviderUnavailableError, match="not valid JSON"):
-            await OpenAIAdapter().chat(Wire(html).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(html).client, binding_for(), ask())
 
     async def test_unknown_fields_are_ignored(self) -> None:
         body = {
@@ -398,7 +364,9 @@ class TestChatAnswer:
             "system_fingerprint": "fp_1",
         }
 
-        result = await OpenAIAdapter().chat(Wire(json_response(body)).client, binding_for(), ask())
+        result = await OpenAIAdapter().chat(
+            FakeServer(json_response(body)).client, binding_for(), ask()
+        )
 
         assert result.text == "ok"
 
@@ -429,13 +397,13 @@ class TestErrors:
         self, response: httpx.Response, expected: type[Exception]
     ) -> None:
         with pytest.raises(expected):
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
     async def test_the_provider_code_is_kept(self) -> None:
         response = error_response(404, "no such model", code="model_not_found")
 
         with pytest.raises(InvalidRequestError) as caught:
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
         assert caught.value.details["provider_code"] == "model_not_found"
         assert caught.value.details["status"] == 404
@@ -444,7 +412,7 @@ class TestErrors:
         response = error_response(400, "bad", kind="invalid_request_error")
 
         with pytest.raises(InvalidRequestError) as caught:
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
         assert caught.value.details["provider_code"] == "invalid_request_error"
 
@@ -456,7 +424,7 @@ class TestErrors:
         )
 
         with pytest.raises(RateLimitedError) as caught:
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
         assert caught.value.retry_after_s == 3.0
 
@@ -466,7 +434,7 @@ class TestErrors:
         response = error_response(429, "You exceeded your current quota", code="insufficient_quota")
 
         with pytest.raises(ProviderAuthError) as caught:
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
         assert not caught.value.retryable
         assert caught.value.details["provider_code"] == "insufficient_quota"
@@ -503,7 +471,7 @@ class TestErrors:
         self, response: httpx.Response
     ) -> None:
         with pytest.raises(ContextTooLongError):
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
     async def test_the_plainer_error_shapes_of_compatible_servers_are_read(self) -> None:
         detail = json_response({"detail": "model not loaded"}, status=404)
@@ -513,24 +481,24 @@ class TestErrors:
         local = binding_for(ProviderKind.OPENAI_COMPATIBLE)
 
         with pytest.raises(InvalidRequestError, match="model not loaded"):
-            await adapter.chat(Wire(detail).client, local, ask())
+            await adapter.chat(FakeServer(detail).client, local, ask())
         with pytest.raises(ProviderUnavailableError, match="busy"):
-            await adapter.chat(Wire(message).client, local, ask())
+            await adapter.chat(FakeServer(message).client, local, ask())
         with pytest.raises(ProviderUnavailableError, match="out of memory"):
-            await adapter.chat(Wire(text).client, local, ask())
+            await adapter.chat(FakeServer(text).client, local, ask())
 
     async def test_a_body_that_is_not_json_is_still_reported(self) -> None:
         response = httpx.Response(502, content=b"<html>Bad Gateway</html>")
 
         with pytest.raises(ProviderUnavailableError, match="Bad Gateway"):
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
     async def test_a_key_quoted_back_by_the_server_is_redacted(self) -> None:
         message = "Incorrect API key provided: sk-proj-abcdefghijklmnopqrstuvwxyz123456."
         response = error_response(401, message, code="invalid_api_key")
 
         with pytest.raises(ProviderAuthError) as caught:
-            await OpenAIAdapter().chat(Wire(response).client, binding_for(), ask())
+            await OpenAIAdapter().chat(FakeServer(response).client, binding_for(), ask())
 
         assert "abcdefghijklmnop" not in str(caught.value)
 
@@ -544,7 +512,7 @@ class TestErrors:
 
 class TestStreamingRequest:
     async def test_openai_is_asked_for_a_stream_with_usage(self) -> None:
-        wire = Wire(sse_response(delta("Hi", finish="stop"), DONE))
+        wire = FakeServer(sse_response(delta("Hi", finish="stop"), DONE))
 
         await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
@@ -552,7 +520,7 @@ class TestStreamingRequest:
         assert wire.sent["stream_options"] == {"include_usage": True}
 
     async def test_a_compatible_server_is_not_asked_for_usage_by_default(self) -> None:
-        wire = Wire(sse_response(delta("Hi", finish="stop"), DONE))
+        wire = FakeServer(sse_response(delta("Hi", finish="stop"), DONE))
         local = binding_for(ProviderKind.OPENAI_COMPATIBLE)
 
         await events(
@@ -563,7 +531,7 @@ class TestStreamingRequest:
         assert "stream_options" not in wire.sent
 
     async def test_a_compatible_server_can_declare_it_reports_usage(self) -> None:
-        wire = Wire(sse_response(delta("Hi", finish="stop"), DONE))
+        wire = FakeServer(sse_response(delta("Hi", finish="stop"), DONE))
         local = binding_for(
             ProviderKind.OPENAI_COMPATIBLE, options=BindingOptions(stream_usage=True)
         )
@@ -575,7 +543,7 @@ class TestStreamingRequest:
         assert wire.sent["stream_options"] == {"include_usage": True}
 
     async def test_openai_can_be_told_not_to_ask(self) -> None:
-        wire = Wire(sse_response(delta("Hi", finish="stop"), DONE))
+        wire = FakeServer(sse_response(delta("Hi", finish="stop"), DONE))
         quiet = binding_for(options=BindingOptions(stream_usage=False))
 
         await events(OpenAIAdapter().chat_stream(wire.client, quiet, ask()))
@@ -583,7 +551,7 @@ class TestStreamingRequest:
         assert "stream_options" not in wire.sent
 
     async def test_a_plain_request_is_not_a_stream(self) -> None:
-        wire = Wire(completion())
+        wire = FakeServer(completion())
 
         await OpenAIAdapter().chat(wire.client, binding_for(), ask())
 
@@ -593,7 +561,7 @@ class TestStreamingRequest:
 
 class TestStreamingAnswer:
     async def test_the_text_arrives_in_pieces_then_the_usage_then_the_finish(self) -> None:
-        wire = Wire(
+        wire = FakeServer(
             sse_response(
                 delta(role="assistant", content=""),
                 delta("Hel"),
@@ -614,21 +582,21 @@ class TestStreamingAnswer:
         ]
 
     async def test_without_usage_there_is_no_usage_event(self) -> None:
-        wire = Wire(sse_response(delta("Hi"), delta(finish="stop"), DONE))
+        wire = FakeServer(sse_response(delta("Hi"), delta(finish="stop"), DONE))
 
         got = await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
         assert got == [TextDelta(text="Hi"), FinishEvent(reason=FinishReason.STOP)]
 
     async def test_a_cut_off_answer_says_so(self) -> None:
-        wire = Wire(sse_response(delta("Once upon"), delta(finish="length"), DONE))
+        wire = FakeServer(sse_response(delta("Once upon"), delta(finish="length"), DONE))
 
         got = await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
         assert got[-1] == FinishEvent(reason=FinishReason.LENGTH)
 
     async def test_a_refusal_is_streamed_and_finishes_as_a_content_filter(self) -> None:
-        wire = Wire(
+        wire = FakeServer(
             sse_response(
                 delta(refusal="I can't "), delta(refusal="help."), delta(finish="stop"), DONE
             )
@@ -643,27 +611,27 @@ class TestStreamingAnswer:
         ]
 
     async def test_a_server_that_omits_the_done_marker_is_fine_when_it_finished(self) -> None:
-        wire = Wire(sse_response(delta("Hi"), delta(finish="stop")))
+        wire = FakeServer(sse_response(delta("Hi"), delta(finish="stop")))
 
         got = await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
         assert got[-1] == FinishEvent(reason=FinishReason.STOP)
 
     async def test_a_server_that_omits_the_finish_reason_is_fine_when_it_said_done(self) -> None:
-        wire = Wire(sse_response(delta("Hi"), DONE))
+        wire = FakeServer(sse_response(delta("Hi"), DONE))
 
         got = await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
         assert got == [TextDelta(text="Hi"), FinishEvent(reason=FinishReason.OTHER)]
 
     async def test_a_stream_that_just_stops_is_a_provider_failure(self) -> None:
-        wire = Wire(sse_response(delta("Hel"), delta("lo")))
+        wire = FakeServer(sse_response(delta("Hel"), delta("lo")))
 
         with pytest.raises(ProviderUnavailableError, match="before the answer was complete"):
             await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
     async def test_an_error_sent_inside_the_stream_is_raised(self) -> None:
-        wire = Wire(
+        wire = FakeServer(
             sse_response(
                 delta("Hel"),
                 (None, {"error": {"message": "The server had an error", "type": "server_error"}}),
@@ -679,7 +647,7 @@ class TestStreamingAnswer:
         assert "The server had an error" in str(error)
 
     async def test_a_chunk_with_neither_choices_nor_an_error_is_skipped(self) -> None:
-        wire = Wire(
+        wire = FakeServer(
             sse_response(
                 (None, {"id": "chatcmpl-1", "object": "chat.completion.chunk"}), delta("Hi"), DONE
             )
@@ -690,19 +658,21 @@ class TestStreamingAnswer:
         assert got == [TextDelta(text="Hi"), FinishEvent(reason=FinishReason.OTHER)]
 
     async def test_a_chunk_that_is_not_json_is_a_provider_failure(self) -> None:
-        wire = Wire(sse_response((None, "this is not json")))
+        wire = FakeServer(sse_response((None, "this is not json")))
 
         with pytest.raises(ProviderUnavailableError, match="not JSON"):
             await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
     async def test_an_error_status_is_raised_before_any_event(self) -> None:
-        wire = Wire(error_response(429, "slow down", code="rate_limit_exceeded"))
+        wire = FakeServer(error_response(429, "slow down", code="rate_limit_exceeded"))
 
         with pytest.raises(RateLimitedError):
             await events(OpenAIAdapter().chat_stream(wire.client, binding_for(), ask()))
 
     async def test_stopping_early_closes_the_stream_cleanly(self) -> None:
-        wire = Wire(sse_response(delta("a"), delta("b"), delta("c"), delta(finish="stop"), DONE))
+        wire = FakeServer(
+            sse_response(delta("a"), delta("b"), delta("c"), delta(finish="stop"), DONE)
+        )
         stream = OpenAIAdapter().chat_stream(wire.client, binding_for(), ask())
 
         first = await anext(stream)
@@ -726,7 +696,7 @@ class TestEmbeddings:
         return json_response(body)
 
     async def test_the_request_goes_to_the_embeddings_endpoint(self) -> None:
-        wire = Wire(self.vectors([0.1, 0.2], [0.3, 0.4]))
+        wire = FakeServer(self.vectors([0.1, 0.2], [0.3, 0.4]))
         embedding = binding_for()
 
         await OpenAIAdapter().embed(wire.client, embedding, ["first", "second"])
@@ -736,7 +706,7 @@ class TestEmbeddings:
         assert wire.sent == {"model": "gpt-4o-mini", "input": ["first", "second"]}
 
     async def test_dimensions_are_requested_only_when_the_user_declared_them(self) -> None:
-        wire = Wire(self.vectors([0.1, 0.2]))
+        wire = FakeServer(self.vectors([0.1, 0.2]))
         sized = binding_for(options=BindingOptions(dimensions=256))
 
         await OpenAIAdapter().embed(wire.client, sized, ["text"])
@@ -744,7 +714,7 @@ class TestEmbeddings:
         assert wire.sent["dimensions"] == 256
 
     async def test_vectors_and_usage_are_normalized(self) -> None:
-        wire = Wire(
+        wire = FakeServer(
             self.vectors([0.1, 0.2], [0.3, 0.4], usage={"prompt_tokens": 5, "total_tokens": 5})
         )
 
@@ -766,20 +736,22 @@ class TestEmbeddings:
             }
         )
 
-        batch = await OpenAIAdapter().embed(Wire(shuffled).client, binding_for(), ["a", "b", "c"])
+        batch = await OpenAIAdapter().embed(
+            FakeServer(shuffled).client, binding_for(), ["a", "b", "c"]
+        )
 
         assert batch.vectors == ((1.0,), (2.0,), (3.0,))
 
     async def test_a_server_that_sends_no_indexes_is_taken_in_order(self) -> None:
         plain = json_response({"data": [{"embedding": [1.0]}, {"embedding": [2.0]}]})
 
-        batch = await OpenAIAdapter().embed(Wire(plain).client, binding_for(), ["a", "b"])
+        batch = await OpenAIAdapter().embed(FakeServer(plain).client, binding_for(), ["a", "b"])
 
         assert batch.vectors == ((1.0,), (2.0,))
 
     async def test_integers_are_read_as_floats(self) -> None:
         batch = await OpenAIAdapter().embed(
-            Wire(self.vectors([1, 0])).client,
+            FakeServer(self.vectors([1, 0])).client,
             binding_for(),
             ["a"],
         )
@@ -792,13 +764,15 @@ class TestEmbeddings:
     )
     async def test_an_answer_of_another_shape_is_a_provider_failure(self, body: Any) -> None:
         with pytest.raises(ProviderUnavailableError, match="expected shape"):
-            await OpenAIAdapter().embed(Wire(json_response(body)).client, binding_for(), ["a"])
+            await OpenAIAdapter().embed(
+                FakeServer(json_response(body)).client, binding_for(), ["a"]
+            )
 
     async def test_errors_are_mapped_like_the_chat_ones(self) -> None:
         response = error_response(401, "Incorrect API key", code="invalid_api_key")
 
         with pytest.raises(ProviderAuthError):
-            await OpenAIAdapter().embed(Wire(response).client, binding_for(), ["a"])
+            await OpenAIAdapter().embed(FakeServer(response).client, binding_for(), ["a"])
 
     async def test_an_input_that_is_too_long_is_reported_as_such(self) -> None:
         response = error_response(
@@ -808,4 +782,4 @@ class TestEmbeddings:
         )
 
         with pytest.raises(ContextTooLongError):
-            await OpenAIAdapter().embed(Wire(response).client, binding_for(), ["a"])
+            await OpenAIAdapter().embed(FakeServer(response).client, binding_for(), ["a"])

@@ -98,8 +98,9 @@ class BindingOptions(Contract):
     """None means the provider's default; set it to false for a model that lacks the feature."""
 
     num_ctx: int | None = Field(default=None, ge=256)
-    """Ollama only: the context window to request. Defaults to ``max_input_tokens``: leaving it
-    unset lets the server pick a small window and truncate the prompt silently."""
+    """Ollama only: the context window to request, prompt and answer together. Defaults to
+    ``max_input_tokens`` plus room for the answer: leaving it unset lets the server pick a small
+    window and truncate the prompt silently."""
 
     dimensions: int | None = Field(default=None, ge=1)
     """Embeddings only: ask for vectors of this size, where the provider supports it."""

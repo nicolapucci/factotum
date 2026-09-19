@@ -61,6 +61,19 @@ class EmbeddingBatch:
     usage: Usage | None = None
 
 
+def api_url(resolved: ResolvedBinding, path: str) -> str:
+    """The address of an endpoint under the binding's base URL."""
+    return f"{resolved.base_url}/{path}"
+
+
+def bearer_headers(resolved: ResolvedBinding) -> dict[str, str]:
+    """``Authorization: Bearer`` when the binding has a key, no headers otherwise. The key goes
+    in a header and nowhere else: URLs end up in logs."""
+    if resolved.api_key is None:
+        return {}
+    return {"authorization": f"Bearer {resolved.api_key.get_secret_value()}"}
+
+
 def effective_max_output_tokens(resolved: ResolvedBinding, request: ChatRequest) -> int | None:
     """The output limit to send: the caller's, held under the cap the user set on the binding."""
     limits = [
