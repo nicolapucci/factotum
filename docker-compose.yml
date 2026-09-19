@@ -1,0 +1,32 @@
+name: factotum
+
+# The on-premise deployment (a single tenant). Services are added as they are built.
+# Copy .env.example to .env before starting: there is deliberately no default database password.
+
+services:
+  postgres:
+    # Postgres with the pgvector extension. Pinned to an exact version: upgrades are deliberate.
+    image: pgvector/pgvector:0.8.6-pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
+      POSTGRES_PASSWORD: ${FACTOTUM_POSTGRES_PASSWORD:?set FACTOTUM_POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${FACTOTUM_POSTGRES_DB:-factotum}
+    ports:
+      # Loopback only: reachable from this machine for development, never from the network.
+      - "127.0.0.1:${FACTOTUM_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 images keep the data under /var/lib/postgresql/18/docker and declare
+      # /var/lib/postgresql as the volume, so that is where the named volume goes.
+      - postgres_data:/var/lib/postgresql
+      # Runs once, when the database is first created.
+      - ./infra/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres_data:
