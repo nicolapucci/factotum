@@ -1,17 +1,17 @@
 """Helpers for testing adapters and the gateway without a network."""
 
 import json
-from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Any
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
+from typing import Any, Self
 
 import httpx
 from pydantic import SecretStr
 
-from factotum.contracts.chat import ChatMessage, ChatRequest, EventUnion, MessageRole
+from factotum.contracts.chat import ChatMessage, ChatRequest, ChatResult, EventUnion, MessageRole
 from factotum.contracts.errors import FactotumError
-from factotum.contracts.models import Locality, ModelBinding
+from factotum.contracts.models import Locality, ModelBinding, ProviderKind
 from factotum.model_gateway.locality import infer_locality
-from factotum.model_gateway.providers.base import ResolvedBinding
+from factotum.model_gateway.providers.base import EmbeddingBatch, ResolvedBinding
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -101,6 +101,100 @@ def ask(text: str = "hello", **fields: Any) -> ChatRequest:
     return ChatRequest(messages=(ChatMessage(role=MessageRole.USER, content=text),), **fields)
 
 
+class ScriptedAdapter:
+    """A provider adapter that does as told, for testing what is built on top of adapters.
+
+    Each ``will_*`` call queues what the next call does: an answer to return, or an error to raise.
+    A stream is queued as a sequence of events and errors. Everything the adapter was asked is kept.
+    """
+
+    def __init__(self, kind: ProviderKind = ProviderKind.OLLAMA, *, native: bool = True) -> None:
+        self.kind = kind
+        self.native = native
+        self.chats: list[tuple[ResolvedBinding, ChatRequest]] = []
+        self.streams: list[tuple[ResolvedBinding, ChatRequest]] = []
+        self.embeds: list[tuple[ResolvedBinding, tuple[str, ...]]] = []
+        self.stream_endings: list[str] = []
+        self._chat_script: list[ChatResult | Exception] = []
+        self._stream_script: list[Sequence[EventUnion | Exception]] = []
+        self._embed_script: list[EmbeddingBatch | Exception] = []
+
+    def will_chat(self, *outcomes: ChatResult | Exception) -> Self:
+        self._chat_script.extend(outcomes)
+        return self
+
+    def will_stream(self, *items: EventUnion | Exception) -> Self:
+        self._stream_script.append(items)
+        return self
+
+    def will_embed(self, *outcomes: EmbeddingBatch | Exception) -> Self:
+        self._embed_script.extend(outcomes)
+        return self
+
+    def native_structured_output(self, resolved: ResolvedBinding) -> bool:
+        return self.native
+
+    async def chat(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, request: ChatRequest
+    ) -> ChatResult:
+        self.chats.append((resolved, request))
+        outcome = self._chat_script.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def chat_stream(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, request: ChatRequest
+    ) -> AsyncGenerator[EventUnion]:
+        self.streams.append((resolved, request))
+        ending = "closed"
+        try:
+            for item in self._stream_script.pop(0):
+                if isinstance(item, Exception):
+                    ending = "failed"
+                    raise item
+                yield item
+            ending = "completed"
+        finally:
+            self.stream_endings.append(ending)
+
+    async def embed(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, inputs: Sequence[str]
+    ) -> EmbeddingBatch:
+        self.embeds.append((resolved, tuple(inputs)))
+        outcome = self._embed_script.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class TrackedClients:
+    """A client factory whose clients cannot reach any network, and that remembers them, so that a
+    test can check they were closed."""
+
+    def __init__(self) -> None:
+        self.created: list[httpx.AsyncClient] = []
+
+    def __call__(self, resolved: ResolvedBinding) -> httpx.AsyncClient:
+        client = mock_client(_unreachable)
+        self.created.append(client)
+        return client
+
+
+def _unreachable(request: httpx.Request) -> httpx.Response:
+    raise AssertionError(f"unexpected request to {request.url}")
+
+
+class Sleeps:
+    """A stand-in for ``asyncio.sleep``: it does not wait, only remembers the delays asked for."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, delay: float) -> None:
+        self.delays.append(delay)
+
+
 async def collect_events(
     stream: AsyncIterator[EventUnion],
 ) -> tuple[list[EventUnion], FactotumError | None]:
@@ -126,6 +220,9 @@ __all__ = [
     "FakeServer",
     "Handler",
     "Locality",
+    "ScriptedAdapter",
+    "Sleeps",
+    "TrackedClients",
     "ask",
     "collect_events",
     "events",

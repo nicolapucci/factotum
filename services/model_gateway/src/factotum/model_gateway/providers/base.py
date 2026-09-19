@@ -7,7 +7,7 @@ newline-delimited JSON) become iterators. Nothing here knows a particular provid
 
 import email.utils
 import json
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -114,7 +114,9 @@ class ProviderAdapter(Protocol):
 
     def chat_stream(
         self, client: httpx.AsyncClient, resolved: ResolvedBinding, request: ChatRequest
-    ) -> AsyncIterator[EventUnion]: ...
+    ) -> AsyncGenerator[EventUnion]:
+        """Text as it arrives, then the usage if the provider reports it, then the finish, last."""
+        ...
 
     async def embed(
         self, client: httpx.AsyncClient, resolved: ResolvedBinding, inputs: Sequence[str]
