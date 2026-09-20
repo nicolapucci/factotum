@@ -42,6 +42,21 @@ def test_a_built_service_has_its_dockerfile(service: str) -> None:
 def test_the_database_starts_by_default_and_the_services_only_on_request() -> None:
     assert "profiles" not in SERVICES["postgres"]
     assert SERVICES["model-gateway"]["profiles"] == ["services"]
+    assert SERVICES["knowledge"]["profiles"] == ["services"]
+
+
+def test_the_knowledge_service_waits_for_its_database_and_finds_the_gateway_by_name() -> None:
+    knowledge = SERVICES["knowledge"]
+
+    assert knowledge["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert knowledge["environment"]["FACTOTUM_POSTGRES_HOST"] == "postgres"
+    assert knowledge["environment"]["FACTOTUM_KNOWLEDGE_GATEWAY_URL"] == "http://model-gateway:8081"
+
+
+def test_no_service_is_given_a_provider_key_but_the_gateway() -> None:
+    for name, service in SERVICES.items():
+        keys = [key for key in service.get("environment", {}) if key.endswith("_API_KEY")]
+        assert (name == "model-gateway") or not keys, f"{name} is given {keys}"
 
 
 def test_every_factotum_variable_compose_reads_is_documented_in_the_env_example() -> None:
@@ -67,8 +82,9 @@ def test_the_provider_keys_compose_passes_on_are_documented_in_the_env_example()
     assert passed <= documented, f"missing from .env.example: {sorted(passed - documented)}"
 
 
-def test_the_image_does_not_run_as_root() -> None:
-    dockerfile = (REPO_ROOT / "services" / "model_gateway" / "Dockerfile").read_text("utf-8")
+@pytest.mark.parametrize("service", ["model_gateway", "knowledge"])
+def test_the_image_does_not_run_as_root(service: str) -> None:
+    dockerfile = (REPO_ROOT / "services" / service / "Dockerfile").read_text("utf-8")
     users = re.findall(r"^USER\s+(\S+)", dockerfile, re.M)
 
     assert users

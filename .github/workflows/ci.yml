@@ -55,6 +55,9 @@ jobs:
       - name: Build the model gateway image
         run: docker build -f services/model_gateway/Dockerfile -t factotum-model-gateway:ci .
 
+      - name: Build the knowledge service image
+        run: docker build -f services/knowledge/Dockerfile -t factotum-knowledge:ci .
+
   integration:
     name: Integration tests against Postgres with pgvector
     runs-on: ubuntu-latest

@@ -55,5 +55,39 @@ services:
       # Loopback only, for development. Services reach it by name on the compose network.
       - "127.0.0.1:${FACTOTUM_GATEWAY_PORT:-8081}:8081"
 
+  knowledge:
+    # Documents in, passages out. Like the gateway it is not started by a plain `docker compose up`:
+    # it needs the "services" profile, and until the hub issues real credentials it only runs with
+    # FACTOTUM_ENVIRONMENT=development.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/knowledge/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      # The database of this deployment, by its name on the compose network.
+      FACTOTUM_POSTGRES_HOST: postgres
+      FACTOTUM_POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
+      FACTOTUM_POSTGRES_PASSWORD: ${FACTOTUM_POSTGRES_PASSWORD:?set FACTOTUM_POSTGRES_PASSWORD in .env}
+      FACTOTUM_POSTGRES_DB: ${FACTOTUM_POSTGRES_DB:-factotum}
+      # It never knows a model or a key: every embedding is asked of the gateway.
+      FACTOTUM_KNOWLEDGE_GATEWAY_URL: http://model-gateway:8081
+      FACTOTUM_KNOWLEDGE_MAX_UPLOAD_MB: ${FACTOTUM_KNOWLEDGE_MAX_UPLOAD_MB:-25}
+      FACTOTUM_KNOWLEDGE_WORKERS: ${FACTOTUM_KNOWLEDGE_WORKERS:-2}
+      FACTOTUM_KNOWLEDGE_CHILD_TOKENS: ${FACTOTUM_KNOWLEDGE_CHILD_TOKENS:-320}
+      FACTOTUM_KNOWLEDGE_PARENT_TOKENS: ${FACTOTUM_KNOWLEDGE_PARENT_TOKENS:-1200}
+      FACTOTUM_KNOWLEDGE_EMBED_BATCH: ${FACTOTUM_KNOWLEDGE_EMBED_BATCH:-32}
+      FACTOTUM_KNOWLEDGE_INDEX_THRESHOLD: ${FACTOTUM_KNOWLEDGE_INDEX_THRESHOLD:-2000}
+    ports:
+      # Loopback only, for development. Services reach it by name on the compose network.
+      - "127.0.0.1:${FACTOTUM_KNOWLEDGE_PORT:-8082}:8082"
+
 volumes:
   postgres_data:
