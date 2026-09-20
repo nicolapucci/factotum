@@ -1,8 +1,10 @@
+import ssl
 from collections.abc import Sequence
 
 import httpx
 import pytest
 
+from factotum.common import urlguard
 from factotum.common.urlguard import (
     GuardedTransport,
     IpClass,
@@ -319,6 +321,27 @@ class TestGuardedTransport:
 
         assert response.status_code == 200
         assert inner.requests[0].url.host == "192.168.1.50"
+
+    async def test_the_tls_settings_are_made_once_however_many_clients_there_are(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        made: list[ssl.SSLContext] = []
+        real = httpx.create_ssl_context
+
+        def counting() -> ssl.SSLContext:
+            context = real()
+            made.append(context)
+            return context
+
+        monkeypatch.setattr(urlguard, "_tls", None)
+        monkeypatch.setattr(httpx, "create_ssl_context", counting)
+
+        clients = [guarded_client(PUBLIC_ONLY) for _ in range(5)]
+        for client in clients:
+            await client.aclose()
+
+        assert len(made) == 1
+        assert urlguard.shared_tls_context() is made[0]
 
     async def test_closing_the_transport_closes_the_inner_one(self) -> None:
         closed: list[bool] = []

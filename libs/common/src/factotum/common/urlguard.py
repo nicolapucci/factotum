@@ -24,6 +24,7 @@ differently the second time it is resolved therefore cannot slip through.
 import asyncio
 import ipaddress
 import socket
+import ssl
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -171,6 +172,23 @@ async def check_url(url: str, policy: UrlPolicy, *, resolver: Resolver | None = 
     await vet_url(url, policy, resolver=resolver)
 
 
+_tls: ssl.SSLContext | None = None
+
+
+def shared_tls_context() -> ssl.SSLContext:
+    """The TLS settings every guarded connection uses, made once.
+
+    Making them loads the certificate authorities and takes about 300 ms on Windows: a client made
+    for each request (as the gateway does) would pay that for every call to a model, even one on the
+    same machine over plain HTTP. A context holds no connection and nothing that changes, so
+    connections can share it.
+    """
+    global _tls
+    if _tls is None:
+        _tls = httpx.create_ssl_context()
+    return _tls
+
+
 class GuardedTransport(httpx.AsyncBaseTransport):
     """An httpx transport that vets every request, redirects included, and pins the address."""
 
@@ -182,7 +200,9 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         resolver: Resolver | None = None,
     ) -> None:
         self._policy = policy
-        self._inner = inner if inner is not None else httpx.AsyncHTTPTransport()
+        self._inner = (
+            inner if inner is not None else httpx.AsyncHTTPTransport(verify=shared_tls_context())
+        )
         self._resolver = resolver
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
