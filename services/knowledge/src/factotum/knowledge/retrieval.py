@@ -16,6 +16,7 @@ is data, never an instruction.
 
 import asyncio
 import contextlib
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
@@ -43,8 +44,41 @@ from factotum.knowledge.fusion import DEFAULT_K, reciprocal_rank_fusion
 from factotum.knowledge.policy import can_read
 from factotum.knowledge.store import Hit, KnowledgeStore
 
-_MIN_CANDIDATES = 20
+_PIECES_PER_PASSAGE = 8
+_MIN_CANDIDATES = 40
 _MAX_CANDIDATES = 200
+"""Pieces each search looks at, not passages: the pieces of one section are one passage, so a
+ranking of twenty pieces holds far fewer than twenty sections. Measured on a book
+(docs/knowledge.md): questions found their answer in the first five passages 84% of the time with
+twenty pieces and 93% with forty."""
+
+_CODE_LIKE = re.compile(r"\d|\w[-_./:@#\\]\w")
+"""A token with a digit in it, or words joined by punctuation: ``E-4021``, ``file.txt``."""
+
+_NAME_WORDS = 2
+_QUESTION_WORDS_WEIGHT = 0.5
+
+
+def words_weight(query: str) -> float:
+    """How much the words count against the meaning, for this query.
+
+    A name, a code, a couple of words, as they are written, are what a vector blurs and the words
+    find: they count as much as the meaning. A question about something is what a vector understands
+    best; the words it shares with a passage are mostly common ones (and, when the passage is in
+    another language, only accidental ones), so the words count for half: they lift what the
+    meaning also found, and cannot bury it under what only they found. Measured on a book of 931
+    pages, with questions in the language of the book and in another: at a full weight the search by
+    both is worse than by meaning alone when the model cannot cross languages.
+
+    Half is a strong lever, and that is why it is only for a question: reciprocal rank fusion
+    flattens, so a piece that only a list counting half found lands below the sixty-first of the
+    other (while one that both found is lifted past the meaning's first), and a name found only by
+    the words would never be seen.
+    """
+    tokens = query.split()
+    if len(tokens) <= _NAME_WORDS or any(_CODE_LIKE.search(token) for token in tokens):
+        return 1.0
+    return _QUESTION_WORDS_WEIGHT
 
 
 @dataclass(slots=True)
@@ -69,7 +103,7 @@ class Retriever:
         collections = await self._visible(principal, request.collection_ids)
         if not collections:
             return SearchResult()
-        candidates = min(max(request.limit * 4, _MIN_CANDIDATES), _MAX_CANDIDATES)
+        candidates = min(max(request.limit * _PIECES_PER_PASSAGE, _MIN_CANDIDATES), _MAX_CANDIDATES)
 
         owners: dict[Owner, list[Collection]] = {}
         for collection in collections:
@@ -88,14 +122,16 @@ class Retriever:
         )
         warnings = [warning for found in by_meaning for warning in found.warnings]
         return SearchResult(
-            passages=self._passages(by_words, list(by_meaning), request.limit),
+            passages=self._passages(
+                by_words, list(by_meaning), request.limit, words_weight(request.query)
+            ),
             warnings=tuple(warnings),
         )
 
     async def _visible(
         self, principal: Principal, wanted: Sequence[CollectionId] | None
     ) -> list[Collection]:
-        everything = await self._store.list_collections(principal.tenant_id)
+        everything = await self._store.list_collections(principal.tenant_id, counts=False)
         visible = [c for c in everything if can_read(principal, c)]
         if wanted is None:
             return visible
@@ -182,7 +218,7 @@ class Retriever:
 
     @staticmethod
     def _passages(
-        by_words: list[Hit], by_meaning: list[_ByMeaning], limit: int
+        by_words: list[Hit], by_meaning: list[_ByMeaning], limit: int, words: float = 1.0
     ) -> tuple[Passage, ...]:
         # One ranking by words, and one by meaning for each space that was searched.
         spaces: dict[str, list[Hit]] = {}
@@ -192,11 +228,14 @@ class Retriever:
         meaning = [sorted(hits, key=lambda h: -h.score) for hits in spaces.values()]
 
         rankings = [by_words, *meaning]
-        fused = reciprocal_rank_fusion([[hit.chunk_id for hit in ranking] for ranking in rankings])
+        weights = [words, *([1.0] * len(meaning))]
+        fused = reciprocal_rank_fusion(
+            [[hit.chunk_id for hit in ranking] for ranking in rankings], weights=weights
+        )
         hits: dict[ChunkId, Hit] = {hit.chunk_id: hit for ranking in rankings for hit in ranking}
         found_by_words = {hit.chunk_id for hit in by_words}
         found_by_meaning = {hit.chunk_id for ranking in meaning for hit in ranking}
-        best = len(rankings) / (DEFAULT_K + 1)
+        best = sum(weights) / (DEFAULT_K + 1)
 
         passages: list[Passage] = []
         parents: set[UUID] = set()

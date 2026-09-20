@@ -1,6 +1,6 @@
 """Hybrid search, against the store in memory and an embedder that needs no model."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -10,6 +10,7 @@ from factotum.contracts.errors import (
     GatewayUnavailableError,
 )
 from factotum.contracts.identity import Principal, Role
+from factotum.contracts.ids import ChunkId, CollectionId, DocumentId
 from factotum.contracts.knowledge import (
     Collection,
     CollectionOwner,
@@ -18,6 +19,8 @@ from factotum.contracts.knowledge import (
     SearchWarningCode,
 )
 from factotum.contracts.testing import make_tenant_principal, make_user_principal
+from factotum.knowledge.retrieval import Retriever, _ByMeaning, words_weight
+from factotum.knowledge.store import Hit
 from factotum.knowledge.testing import Harness
 
 ADMIN = frozenset({Role.ADMIN})
@@ -162,6 +165,99 @@ class TestFinding:
         assert "firmware" in result.passages[0].context
 
 
+def hit(name: str, parent: UUID | None = None) -> Hit:
+    return Hit(
+        chunk_id=ChunkId(uuid4()),
+        collection_id=CollectionId(uuid4()),
+        document_id=DocumentId(uuid4()),
+        parent_id=uuid4() if parent is None else parent,
+        document_title=name,
+        source=None,
+        text=name,
+        context=name,
+        headings=(),
+        page=None,
+        language=None,
+        score=1.0,
+    )
+
+
+class TestHowTheWordsCount:
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "router",
+            "reset button",
+            "ssh-keygen",
+            "chmod 755",
+            "file.txt",
+            "E-4021",
+            "192.168.1.1",
+            "error 404 not found here",
+            "path/to/thing is missing",
+            "snake_case is what it is called",
+        ],
+    )
+    def test_a_name_or_a_couple_of_words_or_a_code_count_as_much_as_the_meaning(
+        self, query: str
+    ) -> None:
+        assert words_weight(query) == 1.0
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "how do I restore the router to factory settings?",
+            "what does the warranty not cover",
+            "come faccio a ripristinare il router alle impostazioni di fabbrica?",
+            "I want to reset the router.",
+            "does it work at all, really?",
+        ],
+    )
+    def test_a_question_counts_for_half(self, query: str) -> None:
+        assert words_weight(query) == 0.5
+
+    def test_a_full_stop_at_the_end_of_a_word_is_not_a_code(self) -> None:
+        assert words_weight("please reset the router.") == 0.5
+
+    def test_what_only_the_words_found_is_buried_under_a_question_and_seen_under_a_name(
+        self,
+    ) -> None:
+        only_words = hit("found by the words alone")
+        meaning = [hit(f"found by meaning {n}") for n in range(8)]
+        found = _ByMeaning(space_id="emb", hits=meaning)
+
+        as_a_name = Retriever._passages([only_words], [found], limit=8, words=1.0)
+        as_a_question = Retriever._passages([only_words], [found], limit=8, words=0.5)
+
+        assert only_words.chunk_id in [p.chunk_id for p in as_a_name]
+        assert as_a_name[0].chunk_id == only_words.chunk_id
+        assert only_words.chunk_id not in [p.chunk_id for p in as_a_question]
+
+    def test_what_both_found_comes_first_however_the_words_count(self) -> None:
+        both = hit("found by both")
+        meaning = [hit("the best by meaning"), both]
+        found = _ByMeaning(space_id="emb", hits=meaning)
+
+        for weight in (1.0, 0.5):
+            passages = Retriever._passages(
+                [both, hit("only words")], [found], limit=3, words=weight
+            )
+            assert passages[0].chunk_id == both.chunk_id
+            assert passages[0].matched_by == ("vector", "text")
+
+    def test_the_score_is_a_share_of_the_best_that_could_be_had_at_that_weight(self) -> None:
+        only = hit("alone")
+
+        for weight in (1.0, 0.5):
+            [passage] = Retriever._passages([only], [], limit=1, words=weight)
+            assert passage.score == pytest.approx(1.0)
+
+        both = hit("both")
+        found = _ByMeaning(space_id="emb", hits=[both])
+        [passage] = Retriever._passages([both], [found], limit=1, words=0.5)
+        assert passage.score == pytest.approx(1.0)
+
+
 class TestWhereItLooks:
     async def test_it_looks_only_at_the_collections_asked_for(self, alice: Principal) -> None:
         harness = Harness()
@@ -279,6 +375,46 @@ class TestOneQueryOneEmbeddingPerOwner:
         result = await harness.service.search(alice, search("restore router factory settings"))
 
         assert result.passages[0].document_title == "Exact"
+
+
+class TestHowMuchEachSearchLooksAt:
+    @pytest.fixture
+    async def asked(
+        self, alice: Principal, shop: tuple[Harness, Collection], monkeypatch: pytest.MonkeyPatch
+    ) -> dict[str, list[int]]:
+        harness, _ = shop
+        limits: dict[str, list[int]] = {"text": [], "vector": []}
+        search_text, search_vector = harness.store.search_text, harness.store.search_vector
+
+        async def spy_text(*args: object, limit: int, **more: object) -> list[Hit]:
+            limits["text"].append(limit)
+            return await search_text(*args, limit=limit, **more)  # type: ignore[arg-type]
+
+        async def spy_vector(*args: object, limit: int, **more: object) -> list[Hit]:
+            limits["vector"].append(limit)
+            return await search_vector(*args, limit=limit, **more)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(harness.store, "search_text", spy_text)
+        monkeypatch.setattr(harness.store, "search_vector", spy_vector)
+        return limits
+
+    @pytest.mark.parametrize(
+        ("wanted", "looked_at"),
+        [(1, 40), (5, 40), (6, 48), (10, 80), (25, 200), (50, 200)],
+    )
+    async def test_both_searches_look_at_several_pieces_for_each_passage_wanted(
+        self,
+        alice: Principal,
+        shop: tuple[Harness, Collection],
+        asked: dict[str, list[int]],
+        wanted: int,
+        looked_at: int,
+    ) -> None:
+        harness, _ = shop
+
+        await harness.service.search(alice, search("router reset", limit=wanted))
+
+        assert asked == {"text": [looked_at], "vector": [looked_at]}
 
 
 class TestWhenSearchingByMeaningIsNotPossible:
