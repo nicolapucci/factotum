@@ -1,14 +1,18 @@
-"""Documents built for the tests, so that no binary fixture lives in the repository."""
+"""Documents built for the tests, so that no binary fixture lives in the repository, and the
+stores the same tests run against."""
 
 import io
 import textwrap
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 
 import pytest
+import pytest_asyncio
 from docx import Document as WordDocument
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.pdfencrypt import StandardEncryption
 from reportlab.pdfgen import canvas
+
+from factotum.knowledge.store import InMemoryStore, KnowledgeStore
 
 PdfFactory = Callable[..., bytes]
 DocxFactory = Callable[..., bytes]
@@ -114,3 +118,9 @@ def docx() -> DocxFactory:
 @pytest.fixture
 def blank_pdf() -> PdfFactory:
     return build_blank_pdf
+
+
+@pytest_asyncio.fixture(params=["memory"])
+async def store(request: pytest.FixtureRequest) -> AsyncIterator[KnowledgeStore]:
+    """A store to run the contract tests against: each implementation, in turn."""
+    yield InMemoryStore()
