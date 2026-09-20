@@ -192,6 +192,13 @@ class GatewayError(FactotumError):
     retryable: ClassVar[bool] = False
 
 
+class KnowledgeUnavailableError(FactotumError):
+    """The knowledge service could not be reached, or did not answer with a search result."""
+
+    code = "knowledge_unavailable"
+    retryable: ClassVar[bool] = True
+
+
 class GatewayUnavailableError(GatewayError):
     """The model gateway could not be reached, or is failing for a while: asking again may help."""
 
