@@ -151,6 +151,10 @@ class DocumentNotFoundError(NotFoundError):
     code = "document_not_found"
 
 
+class ConversationNotFoundError(NotFoundError):
+    code = "conversation_not_found"
+
+
 class ConflictError(FactotumError):
     """The request clashes with what already exists (a name in use, a document already there)."""
 

@@ -25,6 +25,7 @@ src = [
   "libs/model_client/src",
   "services/model_gateway/src",
   "services/knowledge/src",
+  "services/conversation/src",
 ]
 
 [tool.ruff.lint]
@@ -65,6 +66,7 @@ mypy_path = [
   "libs/model_client/src",
   "services/model_gateway/src",
   "services/knowledge/src",
+  "services/conversation/src",
 ]
 explicit_package_bases = true
 namespace_packages = true
@@ -103,6 +105,7 @@ source = [
   "libs/model_client/src",
   "services/model_gateway/src",
   "services/knowledge/src",
+  "services/conversation/src",
 ]
 
 [tool.coverage.report]
