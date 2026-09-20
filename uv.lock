@@ -13,6 +13,7 @@ members = [
     "factotum-contracts",
     "factotum-devices",
     "factotum-model-gateway",
+    "factotum-web",
 ]
 
 [[package]]
@@ -335,6 +336,7 @@ source = { editable = "services/model_gateway" }
 dependencies = [
     { name = "factotum-common" },
     { name = "factotum-contracts" },
+    { name = "factotum-web" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
@@ -347,12 +349,28 @@ dependencies = [
 requires-dist = [
     { name = "factotum-common", editable = "libs/common" },
     { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "factotum-web", editable = "libs/web" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", specifier = ">=0.32" },
+]
+
+[[package]]
+name = "factotum-web"
+version = "0.0.0"
+source = { editable = "libs/web" }
+dependencies = [
+    { name = "factotum-contracts" },
+    { name = "fastapi" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "fastapi", specifier = ">=0.115" },
 ]
 
 [[package]]

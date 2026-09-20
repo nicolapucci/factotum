@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
   "factotum-contracts",
   "factotum-common",
+  "factotum-web",
   "fastapi>=0.115",
   "httpx>=0.28",
   "jsonschema>=4.23",
@@ -24,3 +25,4 @@ packages = ["src/factotum"]
 [tool.uv.sources]
 factotum-contracts = { workspace = true }
 factotum-common = { workspace = true }
+factotum-web = { workspace = true }

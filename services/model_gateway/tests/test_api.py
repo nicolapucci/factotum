@@ -5,7 +5,6 @@ from typing import Any
 
 import httpx
 import pytest
-from starlette.types import Message, Receive, Scope, Send
 
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEVICE_HEADER, SUBJECT_HEADER, DevAuthenticator
@@ -42,13 +41,7 @@ from factotum.contracts.errors import (
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.models import BindingOptions, ModelBinding, ModelRole, ProviderKind
 from factotum.contracts.testing import make_model_binding, make_tenant_id, make_user_id
-from factotum.model_gateway.api import (
-    MAX_BODY_BYTES,
-    BodySizeLimit,
-    _server_sent,
-    create_app,
-    status_for,
-)
+from factotum.model_gateway.api import MAX_BODY_BYTES, _server_sent, create_app
 from factotum.model_gateway.bindings import InMemoryBindingRepository
 from factotum.model_gateway.core import ModelGateway
 from factotum.model_gateway.providers.base import EmbeddingBatch
@@ -327,58 +320,6 @@ class TestInvalidRequests:
 
         assert response.status_code == 413
         assert response.json()["error"]["code"] == "payload_too_large"
-
-
-class TestBodySizeLimit:
-    """The guard on its own, around an application that only says it was reached."""
-
-    @staticmethod
-    async def reached(limit: int, scope: Scope) -> tuple[bool, list[Message]]:
-        seen: list[Message] = []
-        was_reached = False
-
-        async def app(scope: Scope, receive: Receive, send: Send) -> None:
-            nonlocal was_reached
-            was_reached = True
-
-        async def receive() -> Message:
-            return {"type": "http.request", "body": b"", "more_body": False}
-
-        async def send(message: Message) -> None:
-            seen.append(message)
-
-        await BodySizeLimit(app, max_bytes=limit)(scope, receive, send)
-        return was_reached, seen
-
-    @staticmethod
-    def http(length: bytes | None) -> Scope:
-        headers = [] if length is None else [(b"content-length", length)]
-        return {"type": "http", "headers": headers}
-
-    async def test_a_body_at_the_limit_gets_through(self) -> None:
-        was_reached, sent = await self.reached(10, self.http(b"10"))
-
-        assert was_reached
-        assert sent == []
-
-    async def test_a_body_over_the_limit_is_refused_and_never_reaches_the_application(self) -> None:
-        was_reached, sent = await self.reached(10, self.http(b"11"))
-
-        assert not was_reached
-        assert sent[0]["status"] == 413
-
-    @pytest.mark.parametrize("length", [None, b"", b"many"])
-    async def test_a_body_that_declares_no_usable_length_is_not_judged_here(
-        self, length: bytes | None
-    ) -> None:
-        was_reached, _ = await self.reached(10, self.http(length))
-
-        assert was_reached
-
-    async def test_what_is_not_http_passes_through(self) -> None:
-        was_reached, _ = await self.reached(10, {"type": "lifespan"})
-
-        assert was_reached
 
 
 class Upstream:
@@ -688,12 +629,6 @@ class TestErrorMapping:
         }
         assert SECRET not in response.text
         assert any("unhandled error" in record.getMessage() for record in caplog.records)
-
-    def test_an_error_without_a_registered_status_gets_the_one_of_its_closest_parent(self) -> None:
-        class OddError(ProviderUnavailableError):
-            pass
-
-        assert status_for(OddError("odd")) == 502
 
 
 class TestDocumentation:

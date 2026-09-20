@@ -20,6 +20,7 @@ src = [
   "libs/contracts/src",
   "libs/common/src",
   "libs/devices/src",
+  "libs/web/src",
   "services/model_gateway/src",
 ]
 
@@ -54,6 +55,7 @@ mypy_path = [
   "libs/contracts/src",
   "libs/common/src",
   "libs/devices/src",
+  "libs/web/src",
   "services/model_gateway/src",
 ]
 explicit_package_bases = true
@@ -84,6 +86,7 @@ source = [
   "libs/contracts/src",
   "libs/common/src",
   "libs/devices/src",
+  "libs/web/src",
   "services/model_gateway/src",
 ]
 
