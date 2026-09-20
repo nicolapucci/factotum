@@ -159,6 +159,29 @@ class TestTheIndex:
 
         assert vector_index_name(collection.id) in str(plan)
 
+    async def test_the_planner_is_told_the_pieces_have_vectors_when_the_index_is_made(
+        self, pg: PostgresStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(pg, tenant, owner, dimensions=8)
+        document = await pg.add_document(tenant, new_document(collection.id))
+        chunks = pieces(*[f"piece number {n}" for n in range(6)])
+        # As after the ingestion of a book: the table is looked at while its pieces have no vector,
+        # and the vectors come after. Left like that, the planner finds it cheaper to sort a whole
+        # collection than to use the index (found by a real book, at 1024 dimensions).
+        await indexed(pg, tenant, collection, document, chunks)
+        async with pg.database.connection() as connection:
+            await connection.execute("ANALYZE knowledge.chunks")
+        await indexed(pg, tenant, collection, document, chunks, [basis(8, n) for n in range(6)])
+
+        await pg.optimize(tenant, collection.id)
+
+        async with pg.database.connection() as connection:
+            without_a_vector = await connection.fetchval(
+                "SELECT null_frac FROM pg_stats "
+                "WHERE schemaname = 'knowledge' AND tablename = 'chunks' AND attname = 'embedding'"
+            )
+        assert without_a_vector == 0
+
     async def test_the_answers_are_the_same_with_the_index_as_without(
         self, pg: PostgresStore, tenant: TenantId, owner: Owner
     ) -> None:

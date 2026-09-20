@@ -67,6 +67,10 @@ INDEX_BUILD_SETTINGS = {
 }
 """What a session that builds an index is given, and gives back afterwards."""
 
+_ANALYZE_SQL = "ANALYZE knowledge.chunks (collection_id, tenant_id, embedding)"
+"""What the planner has to know to choose the index: how the pieces are spread over collections and
+tenants, and that they have vectors. Only these columns, so that it costs milliseconds."""
+
 _MAX_ERROR_CHARS = 2000
 
 
@@ -461,6 +465,10 @@ class PostgresStore:
                 finally:
                     for setting in INDEX_BUILD_SETTINGS:
                         await connection.execute(f"RESET {setting}")
+                # The table was last looked at while its pieces had no vector (the ingestion puts
+                # them in first), and the planner then finds sorting a whole collection cheaper
+                # than the index it was just given. Found by a real book, at 1024 dimensions.
+                await connection.execute(_ANALYZE_SQL)
             finally:
                 await connection.execute("SELECT pg_advisory_unlock(hashtext($1))", name)
 
