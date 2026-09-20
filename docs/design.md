@@ -1,10 +1,11 @@
 # Factotum: design (v1)
 
-Status: **Slices 0, 1 and 2 are implemented**: the foundations and shared contracts, the
-`model-gateway` service and the `knowledge` service. The other services are not started yet.
+Status: **Slices 0 to 3 are implemented**: the foundations and shared contracts, the
+`model-gateway`, `knowledge` and `conversation` services. The other services are not started yet.
 Sections say whether something is *implemented* or *planned*. The reasons behind the biggest
-decisions live in [`decisions/`](decisions/README.md); the gateway and the knowledge service have
-their own documents, [`model-gateway.md`](model-gateway.md) and [`knowledge.md`](knowledge.md).
+decisions live in [`decisions/`](decisions/README.md); the services have their own documents,
+[`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md) and
+[`conversation.md`](conversation.md).
 
 ## 1. What Factotum is
 
@@ -57,7 +58,7 @@ flowchart TD
 | Service | Responsibility | What it does not know |
 | --- | --- | --- |
 | `edge` | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement; later the voice pipeline | documents, models |
-| `conversation` | One conversation turn: routing with structured output, retrieval from `knowledge` and the web with timeouts and partial degradation, context budgeting, streamed answers with citations, short memory, the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
+| `conversation` (*implemented* for text) | One conversation turn: retrieval from `knowledge` (and later the web) with timeouts and partial degradation, context budgeting, streamed answers with citations, and no history unless the message refers to it, when what was said is looked up in a log; later routing with structured output and the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
 | `knowledge` (*implemented*) | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
 | `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
 | `actions` | Skills (validation, versions, matching), permissions and grants, the policy decision, approvals, audit, dispatch of device commands | how a model was chosen |
@@ -256,9 +257,26 @@ tenant, every query filters by it, and ownership follows section 4. With many te
 README recommends list partitioning by tenant and iterative index scans, which stay behind the store
 interface.
 
-## 9. Deployment
+## 9. Conversation
 
-- **Compose** (*implemented for Postgres, the model gateway and the knowledge service*): pinned
+*Implemented* (text), in `services/conversation`: how it works, its API and its configuration are in
+[`conversation.md`](conversation.md), and the reasons in
+[ADR 0012](decisions/0012-conversation-no-history-in-a-turn-a-log-to-search-when-referred-to.md).
+In short: a turn answers a message from the user's documents (asked of `knowledge`) and **carries no
+history**. Every exchange is saved in a log of its own, and a small model in the `chat.fast` role,
+reading the message alone, says whether the message refers to an earlier one: to the exchange just
+before (the last three come back) or to something said earlier (the log is searched by words and by
+meaning, in the period the message names). Nothing else brings the past into a turn. The model is
+shown examples as turns of its own conversation and says why before it says which: that is what
+made three different small models read the messages alike (measured in `conversation.md`). The
+answer is streamed with its citations, and a turn that had somebody else's words in it (a passage of
+a document, or an earlier exchange that had) says so, which is what `authorize()` needs of the
+actions of slice 5a. Not there yet: the web, actions and routing between an answer and an action,
+voice.
+
+## 10. Deployment
+
+- **Compose** (*implemented for Postgres and the three services*): pinned
   images, no default database password, ports published on loopback only. The service images are
   built from the repository root, run as a non-root user, and start only with `--profile services`;
   the knowledge service waits for the database and finds the gateway by its name, and only the
@@ -275,7 +293,7 @@ interface.
   providers is already in place: a multi-tenant deployment reaches the public internet only
   (ADR 0010).
 
-## 10. Quality
+## 11. Quality
 
 - Unit tests with every change, no real network (`pytest-socket` allows loopback only), warnings are
   errors, coverage floor 85%. Fakes over mocks; contract tests shared between a fake and the real
@@ -285,14 +303,14 @@ interface.
 - `ruff` (with security, datetime and blind-except rules), `mypy --strict`, `uv` with a lockfile.
 - CI: lint, format, types, unit tests with coverage, compose validation; actions pinned to a commit.
 
-## 11. Roadmap
+## 12. Roadmap
 
 | # | Content | Status |
 | --- | --- | --- |
 | 0 | Foundations: workspace, tooling, CI, shared contracts, `authorize()`, redaction and logging, settings, URL guard, `SystemDevice`, compose with Postgres | done |
 | 1 | `model-gateway`: five adapters, structured output, streaming, retries, HTTP API, container image | done |
 | 2 | `knowledge`: five formats, hybrid search, re-indexing, HTTP API, container image | done |
-| 3 | `conversation` (text) | |
+| 3 | `conversation` (text): a turn with no history, a log searched when a message refers to it, streamed answers with citations, container image | done |
 | 4 | `edge` and a terminal client with device profiles | |
 | 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner) | |
 | 5b | `runner` and device command dispatch | |
@@ -302,13 +320,20 @@ interface.
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |
 
-## 12. Open questions
+## 13. Open questions
 
 - Asymmetric embedding models want a different prefix or task type for a query and for a document
   (`search_query:` and `search_document:`, Gemini's task types). Neither the gateway nor the
   knowledge service models it yet: the prefix is per model, so its natural home is an option of the
   embedding binding, applied by the gateway.
 - Reading scanned pages needs OCR, which is not done.
+- Whether a message needs a model to tell that it refers to the past. The small model costs a call
+  on every turn of somebody with a past, 0.3 to 1.4 s by model (measured in `conversation.md`);
+  rules could skip it for messages that are plainly self-contained, at the price of a reference now
+  and then missed.
+- Passages come back by nearness, near or not: the conversation service does not yet leave out the
+  ones that are plainly unrelated to the message, and a small model may answer a follow-up from them.
+  It needs the knowledge service to say how near each passage is.
 - Token counting: the gateway leaves it to the provider (`context_too_long`) and to the caller, who
   budgets with the profile. A tokenizer per model family is possible if that proves too coarse.
 

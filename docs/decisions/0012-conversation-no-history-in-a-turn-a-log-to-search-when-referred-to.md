@@ -31,6 +31,13 @@ look for and, if the message says when, a day, a week or a month). It uses the `
 it is not made at all for someone who has no exchange yet. If it fails, the turn goes on without
 history and says so: a follow-up is asked again, an answer is never held up.
 
+**The small model is asked in the way that any small model gets right.** The user chooses the model
+(ADR 0008), and asked for the label straight away three small models were wrong in three different
+ways: one called nearly every follow-up a message that stands alone, another called nearly every
+message a follow-up. What made all three right was two things: the examples are given as turns of
+the conversation the model is in, not as a list in the instructions, and the answer says *why* in a
+few words before it says which kind. The numbers are in `docs/conversation.md`.
+
 **What is consulted is only what was referred to.** A continuation brings the last exchanges of the
 conversation (three). A reference to something earlier searches the log, by words and by meaning at
 once, restricted to the day, week or month asked for, and brings the best three. Each comes with
@@ -55,8 +62,15 @@ conversation of its subject and device that was active in the last half hour, or
 are saved when the answer is complete; one that failed or was abandoned leaves nothing.
 
 **The log is the user's.** It can be listed, read, deleted one conversation at a time or all at once,
-and expires after a number of days if the deployment says so. A user sees only what their own turns
-saved; a shared device only what the tenant's did.
+and expires after a number of days if the deployment says so. Only a person reads or forgets it, and
+only their own. A shared device can be spoken to and remembered (its turns use, and add to, the log
+of the tenant) but is never a way to read or delete what the household said: administration does not
+go through a device (ADR 0004), and the log of the tenant will be managed from the hub.
+
+**A period that a model read is a hint.** The day, week or month that the small model finds in a
+message narrows the search of the log; when nothing in it matches, what was said at any time is
+searched before giving up, because a model now and then names a day the message did not, and what
+was asked for is then not lost. A period that a person asked for through the API is a wall.
 
 ## Alternatives considered
 

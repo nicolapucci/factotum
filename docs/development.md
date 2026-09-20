@@ -32,7 +32,8 @@ libs/common/      authorization, redaction and logging, settings, the SSRF guard
 libs/devices/     the SystemDevice interface and a fake for tests
 libs/web/         what the HTTP interfaces share: errors, authentication, body limits
 libs/db/          the Postgres pool, migrations and the harness for tests against a real database
-services/         one folder per service (so far: model_gateway, knowledge)
+libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
+services/         one folder per service (so far: model_gateway, knowledge, conversation)
 config/           example configuration, such as the model bindings
 docs/             design.md, the decision records, one document per service
 infra/            files mounted into containers
@@ -66,6 +67,15 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k
 ```
 
 The tests for the hosted providers run with your own keys in the environment (`-k hosted`).
+
+To measure the conversation service with real models (a small model reading whether messages refer
+to the past, and a whole conversation over real documents and a real database), opt-in as well;
+[`conversation.md`](conversation.md#trying-it) says which models it uses and how to change them:
+
+```bash
+FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_LIVE_TESTS=1 \
+    uv run pytest -m live services/conversation/tests/live -s
+```
 
 Services run in containers with `docker compose --profile services up -d --build --wait`; a plain
 `docker compose up` starts only the database.

@@ -27,6 +27,8 @@ uv run pytest -m integration           # needs the Postgres of docker compose (F
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama and hosted providers, opt-in; see docs/model-gateway.md
 # the knowledge service against real everything, and a book of your own (never copied or committed):
 FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_BOOK=/path/to.pdf uv run pytest -m live services/knowledge/tests/live -s
+# the conversation service against real models (see docs/conversation.md):
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/conversation/tests/live -s
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```
@@ -51,6 +53,9 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - A passage retrieved from a document is somebody else's words: it is `untrusted`, data and never an
   instruction (ADR 0011). What reads documents runs in an isolated process and its answer is
   validated like any other input. A collection somebody may not see is *not found*, never forbidden.
+- A turn of the conversation carries no history: what was said is looked up only when a message
+  refers to it, and what an answer quoted from a document stays marked as somebody else's words
+  (ADR 0012). A chunk of streamed text is never trimmed: the space at its edge is a word break.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
