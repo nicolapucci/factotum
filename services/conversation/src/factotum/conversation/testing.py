@@ -19,11 +19,16 @@ from factotum.contracts.chat import (
     Usage,
     UsageEvent,
 )
-from factotum.contracts.conversation import Reference, ReferenceKind
-from factotum.contracts.identity import Owner
-from factotum.contracts.ids import ChunkId, CollectionId, DocumentId
+from factotum.contracts.conversation import Reference, ReferenceKind, TurnEvent, TurnRequest
+from factotum.contracts.identity import Owner, Principal
+from factotum.contracts.ids import ChunkId, CollectionId, ConversationId, DocumentId
 from factotum.contracts.knowledge import Location, Passage, SearchResult, SearchWarning
 from factotum.contracts.models import ModelRole, Profile, StructuredOutputSupport
+from factotum.conversation.context import PromptBuilder
+from factotum.conversation.gate import ReferenceGate
+from factotum.conversation.history import History
+from factotum.conversation.store import InMemoryStore
+from factotum.conversation.turn import TurnEngine, TurnSettings
 from factotum.model_client import Embedded
 
 START = datetime(2026, 9, 21, 9, 30, tzinfo=UTC)
@@ -58,6 +63,9 @@ class FakeChat:
         self.answers: list[Sequence[str | Exception | ErrorEvent]] = []
         self.usage: Usage | None = Usage(input_tokens=100, output_tokens=20)
         self.profile_calls = 0
+        self.streams_open = 0
+        """Streams begun and not yet closed: a turn that ends must leave none."""
+
         self.max_input_tokens = 8192
         self.max_output_tokens: int | None = 1024
         self.profile_failure: Exception | None = None
@@ -84,16 +92,20 @@ class FakeChat:
     async def chat_stream(self, owner: Owner, request: ChatRequest) -> AsyncGenerator[EventUnion]:
         self.requests.append((owner, request))
         script = self.answers.pop(0) if self.answers else ["An answer."]
-        for item in script:
-            if isinstance(item, Exception):
-                raise item
-            if isinstance(item, ErrorEvent):
-                yield item
-                return
-            yield TextDelta(text=item)
-        if self.usage is not None:
-            yield UsageEvent(usage=self.usage)
-        yield FinishEvent(reason=FinishReason.STOP)
+        self.streams_open += 1
+        try:
+            for item in script:
+                if isinstance(item, Exception):
+                    raise item
+                if isinstance(item, ErrorEvent):
+                    yield item
+                    return
+                yield TextDelta(text=item)
+            if self.usage is not None:
+                yield UsageEvent(usage=self.usage)
+            yield FinishEvent(reason=FinishReason.STOP)
+        finally:
+            self.streams_open -= 1
 
     async def profile(self, owner: Owner, role: ModelRole) -> Profile:
         self.profile_calls += 1
@@ -171,3 +183,36 @@ class WordEmbedder:
             counts[zlib.crc32(word.encode()) % self.dimensions] += 1.0
         norm = sqrt(sum(c * c for c in counts)) or 1.0
         return tuple(c / norm for c in counts)
+
+
+class Harness:
+    """A turn engine put together from the stand-ins, and what is needed to look at what it did."""
+
+    def __init__(self, *, settings: TurnSettings | None = None) -> None:
+        self.store = InMemoryStore()
+        self.clock = Clock()
+        self.chat = FakeChat()
+        self.documents = FakeDocuments()
+        self.embedder = WordEmbedder()
+        self.history = History(self.store, self.embedder, now=self.clock)
+        self.engine = TurnEngine(
+            self.store,
+            self.chat,
+            self.documents,
+            self.history,
+            ReferenceGate(self.chat),
+            PromptBuilder(nonce=lambda: "nonce123"),
+            settings=settings,
+            now=self.clock,
+        )
+
+    async def turn(
+        self,
+        principal: Principal,
+        message: str,
+        *,
+        conversation_id: ConversationId | None = None,
+    ) -> list[TurnEvent]:
+        """Everything a turn streamed."""
+        request = TurnRequest(message=message, conversation_id=conversation_id)
+        return [event async for event in self.engine.run(principal, request)]

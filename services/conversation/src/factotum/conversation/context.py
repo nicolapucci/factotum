@@ -139,7 +139,7 @@ class PromptBuilder:
             piece = head + answer
             used += estimate_tokens(piece) + 1  # the blank line that follows it
             kept.append((exchange, piece))
-        kept.sort(key=lambda item: item[0].created_at)
+        kept.sort(key=lambda item: (item[0].created_at, item[0].seq))
         return (
             tuple(item[0] for item in kept),
             "\n\n".join(item[1] for item in kept),
