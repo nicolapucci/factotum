@@ -21,6 +21,7 @@ src = [
   "libs/common/src",
   "libs/devices/src",
   "libs/web/src",
+  "libs/db/src",
   "services/model_gateway/src",
 ]
 
@@ -56,6 +57,7 @@ mypy_path = [
   "libs/common/src",
   "libs/devices/src",
   "libs/web/src",
+  "libs/db/src",
   "services/model_gateway/src",
 ]
 explicit_package_bases = true
@@ -87,6 +89,7 @@ source = [
   "libs/common/src",
   "libs/devices/src",
   "libs/web/src",
+  "libs/db/src",
   "services/model_gateway/src",
 ]
 
@@ -101,6 +104,7 @@ exclude_also = [
 
 [dependency-groups]
 dev = [
+    "asyncpg-stubs>=0.31.3",
     "hypothesis>=6.168.0",
     "mypy>=2.3.1",
     "pre-commit>=4.6.2",
