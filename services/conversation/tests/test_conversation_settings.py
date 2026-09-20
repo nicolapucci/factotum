@@ -1,4 +1,6 @@
+import re
 from datetime import timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -7,6 +9,8 @@ from pydantic import ValidationError
 from factotum.common.config import Environment
 from factotum.conversation.settings import ConversationSettings
 from factotum.conversation.turn import TurnSettings
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def load(**values: object) -> ConversationSettings:
@@ -95,3 +99,14 @@ class TestWhatIsRefused:
     def test_a_number_outside_what_makes_sense(self, values: dict[str, object]) -> None:
         with pytest.raises(ValidationError):
             load(**values)
+
+
+def test_every_setting_of_the_service_is_documented_in_the_env_example() -> None:
+    documented = set(
+        re.findall(
+            r"^#?\s*(FACTOTUM_[A-Z0-9_]+)=", (REPO_ROOT / ".env.example").read_text("utf-8"), re.M
+        )
+    )
+    expected = {f"FACTOTUM_{name.upper()}" for name in ConversationSettings.model_fields}
+
+    assert expected <= documented, f"missing from .env.example: {sorted(expected - documented)}"

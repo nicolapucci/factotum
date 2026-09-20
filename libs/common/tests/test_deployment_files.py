@@ -43,6 +43,7 @@ def test_the_database_starts_by_default_and_the_services_only_on_request() -> No
     assert "profiles" not in SERVICES["postgres"]
     assert SERVICES["model-gateway"]["profiles"] == ["services"]
     assert SERVICES["knowledge"]["profiles"] == ["services"]
+    assert SERVICES["conversation"]["profiles"] == ["services"]
 
 
 def test_the_database_has_the_shared_memory_a_large_collection_needs() -> None:
@@ -58,6 +59,16 @@ def test_the_knowledge_service_waits_for_its_database_and_finds_the_gateway_by_n
     assert knowledge["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert knowledge["environment"]["FACTOTUM_POSTGRES_HOST"] == "postgres"
     assert knowledge["environment"]["FACTOTUM_KNOWLEDGE_GATEWAY_URL"] == "http://model-gateway:8081"
+
+
+def test_the_conversation_service_waits_for_its_database_and_finds_the_others_by_name() -> None:
+    conversation = SERVICES["conversation"]
+    environment = conversation["environment"]
+
+    assert conversation["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert environment["FACTOTUM_POSTGRES_HOST"] == "postgres"
+    assert environment["FACTOTUM_CONVERSATION_GATEWAY_URL"] == "http://model-gateway:8081"
+    assert environment["FACTOTUM_CONVERSATION_KNOWLEDGE_URL"] == "http://knowledge:8082"
 
 
 def test_no_service_is_given_a_provider_key_but_the_gateway() -> None:
@@ -89,7 +100,7 @@ def test_the_provider_keys_compose_passes_on_are_documented_in_the_env_example()
     assert passed <= documented, f"missing from .env.example: {sorted(passed - documented)}"
 
 
-@pytest.mark.parametrize("service", ["model_gateway", "knowledge"])
+@pytest.mark.parametrize("service", ["model_gateway", "knowledge", "conversation"])
 def test_the_image_does_not_run_as_root(service: str) -> None:
     dockerfile = (REPO_ROOT / "services" / service / "Dockerfile").read_text("utf-8")
     users = re.findall(r"^USER\s+(\S+)", dockerfile, re.M)

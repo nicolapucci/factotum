@@ -58,6 +58,9 @@ jobs:
       - name: Build the knowledge service image
         run: docker build -f services/knowledge/Dockerfile -t factotum-knowledge:ci .
 
+      - name: Build the conversation service image
+        run: docker build -f services/conversation/Dockerfile -t factotum-conversation:ci .
+
   integration:
     name: Integration tests against Postgres with pgvector
     runs-on: ubuntu-latest

@@ -92,5 +92,42 @@ services:
       # Loopback only, for development. Services reach it by name on the compose network.
       - "127.0.0.1:${FACTOTUM_KNOWLEDGE_PORT:-8082}:8082"
 
+  conversation:
+    # A message in, an answer streamed out. Like the others it is not started by a plain
+    # `docker compose up`: it needs the "services" profile, and until the hub issues real credentials
+    # it only runs with FACTOTUM_ENVIRONMENT=development.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/conversation/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      # The database of this deployment, by its name on the compose network.
+      FACTOTUM_POSTGRES_HOST: postgres
+      FACTOTUM_POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
+      FACTOTUM_POSTGRES_PASSWORD: ${FACTOTUM_POSTGRES_PASSWORD:?set FACTOTUM_POSTGRES_PASSWORD in .env}
+      FACTOTUM_POSTGRES_DB: ${FACTOTUM_POSTGRES_DB:-factotum}
+      # It never knows a model or a key (the gateway is asked for every answer and embedding), and
+      # it never reads a document (the knowledge service is asked for the passages).
+      FACTOTUM_CONVERSATION_GATEWAY_URL: http://model-gateway:8081
+      FACTOTUM_CONVERSATION_KNOWLEDGE_URL: http://knowledge:8082
+      FACTOTUM_CONVERSATION_TIMEZONE: ${FACTOTUM_CONVERSATION_TIMEZONE:-UTC}
+      FACTOTUM_CONVERSATION_SESSION_MINUTES: ${FACTOTUM_CONVERSATION_SESSION_MINUTES:-30}
+      FACTOTUM_CONVERSATION_RECENT_EXCHANGES: ${FACTOTUM_CONVERSATION_RECENT_EXCHANGES:-3}
+      FACTOTUM_CONVERSATION_HISTORY_HITS: ${FACTOTUM_CONVERSATION_HISTORY_HITS:-3}
+      FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES: ${FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES:-6}
+      FACTOTUM_CONVERSATION_HISTORY_MIN_SIMILARITY: ${FACTOTUM_CONVERSATION_HISTORY_MIN_SIMILARITY:-0.5}
+      FACTOTUM_CONVERSATION_RETENTION_DAYS: ${FACTOTUM_CONVERSATION_RETENTION_DAYS:-0}
+    ports:
+      # Loopback only, for development. Services reach it by name on the compose network.
+      - "127.0.0.1:${FACTOTUM_CONVERSATION_PORT:-8083}:8083"
+
 volumes:
   postgres_data:
