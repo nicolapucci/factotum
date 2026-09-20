@@ -33,12 +33,18 @@ class AliasEmbedder(WordEmbedder):
 
 
 class Rig:
-    def __init__(self, embedder: WordEmbedder | None = None) -> None:
+    def __init__(
+        self, embedder: WordEmbedder | None = None, *, min_similarity: float = 0.0
+    ) -> None:
         self.store = InMemoryStore()
         self.clock = Clock()
         self.embedder = embedder or WordEmbedder()
         self.history = History(
-            self.store, self.embedder, zone=ZoneInfo("Europe/Rome"), now=self.clock
+            self.store,
+            self.embedder,
+            zone=ZoneInfo("Europe/Rome"),
+            now=self.clock,
+            min_similarity=min_similarity,
         )
 
     async def say(
@@ -141,6 +147,27 @@ class TestSearchingByWordsAndMeaning:
 
         assert [h.matched_by for h in found.hits] == [("text",)]
         assert found.warnings == ()
+
+    @pytest.mark.parametrize(("floor", "found"), [(0.4, 1), (0.5, 0)])
+    async def test_what_is_only_near_by_meaning_comes_back_only_if_near_enough(
+        self, floor: float, found: int
+    ) -> None:
+        rig = Rig(AliasEmbedder(), min_similarity=floor)
+        await rig.say("how do I restore the factory settings?", "Hold the button.")
+        await rig.history.embed_pending()
+
+        result = await rig.search("reset")  # near by meaning, about 0.45, and no word in common
+
+        assert len(result.hits) == found
+
+    async def test_what_the_words_find_does_not_need_to_be_near_by_meaning(self) -> None:
+        rig = Rig(min_similarity=0.99)
+        await rig.say("how do I reset the router?", "Hold the button.")
+        await rig.history.embed_pending()
+
+        result = await rig.search("router")
+
+        assert [h.matched_by for h in result.hits] == [("text",)]
 
     async def test_how_many_come_back_is_bounded(self) -> None:
         rig = Rig()

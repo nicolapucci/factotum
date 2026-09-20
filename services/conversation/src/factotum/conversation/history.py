@@ -64,11 +64,13 @@ class History:
         *,
         zone: tzinfo = UTC,
         now: Callable[[], datetime] = _utc_now,
+        min_similarity: float = 0.0,
     ) -> None:
         self._store = store
         self._embedder = embedder
         self._zone = zone
         self._now = now
+        self._min_similarity = min_similarity
 
     async def search(
         self,
@@ -145,7 +147,9 @@ class History:
             until=until,
             limit=limit,
         )
-        return found, ()
+        # The nearest exchanges always come back, near or not: what is not near enough is not what
+        # was meant, and quoting it to a model only misleads it.
+        return [f for f in found if f.score >= self._min_similarity], ()
 
     @staticmethod
     def _fused(

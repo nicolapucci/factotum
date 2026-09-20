@@ -158,11 +158,39 @@ class FakeDocuments:
         return SearchResult(passages=tuple(self.passages[:limit]), warnings=tuple(self.warnings))
 
 
+_FILLER = frozenset(
+    [
+        "a",
+        "an",
+        "the",
+        "is",
+        "in",
+        "of",
+        "to",
+        "and",
+        "or",
+        "do",
+        "i",
+        "how",
+        "what",
+        "did",
+        "you",
+        "me",
+        "it",
+        "that",
+        "this",
+        "answer",
+    ]
+)
+"""Words that make no direction, as a real model gives them little weight ("answer" is what the fake
+chat answers with, so that every exchange has it)."""
+
+
 class WordEmbedder:
     """An embedding model in which a word makes a direction, so that texts sharing words are near.
     It can be told to fail, and it keeps what it was asked."""
 
-    def __init__(self, *, space_id: str = "emb-words", dimensions: int = 32) -> None:
+    def __init__(self, *, space_id: str = "emb-words", dimensions: int = 256) -> None:
         self.space_id = space_id
         self.dimensions = dimensions
         self.calls: list[tuple[Owner, list[str]]] = []
@@ -180,6 +208,8 @@ class WordEmbedder:
     def vector(self, text: str) -> tuple[float, ...]:
         counts = [0.0] * self.dimensions
         for word in re.findall(r"\w+", text.casefold()):
+            if word in _FILLER:
+                continue
             counts[zlib.crc32(word.encode()) % self.dimensions] += 1.0
         norm = sqrt(sum(c * c for c in counts)) or 1.0
         return tuple(c / norm for c in counts)
@@ -194,7 +224,7 @@ class Harness:
         self.chat = FakeChat()
         self.documents = FakeDocuments()
         self.embedder = WordEmbedder()
-        self.history = History(self.store, self.embedder, now=self.clock)
+        self.history = History(self.store, self.embedder, now=self.clock, min_similarity=0.3)
         self.engine = TurnEngine(
             self.store,
             self.chat,
