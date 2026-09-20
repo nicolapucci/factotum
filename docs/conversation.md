@@ -147,7 +147,9 @@ Message: And in Italian?
 **Every exchange is saved** when its answer is complete: the question, the answer, the citations
 (where they came from, not their text) and whether the turn was `untrusted` (below). A turn that
 failed, or that the caller went away from, leaves nothing: half an answer is not something anybody
-said. The log belongs to the *owner* of the turn, the user, or the tenant for a shared device.
+said (the conversation it opened stays, so that a retry can name it, and is not listed until
+something has been said in it). The log belongs to the *owner* of the turn, the user, or the tenant
+for a shared device.
 
 **Finding it again** is what a reading of `earlier` does, and what `POST /v1/history/search` offers:
 
@@ -227,7 +229,7 @@ services.
 | | |
 | --- | --- |
 | `POST /v1/turns` | `{"message", "conversation_id"?}` → the events of the turn, as `text/event-stream` |
-| `GET /v1/conversations?limit&offset` | the caller's conversations, the last active first |
+| `GET /v1/conversations?limit&offset` | the caller's conversations with something said in them, the last active first |
 | `GET /v1/conversations/{id}` | a conversation and every exchange in it |
 | `DELETE /v1/conversations/{id}` | forget it (`204`) |
 | `DELETE /v1/history` | forget everything the caller said: `{"conversations": n}` |

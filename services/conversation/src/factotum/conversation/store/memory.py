@@ -81,7 +81,9 @@ class InMemoryStore:
         self, tenant_id: TenantId, owner: Owner, *, limit: int, offset: int
     ) -> list[Conversation]:
         mine = [
-            c for c in self._conversations.values() if (c.tenant_id, c.owner) == (tenant_id, owner)
+            c
+            for c in self._conversations.values()
+            if (c.tenant_id, c.owner) == (tenant_id, owner) and self._exchanges_of(c.id)
         ]
         mine.sort(key=lambda c: c.last_at, reverse=True)
         return [self._conversation_view(c) for c in mine[offset : offset + limit]]

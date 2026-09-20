@@ -257,16 +257,35 @@ class TestManagingConversations:
     ) -> None:
         old = await open_one(store, tenant, owner, at=NOW)
         recent = await open_one(store, tenant, owner, at=NOW + timedelta(hours=2))
-        await open_one(store, tenant, someone_else(), at=NOW + timedelta(hours=3))
+        other = someone_else()
+        theirs = await open_one(store, tenant, other, at=NOW + timedelta(hours=3))
+        for conversation, who in ((old, owner), (recent, owner), (theirs, other)):
+            await say(store, tenant, who, conversation, "something", at=conversation.last_at)
 
         listed = await store.list_conversations(tenant, owner, limit=10, offset=0)
 
         assert [c.id for c in listed] == [recent.id, old.id]
 
+    async def test_a_conversation_in_which_nothing_was_said_is_not_listed_but_can_be_read(
+        self, store: ConversationStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        # What a turn that failed before it had an answer leaves: the conversation it opened.
+        empty = await open_one(store, tenant, owner, at=NOW)
+        spoken = await open_one(store, tenant, owner, at=NOW + timedelta(hours=2))
+        await say(store, tenant, owner, spoken, "the router recipe", at=NOW + timedelta(hours=2))
+
+        listed = await store.list_conversations(tenant, owner, limit=10, offset=0)
+        found, exchanges = await store.get_conversation(tenant, owner, empty.id)
+
+        assert [c.id for c in listed] == [spoken.id]
+        assert (found.id, exchanges) == (empty.id, [])
+
     async def test_the_list_can_be_read_a_page_at_a_time(
         self, store: ConversationStore, tenant: TenantId, owner: Owner
     ) -> None:
         made = [await open_one(store, tenant, owner, at=NOW + timedelta(hours=n)) for n in range(3)]
+        for n, conversation in enumerate(made):
+            await say(store, tenant, owner, conversation, "something", at=NOW + timedelta(hours=n))
 
         first = await store.list_conversations(tenant, owner, limit=2, offset=0)
         second = await store.list_conversations(tenant, owner, limit=2, offset=2)

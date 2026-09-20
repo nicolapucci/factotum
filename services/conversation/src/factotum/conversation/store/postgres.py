@@ -33,6 +33,7 @@ _CONVERSATION = (
     "FROM conversation.conversations c"
 )
 _OWNED = "c.tenant_id = $1 AND c.owner_kind = $2 AND c.owner_id = $3"
+_SAID_SOMETHING = "EXISTS (SELECT 1 FROM conversation.exchanges x WHERE x.conversation_id = c.id)"
 
 _EXCHANGE = (
     "e.id, e.conversation_id, e.seq, e.created_at, e.question, e.answer, e.citations, e.untrusted"
@@ -193,7 +194,8 @@ class PostgresStore:
     ) -> list[Conversation]:
         async with self._db.transaction(tenant_id) as connection:
             rows = await connection.fetch(
-                f"{_CONVERSATION} WHERE {_OWNED} ORDER BY c.last_at DESC LIMIT $4 OFFSET $5",
+                f"{_CONVERSATION} WHERE {_OWNED} AND {_SAID_SOMETHING} "
+                "ORDER BY c.last_at DESC LIMIT $4 OFFSET $5",
                 tenant_id,
                 owner.kind.value,
                 owner.id,
