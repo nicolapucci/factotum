@@ -16,3 +16,4 @@ the old one instead of rewriting history.
 | [0008](0008-the-model-gateway-is-the-only-place-that-knows-models.md) | The model gateway is the only place that knows models |
 | [0009](0009-on-premise-first-cloud-later.md) | On-premise first, cloud later |
 | [0010](0010-where-data-goes-is-the-users-choice-of-deployment-and-providers.md) | Where the data goes is the user's choice of deployment and providers |
+| [0011](0011-knowledge-pieces-to-search-and-sections-to-read.md) | Knowledge: pieces to search, sections to read, and a search that degrades |

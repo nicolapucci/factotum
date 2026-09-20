@@ -1,10 +1,10 @@
 # Factotum: design (v1)
 
-Status: **Slices 0 and 1 are implemented**: the foundations and shared contracts, and the
-`model-gateway` service. The other services are not started yet. Sections say whether something is
-*implemented* or *planned*. The reasons behind the biggest decisions live in
-[`decisions/`](decisions/README.md); the gateway has its own document,
-[`model-gateway.md`](model-gateway.md).
+Status: **Slices 0, 1 and 2 are implemented**: the foundations and shared contracts, the
+`model-gateway` service and the `knowledge` service. The other services are not started yet.
+Sections say whether something is *implemented* or *planned*. The reasons behind the biggest
+decisions live in [`decisions/`](decisions/README.md); the gateway and the knowledge service have
+their own documents, [`model-gateway.md`](model-gateway.md) and [`knowledge.md`](knowledge.md).
 
 ## 1. What Factotum is
 
@@ -58,7 +58,7 @@ flowchart TD
 | --- | --- | --- |
 | `edge` | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement; later the voice pipeline | documents, models |
 | `conversation` | One conversation turn: routing with structured output, retrieval from `knowledge` and the web with timeouts and partial degradation, context budgeting, streamed answers with citations, short memory, the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
-| `knowledge` | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
+| `knowledge` (*implemented*) | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
 | `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
 | `actions` | Skills (validation, versions, matching), permissions and grants, the policy decision, approvals, audit, dispatch of device commands | how a model was chosen |
 | `runner` | Runs skill scripts in isolation | everything else |
@@ -243,21 +243,27 @@ at rest and bindings managed by the hub.
 
 ## 8. Knowledge
 
-*Planned*. Postgres with pgvector holds metadata, chunks, vectors, full-text and jobs (ADR 0002).
-Verified on the compose image (Postgres 18, pgvector 0.8.6): a `vector` column without a fixed
-dimension with a partial HNSW expression index per collection, and an `halfvec` HNSW index for more
-than 2000 dimensions. Retrieval is hybrid (vector plus full-text) with optional reranking. Documents
-are chunked by structure, with a parent/child scheme. Every query is scoped by tenant, and ownership
-follows section 4. With many tenants, pgvector's README recommends list partitioning by tenant and
-iterative index scans, which stay behind the `VectorStore` interface.
+*Implemented*, in `services/knowledge`: how it works, its API and its configuration are in
+[`knowledge.md`](knowledge.md), and the reasons in
+[ADR 0011](decisions/0011-knowledge-pieces-to-search-and-sections-to-read.md). In short: Postgres
+with pgvector holds metadata, pieces, vectors, full-text and jobs (ADR 0002). Documents (plain text,
+Markdown, HTML, PDF, Word) are read in an isolated process and cut by structure into sections and the
+pieces inside them; the pieces are embedded through the gateway. Retrieval is hybrid, by meaning and
+by words fused by rank, and degrades with a warning instead of failing. A `vector` column has no
+fixed dimension; a collection that has grown gets a partial HNSW expression index for its size
+(`halfvec` above 2000 dimensions), and a small one is searched exactly. Every table carries its
+tenant, every query filters by it, and ownership follows section 4. With many tenants, pgvector's
+README recommends list partitioning by tenant and iterative index scans, which stay behind the store
+interface.
 
 ## 9. Deployment
 
-- **Compose** (*implemented for Postgres and the model gateway*): pinned images, no default
-  database password, ports published on loopback only. The gateway image is built from the
-  repository root, runs as a non-root user, and starts only with `--profile services`.
-  `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set it disables developer
-  conveniences instead of enabling them.
+- **Compose** (*implemented for Postgres, the model gateway and the knowledge service*): pinned
+  images, no default database password, ports published on loopback only. The service images are
+  built from the repository root, run as a non-root user, and start only with `--profile services`;
+  the knowledge service waits for the database and finds the gateway by its name, and only the
+  gateway gets provider keys. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set
+  it disables developer conveniences instead of enabling them.
 - `FACTOTUM_TENANT_MODE`: `single_tenant` (on-premise: one tenant and its admin created at first
   start) or `multi_tenant` (cloud). The code paths are the same: `tenant_id` always comes from the
   token, never from a request body, and each tenant-owned table will carry `tenant_id` with
@@ -285,7 +291,7 @@ iterative index scans, which stay behind the `VectorStore` interface.
 | --- | --- | --- |
 | 0 | Foundations: workspace, tooling, CI, shared contracts, `authorize()`, redaction and logging, settings, URL guard, `SystemDevice`, compose with Postgres | done |
 | 1 | `model-gateway`: five adapters, structured output, streaming, retries, HTTP API, container image | done |
-| 2 | `knowledge` | next |
+| 2 | `knowledge`: five formats, hybrid search, re-indexing, HTTP API, container image | done |
 | 3 | `conversation` (text) | |
 | 4 | `edge` and a terminal client with device profiles | |
 | 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner) | |
@@ -299,8 +305,10 @@ iterative index scans, which stay behind the `VectorStore` interface.
 ## 12. Open questions
 
 - Asymmetric embedding models want a different prefix or task type for a query and for a document
-  (`search_query:` and `search_document:`, Gemini's task types). The gateway does not model it yet;
-  the knowledge service will decide where it belongs.
+  (`search_query:` and `search_document:`, Gemini's task types). Neither the gateway nor the
+  knowledge service models it yet: the prefix is per model, so its natural home is an option of the
+  embedding binding, applied by the gateway.
+- Reading scanned pages needs OCR, which is not done.
 - Token counting: the gateway leaves it to the provider (`context_too_long`) and to the caller, who
   budgets with the profile. A tokenizer per model family is possible if that proves too coarse.
 

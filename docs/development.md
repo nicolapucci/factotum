@@ -30,7 +30,9 @@ pre-push` (ruff and mypy on commit, the unit tests on push).
 libs/contracts/   pydantic contracts shared by every service: the single source of truth
 libs/common/      authorization, redaction and logging, settings, the SSRF guard, development auth
 libs/devices/     the SystemDevice interface and a fake for tests
-services/         one folder per service (so far: model_gateway)
+libs/web/         what the HTTP interfaces share: errors, authentication, body limits
+libs/db/          the Postgres pool, migrations and the harness for tests against a real database
+services/         one folder per service (so far: model_gateway, knowledge)
 config/           example configuration, such as the model bindings
 docs/             design.md, the decision records, one document per service
 infra/            files mounted into containers

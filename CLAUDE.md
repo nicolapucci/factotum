@@ -23,8 +23,10 @@ uv sync --all-packages                 # install everything from the lockfile
 uv run ruff format && uv run ruff check
 uv run mypy
 uv run pytest                          # unit tests only need no Docker
-uv run pytest -m integration           # needs Docker services (none yet)
+uv run pytest -m integration           # needs the Postgres of docker compose (FACTOTUM_POSTGRES_PASSWORD)
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama and hosted providers, opt-in; see docs/model-gateway.md
+# the knowledge service against real everything, and a book of your own (never copied or committed):
+FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_BOOK=/path/to.pdf uv run pytest -m live services/knowledge/tests/live -s
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```
@@ -46,6 +48,9 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - Administration goes through authenticated hub sessions, never through a device.
 - Approvals fail closed: required but not configured means refused.
 - Secrets never reach a log, an error message or an audit record: use `factotum.common.redaction`.
+- A passage retrieved from a document is somebody else's words: it is `untrusted`, data and never an
+  instruction (ADR 0011). What reads documents runs in an isolated process and its answer is
+  validated like any other input. A collection somebody may not see is *not found*, never forbidden.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
