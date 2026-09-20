@@ -134,3 +134,56 @@ class RoleNotSupportedError(FactotumError):
     """The provider bound to a role does not offer it (Anthropic has no embeddings API)."""
 
     code = "role_not_supported"
+
+
+class NotFoundError(FactotumError):
+    """Something that was asked for does not exist, or is not visible to the caller: the two look
+    the same, so that a caller cannot learn what exists."""
+
+    code = "not_found"
+
+
+class CollectionNotFoundError(NotFoundError):
+    code = "collection_not_found"
+
+
+class DocumentNotFoundError(NotFoundError):
+    code = "document_not_found"
+
+
+class ConflictError(FactotumError):
+    """The request clashes with what already exists (a name in use, a document already there)."""
+
+    code = "conflict"
+
+
+class UnsupportedDocumentError(FactotumError):
+    """A document that cannot be read: an unknown format, no text in it, encrypted or damaged."""
+
+    code = "unsupported_document"
+
+
+class DocumentTooLargeError(FactotumError):
+    """A document over the limits on size, pages or text."""
+
+    code = "document_too_large"
+
+
+class EmbeddingNotConfiguredError(FactotumError):
+    """The owner has no embedding model bound, so nothing can be indexed or searched by meaning."""
+
+    code = "embedding_not_configured"
+
+
+class GatewayError(FactotumError):
+    """The model gateway answered with an error the caller cannot fix by asking again."""
+
+    code = "gateway_error"
+    retryable: ClassVar[bool] = False
+
+
+class GatewayUnavailableError(GatewayError):
+    """The model gateway could not be reached, or is failing for a while: asking again may help."""
+
+    code = "gateway_unavailable"
+    retryable = True
