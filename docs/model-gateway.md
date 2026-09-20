@@ -84,6 +84,12 @@ The measured reason for the Ollama rule: with its default window (2048 tokens on
 in a text that starts by telling it the secret word. With the window the gateway asks for, it
 answers correctly. `tests/live/test_live_ollama.py` keeps a smaller version of that test.
 
+**Two roles on one Ollama model need the same window.** Ollama keeps a model loaded for one window
+at a time, so `chat.main` and `chat.fast` bound to the same model with different output limits (their
+windows are `max_input_tokens` + `max_output_tokens`) load it again each time the other role asks: a
+conversation turn that took 0.9 s took 14 s, found by the live test of the conversation service.
+Give both bindings the same `num_ctx`, or the same limits.
+
 ## Structured output
 
 A request with a `response_schema` (JSON Schema, checked first: an invalid one is `invalid_schema`)

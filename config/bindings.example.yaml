@@ -18,11 +18,22 @@ bindings:
     base_url: http://localhost:11434
     options:
       max_input_tokens: 8192
+      num_ctx: 8704
 
+  # chat.fast reads the message of anybody who has said something before, to tell whether it refers
+  # to the past (docs/conversation.md): a small, quick model is what it is for. Ollama loads a model
+  # for one window at a time, so a second model that does not fit in the memory of the graphics card
+  # beside the first is loaded again for every message (a turn that takes a second takes fourteen),
+  # and so is the same model bound with another window. Here it is the same model with the same
+  # `num_ctx`; a smaller one is better where there is room, and so is a small hosted model. Leave
+  # chat.fast out and chat.main reads the messages.
   - role: chat.fast
     provider: ollama
-    model: llama3.2:3b-instruct-q8_0
+    model: llama3.1:8b-instruct-q4_K_M
     base_url: http://localhost:11434
+    options:
+      max_input_tokens: 8192
+      num_ctx: 8704
 
   - role: embedding
     provider: ollama
