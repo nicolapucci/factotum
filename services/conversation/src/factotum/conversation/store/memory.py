@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from factotum.contracts.conversation import Citation, Conversation, Exchange
 from factotum.contracts.errors import ConversationNotFoundError
-from factotum.contracts.identity import Owner
+from factotum.contracts.identity import Owner, OwnerKind
 from factotum.contracts.ids import ConversationId, DeviceId, ExchangeId, TenantId
 from factotum.conversation.store.base import Found, Pending, Vector
 
@@ -114,6 +114,24 @@ class InMemoryStore:
         self._forget(old)
         return len(old)
 
+    async def purge_shared(self, cutoff: datetime) -> int:
+        old = [
+            identity
+            for identity, row in self._rows.items()
+            if row.owner.kind is OwnerKind.TENANT and row.exchange.created_at < cutoff
+        ]
+        for identity in old:
+            del self._rows[identity]
+        empty = {
+            c.id
+            for c in self._conversations.values()
+            if c.owner.kind is OwnerKind.TENANT
+            and c.last_at < cutoff
+            and not self._exchanges_of(c.id)
+        }
+        self._forget(empty)
+        return len(old)
+
     # ---- exchanges
     async def add_exchange(
         self,
@@ -148,10 +166,19 @@ class InMemoryStore:
         return any(self._mine(tenant_id, owner))
 
     async def last_exchanges(
-        self, tenant_id: TenantId, owner: Owner, conversation_id: ConversationId, *, limit: int
+        self,
+        tenant_id: TenantId,
+        owner: Owner,
+        conversation_id: ConversationId,
+        *,
+        limit: int,
+        since: datetime | None = None,
     ) -> list[Exchange]:
         self._owned(tenant_id, owner, conversation_id)
-        return self._exchanges_of(conversation_id)[-limit:]
+        said = self._exchanges_of(conversation_id)
+        if since is not None:
+            said = [e for e in said if e.created_at >= since]
+        return said[-limit:]
 
     # ---- searching what was said
     async def in_period(
@@ -218,7 +245,9 @@ class InMemoryStore:
         waiting = [
             row
             for row in self._rows.values()
-            if row.vector is None and (row.embed_after is None or row.embed_after <= now)
+            if row.owner.kind is not OwnerKind.TENANT
+            and row.vector is None
+            and (row.embed_after is None or row.embed_after <= now)
         ]
         waiting.sort(key=lambda row: row.exchange.created_at)
         return [

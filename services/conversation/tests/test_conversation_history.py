@@ -354,13 +354,20 @@ class TestGivingWhatWasSaidItsVector:
 
     async def test_each_owner_is_asked_for_separately(self) -> None:
         rig = Rig()
-        other = Owner(kind=OwnerKind.TENANT, id=uuid4())
+        other = Owner(kind=OwnerKind.USER, id=uuid4())
         await rig.say("mine")
         await rig.say("theirs", owner=other)
 
         assert await rig.history.embed_pending() == 2
 
         assert {owner for owner, _ in rig.embedder.calls} == {OWNER, other}
+
+    async def test_what_was_said_on_a_shared_device_is_not_embedded(self) -> None:
+        rig = Rig()
+        await rig.say("on the speaker", owner=Owner(kind=OwnerKind.TENANT, id=uuid4()))
+
+        assert await rig.history.embed_pending() == 0
+        assert rig.embedder.calls == []
 
     async def test_only_the_start_of_a_long_exchange_is_embedded(self) -> None:
         rig = Rig()
@@ -456,6 +463,35 @@ class TestTheWorkInTheBackground:
         rig.clock.advance(hours=2)
         await keeper.once()
         assert not await rig.store.has_exchanges(TENANT, other)
+
+    async def test_what_was_said_on_a_shared_device_is_forgotten_after_the_time_it_is_kept(
+        self,
+    ) -> None:
+        rig = Rig()
+        shared = Owner(kind=OwnerKind.TENANT, id=uuid4())
+        await rig.say("on the speaker", owner=shared)
+        await rig.say("by a person")
+        keeper = Keeper(rig.history, rig.store, shared_keep=timedelta(minutes=2), now=rig.clock)
+
+        await keeper.once()
+        assert await rig.store.has_exchanges(TENANT, shared)  # it is not old enough yet
+        rig.clock.advance(minutes=3)
+        await keeper.once()
+
+        assert not await rig.store.has_exchanges(TENANT, shared)
+        assert await rig.store.has_exchanges(
+            TENANT, OWNER
+        )  # a person's is not the keeper's to take
+
+    async def test_without_a_time_to_keep_it_what_was_said_on_a_shared_device_stays(self) -> None:
+        rig = Rig()
+        shared = Owner(kind=OwnerKind.TENANT, id=uuid4())
+        await rig.say("on the speaker", owner=shared, ago=timedelta(days=9))
+        keeper = Keeper(rig.history, rig.store, now=rig.clock)
+
+        await keeper.once()
+
+        assert await rig.store.has_exchanges(TENANT, shared)
 
     async def test_without_a_retention_nothing_is_forgotten(self) -> None:
         rig = Rig()

@@ -271,8 +271,8 @@ shown examples as turns of its own conversation and says why before it says whic
 made three different small models read the messages alike (measured in `conversation.md`). The
 answer is streamed with its citations, and a turn that had somebody else's words in it (a passage of
 a document, or an earlier exchange that had) says so, which is what `authorize()` needs of the
-actions of slice 5a. Not there yet: the web, actions and routing between an answer and an action,
-voice.
+actions of slice 5a. A shared device is stateless: it sees only the last minute of what was said on
+it. Not there yet: the web, actions and routing between an answer and an action, voice.
 
 ## 10. Deployment
 

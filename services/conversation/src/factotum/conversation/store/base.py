@@ -87,6 +87,12 @@ class ConversationStore(Protocol):
         Returns how many. It is retention, and belongs to nobody in particular."""
         ...
 
+    async def purge_shared(self, cutoff: datetime) -> int:
+        """Forget what was said on shared devices (whose owner is a tenant) before ``cutoff``, and
+        the conversations that leaves empty. Returns how many exchanges. What a shared device says
+        is kept only as long as a shared device can see it, which is not long."""
+        ...
+
     # ---- exchanges
     async def add_exchange(
         self,
@@ -107,9 +113,16 @@ class ConversationStore(Protocol):
     async def has_exchanges(self, tenant_id: TenantId, owner: Owner) -> bool: ...
 
     async def last_exchanges(
-        self, tenant_id: TenantId, owner: Owner, conversation_id: ConversationId, *, limit: int
+        self,
+        tenant_id: TenantId,
+        owner: Owner,
+        conversation_id: ConversationId,
+        *,
+        limit: int,
+        since: datetime | None = None,
     ) -> list[Exchange]:
-        """The last ``limit`` exchanges of a conversation, oldest first."""
+        """The last ``limit`` exchanges of a conversation, oldest first; only those from ``since``
+        on when it is given."""
         ...
 
     # ---- searching what was said
@@ -160,7 +173,8 @@ class ConversationStore(Protocol):
 
     # ---- the vectors
     async def pending_embeddings(self, *, limit: int, now: datetime) -> list[Pending]:
-        """Exchanges without a vector that are not being left for later, the oldest first."""
+        """Exchanges without a vector that are not being left for later, the oldest first. What was
+        said on a shared device is never given one: it is not searched, only looked back at."""
         ...
 
     async def store_embeddings(self, vectors: Sequence[Vector]) -> None: ...

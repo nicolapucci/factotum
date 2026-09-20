@@ -35,6 +35,11 @@ class ConversationSettings(DatabaseSettings):
     conversation_session_minutes: int = Field(default=30, ge=1, le=24 * 60)
     """How long a conversation stays the one a message that names none belongs to."""
 
+    conversation_shared_window_seconds: int = Field(default=60, ge=1, le=3600)
+    """How far back a shared device sees what was said on it. A shared device has no history of its
+    own (anybody may be speaking to it), only this window before a message, in which whoever said it
+    is most likely still there; what is said on it is forgotten after twice as long."""
+
     conversation_recent_exchanges: int = Field(default=3, ge=1, le=10)
     """How many of the last exchanges a continuation ("and in English?") brings back."""
 
@@ -86,6 +91,12 @@ class ConversationSettings(DatabaseSettings):
         return timedelta(days=self.conversation_retention_days) or None
 
     @property
+    def shared_keep(self) -> timedelta:
+        """How long what was said on a shared device is kept: nothing looks further back than the
+        window, so twice it is more than enough."""
+        return timedelta(seconds=self.conversation_shared_window_seconds) * 2
+
+    @property
     def turn(self) -> TurnSettings:
         return TurnSettings(
             recent_exchanges=self.conversation_recent_exchanges,
@@ -93,4 +104,5 @@ class ConversationSettings(DatabaseSettings):
             document_passages=self.conversation_document_passages,
             knowledge_timeout_s=self.conversation_knowledge_timeout_s,
             session_gap=timedelta(minutes=self.conversation_session_minutes),
+            shared_window=timedelta(seconds=self.conversation_shared_window_seconds),
         )

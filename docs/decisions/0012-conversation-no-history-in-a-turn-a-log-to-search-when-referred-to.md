@@ -63,9 +63,17 @@ are saved when the answer is complete; one that failed or was abandoned leaves n
 
 **The log is the user's.** It can be listed, read, deleted one conversation at a time or all at once,
 and expires after a number of days if the deployment says so. Only a person reads or forgets it, and
-only their own. A shared device can be spoken to and remembered (its turns use, and add to, the log
-of the tenant) but is never a way to read or delete what the household said: administration does not
-go through a device (ADR 0004), and the log of the tenant will be managed from the hub.
+only their own. A shared device is never a way to read or delete what the household said:
+administration does not go through a device (ADR 0004).
+
+**A shared device is stateless, with a window.** It acts for the tenant, and anybody may be speaking
+to it, so it has no chat of its own and what was said to it is not there for whoever speaks next.
+The exception, made in good faith: a follow-up is most likely said by the same person, or with that
+person still there, so for the minute before a message a shared device sees what was said on *it*
+(nothing of other devices). A continuation, or any reference to something earlier, looks only in
+that window; nothing is searched, the small model is not asked when the window is empty, and a
+message after the window opens a new conversation. What is said on a shared device is kept twice as
+long as it can be seen and then forgotten, and is never embedded, since it is never searched.
 
 **A period that a model read is a hint.** The day, week or month that the small model finds in a
 message narrows the search of the log; when nothing in it matches, what was said at any time is

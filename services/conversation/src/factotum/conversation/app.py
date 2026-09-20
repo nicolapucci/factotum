@@ -84,6 +84,7 @@ def build_app(settings: ConversationSettings) -> FastAPI:
                     interval_s=settings.conversation_keeper_seconds,
                     batch=settings.conversation_embed_batch,
                     retention=settings.retention,
+                    shared_keep=settings.shared_keep,
                 )
                 stop = asyncio.Event()
                 working = asyncio.create_task(keeper.run(stop))

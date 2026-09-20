@@ -13,6 +13,7 @@ from factotum.contracts.errors import ContextTooLongError
 from factotum.contracts.ids import ConversationId, ExchangeId
 from factotum.contracts.knowledge import Passage
 from factotum.conversation.context import (
+    PAST_MISSING,
     SYSTEM_PROMPT,
     Prompt,
     PromptBuilder,
@@ -48,9 +49,15 @@ def build(
     earlier: Sequence[Exchange] = (),
     tokens: int = BIG,
     nonce: str = "abcd1234",
+    past_missing: bool = False,
 ) -> Prompt:
     return builder(nonce).build(
-        message=message, passages=passages, earlier=earlier, now=NOW, max_input_tokens=tokens
+        message=message,
+        passages=passages,
+        earlier=earlier,
+        now=NOW,
+        max_input_tokens=tokens,
+        past_missing=past_missing,
     )
 
 
@@ -199,6 +206,40 @@ class TestEarlierExchanges:
         assert 0 < len(prompt.exchanges) < 6
 
 
+class TestWhatWasReferredToIsNotThere:
+    def test_the_model_is_told_so_and_the_message_is_still_the_last_thing_it_reads(self) -> None:
+        prompt = build("what did you tell me yesterday?", past_missing=True)
+
+        text = prompt.messages[1].content
+        assert PAST_MISSING in text
+        assert text.endswith("Message: what did you tell me yesterday?")
+        assert (prompt.passages, prompt.exchanges) == ((), ())
+
+    def test_it_is_told_beside_the_sources_too(self) -> None:
+        prompt = build(passages=(passage(),), past_missing=True)
+
+        text = prompt.messages[1].content
+        assert "=== SOURCES abcd1234 ===" in text
+        assert text.index("=== END SOURCES") < text.index(PAST_MISSING) < text.index("Message:")
+        assert text.endswith("Message: how do I reset it?")
+
+    def test_it_is_not_told_unless_it_is_so(self) -> None:
+        assert PAST_MISSING not in build().messages[1].content
+        assert PAST_MISSING not in build(passages=(passage(),)).messages[1].content
+
+    def test_the_note_is_paid_for_out_of_what_the_model_takes_in(self) -> None:
+        message = "word " * 100
+        room = estimate_tokens(build().messages[0].content) + estimate_tokens(message) + 5
+
+        assert build(message, tokens=room).messages[1].content == message.strip()
+        with pytest.raises(ContextTooLongError):
+            build(message, tokens=room, past_missing=True)
+
+    def test_the_instructions_say_that_nothing_is_remembered_but_what_is_given(self) -> None:
+        assert "You remember nothing of what was said before except what is given" in SYSTEM_PROMPT
+        assert "do not guess" in SYSTEM_PROMPT
+
+
 class TestWhatDoesNotFit:
     def test_a_message_that_alone_is_too_long_is_refused(self) -> None:
         with pytest.raises(ContextTooLongError):
@@ -219,9 +260,10 @@ class TestWhatDoesNotFit:
         answers=st.lists(st.integers(min_value=1, max_value=3000), max_size=5),
         message=st.integers(min_value=1, max_value=600),
         extra=st.integers(min_value=0, max_value=6000),
+        missing=st.booleans(),
     )
     def test_whatever_is_given_the_prompt_is_inside_the_limit(
-        self, sizes: list[int], answers: list[int], message: int, extra: int
+        self, sizes: list[int], answers: list[int], message: int, extra: int, missing: bool
     ) -> None:
         passages = tuple(passage("p " * size, context="c " * (size * 2)) for size in sizes)
         earlier = tuple(
@@ -230,7 +272,7 @@ class TestWhatDoesNotFit:
         text = "m " * message
         limit = estimate_tokens(SYSTEM_PROMPT) + 60 + estimate_tokens(text) + 150 + extra
 
-        prompt = build(text, passages=passages, earlier=earlier, tokens=limit)
+        prompt = build(text, passages=passages, earlier=earlier, tokens=limit, past_missing=missing)
 
         assert sum(estimate_tokens(m.content) for m in prompt.messages) <= limit
 

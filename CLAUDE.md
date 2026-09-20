@@ -55,7 +55,8 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   validated like any other input. A collection somebody may not see is *not found*, never forbidden.
 - A turn of the conversation carries no history: what was said is looked up only when a message
   refers to it, and what an answer quoted from a document stays marked as somebody else's words
-  (ADR 0012). A chunk of streamed text is never trimmed: the space at its edge is a word break.
+  (ADR 0012). A shared device has no history of its own, only the last minute of what was said on it.
+  A chunk of streamed text is never trimmed: the space at its edge is a word break.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else

@@ -49,7 +49,7 @@ from factotum.contracts.conversation import (
     WarningCode,
 )
 from factotum.contracts.errors import FactotumError
-from factotum.contracts.identity import Owner, Principal
+from factotum.contracts.identity import Owner, OwnerKind, Principal
 from factotum.contracts.ids import ConversationId, ExchangeId
 from factotum.contracts.knowledge import Passage
 from factotum.contracts.models import ModelRole, Profile
@@ -82,6 +82,11 @@ class TurnSettings:
 
     session_gap: timedelta = field(default_factory=lambda: timedelta(minutes=30))
     """How long a conversation stays the one a message without a name belongs to."""
+
+    shared_window: timedelta = field(default_factory=lambda: timedelta(seconds=60))
+    """How far back a shared device sees what was said on it, and how long a conversation on one
+    lasts. Anybody may be speaking to a shared device, so it has no history of its own, only the
+    minute before a message, in which whoever said it is most likely still there."""
 
     profile_ttl: timedelta = field(default_factory=lambda: timedelta(seconds=60))
     """How long what a chat model takes in is remembered before it is asked again."""
@@ -120,6 +125,7 @@ class TurnEngine:
         """The events of a turn. What makes it impossible to answer at all is raised when the first
         event is asked for; a failure after that is the last event, ``Failed``."""
         owner = Owner.of_subject(principal.acts_as)
+        shared = owner.kind is OwnerKind.TENANT
         now = self._now()
         conversation = await self._store.open_conversation(
             principal.tenant_id,
@@ -127,7 +133,7 @@ class TurnEngine:
             device_id=principal.device_id,
             conversation_id=request.conversation_id,
             now=now,
-            session_gap=self._settings.session_gap,
+            session_gap=self._settings.shared_window if shared else self._settings.session_gap,
         )
         profile = await self._profile(owner)
         # Whether the instructions and the message alone fit is known now, before anything is sent.
@@ -141,7 +147,9 @@ class TurnEngine:
         exchange_id = ExchangeId(self._new_id())
         yield Started(conversation_id=conversation.id, exchange_id=exchange_id)
 
-        turn = self._turn(principal, owner, conversation.id, request.message, exchange_id, profile)
+        turn = self._turn(
+            principal, owner, conversation.id, request.message, exchange_id, profile, shared
+        )
         try:
             async for event in turn:
                 yield event
@@ -168,13 +176,28 @@ class TurnEngine:
         message: str,
         exchange_id: ExchangeId,
         profile: Profile,
+        shared: bool,
     ) -> AsyncGenerator[TurnEvent]:
         tenant = principal.tenant_id
         settings = self._settings
         searching: asyncio.Task[Found] | None = asyncio.create_task(self._passages(owner, message))
         try:
             reference = Reference(kind=ReferenceKind.NONE)
-            if await self._store.has_exchanges(tenant, owner):
+            # On a shared device there is only what was said there in the last minute, and there may
+            # be nothing: then there is nothing to refer to, and nobody asks.
+            recent: list[Exchange] = []
+            if shared:
+                recent = await self._store.last_exchanges(
+                    tenant,
+                    owner,
+                    conversation_id,
+                    limit=settings.recent_exchanges,
+                    since=self._now() - settings.shared_window,
+                )
+                said_before = bool(recent)
+            else:
+                said_before = await self._store.has_exchanges(tenant, owner)
+            if said_before:
                 yield Status(phase=Phase.UNDERSTANDING)
                 try:
                     reference = await self._gate.decide(owner, message)
@@ -188,12 +211,17 @@ class TurnEngine:
 
             earlier: list[Exchange] = []
             query: str | None = message
-            if reference.kind is ReferenceKind.CONTINUATION:
+            if reference.kind is ReferenceKind.CONTINUATION or (
+                shared and reference.kind is ReferenceKind.EARLIER
+            ):
+                # On a shared device whatever is referred to is in the last minute: there is
+                # nowhere else to look.
                 yield Status(phase=Phase.RECALLING)
-                last = await self._store.last_exchanges(
-                    tenant, owner, conversation_id, limit=settings.recent_exchanges
-                )
-                earlier = list(reversed(last))  # the latest is what matters most
+                if not shared:
+                    recent = await self._store.last_exchanges(
+                        tenant, owner, conversation_id, limit=settings.recent_exchanges
+                    )
+                earlier = list(reversed(recent))  # the latest is what matters most
                 if earlier:
                     query = f"{earlier[0].question}\n{message}"
             elif reference.kind is ReferenceKind.EARLIER:
@@ -239,6 +267,7 @@ class TurnEngine:
                 earlier=earlier,
                 now=self._now(),
                 max_input_tokens=profile.max_input_tokens,
+                past_missing=reference.kind is not ReferenceKind.NONE and not earlier,
             )
             yield Status(phase=Phase.ANSWERING)
             parts: list[str] = []

@@ -242,6 +242,27 @@ class TestSavingWhatWasSaid:
         assert [e.question for e in last] == ["two", "three", "four"]
         assert len(everything) == 4
 
+    async def test_the_last_exchanges_can_be_only_those_from_a_moment_on(
+        self, store: ConversationStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        conversation = await open_one(store, tenant, owner)
+        for minutes, word in ((0, "long ago"), (10, "a while ago"), (11, "just now")):
+            await say(store, tenant, owner, conversation, word, at=NOW + timedelta(minutes=minutes))
+
+        recent = await store.last_exchanges(
+            tenant, owner, conversation.id, limit=5, since=NOW + timedelta(minutes=5)
+        )
+        one = await store.last_exchanges(
+            tenant, owner, conversation.id, limit=1, since=NOW + timedelta(minutes=5)
+        )
+        none = await store.last_exchanges(
+            tenant, owner, conversation.id, limit=5, since=NOW + timedelta(hours=1)
+        )
+
+        assert [e.question for e in recent] == ["a while ago", "just now"]
+        assert [e.question for e in one] == ["just now"]
+        assert none == []
+
     async def test_the_last_exchanges_of_somebody_elses_conversation_are_not_there(
         self, store: ConversationStore, tenant: TenantId, owner: Owner
     ) -> None:
@@ -357,6 +378,62 @@ class TestManagingConversations:
         assert [c.id for c in await store.list_conversations(tenant, owner, limit=5, offset=0)] == [
             recent.id
         ]
+
+
+class TestWhatIsSaidOnASharedDevice:
+    """It is the tenant's, kept only as long as a shared device can see it."""
+
+    async def test_it_is_forgotten_once_it_is_old_enough_and_what_a_person_said_is_not(
+        self, store: ConversationStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        shared = Owner(kind=OwnerKind.TENANT, id=tenant)
+        kitchen = await open_one(store, tenant, shared, at=NOW)
+        await say(store, tenant, shared, kitchen, "old at the kitchen", at=NOW)
+        await say(store, tenant, shared, kitchen, "new at the kitchen", at=NOW + timedelta(hours=1))
+        mine = await open_one(store, tenant, owner, at=NOW)
+        await say(store, tenant, owner, mine, "old and mine", at=NOW)
+
+        forgotten = await store.purge_shared(NOW + timedelta(minutes=30))
+
+        assert forgotten >= 1  # in a shared database there may be more of it than this test's
+        assert [
+            e.question for e in await store.last_exchanges(tenant, shared, kitchen.id, limit=5)
+        ] == ["new at the kitchen"]
+        assert await store.has_exchanges(tenant, owner)
+        assert [
+            e.question for e in await store.last_exchanges(tenant, owner, mine.id, limit=5)
+        ] == ["old and mine"]
+
+    async def test_a_conversation_it_leaves_empty_is_forgotten_too_and_one_with_something_is_not(
+        self, store: ConversationStore, tenant: TenantId
+    ) -> None:
+        shared = Owner(kind=OwnerKind.TENANT, id=tenant)
+        gone = await open_one(store, tenant, shared, at=NOW)
+        await say(store, tenant, shared, gone, "old", at=NOW)
+        empty = await open_one(store, tenant, shared, at=NOW, device=DeviceId(uuid4()))
+        kept = await open_one(
+            store, tenant, shared, at=NOW + timedelta(hours=1), device=DeviceId(uuid4())
+        )
+        await say(store, tenant, shared, kept, "new", at=NOW + timedelta(hours=1))
+
+        await store.purge_shared(NOW + timedelta(minutes=30))
+
+        for forgotten in (gone, empty):
+            with pytest.raises(ConversationNotFoundError):
+                await store.get_conversation(tenant, shared, forgotten.id)
+        found, exchanges = await store.get_conversation(tenant, shared, kept.id)
+        assert (found.id, [e.question for e in exchanges]) == (kept.id, ["new"])
+
+    async def test_it_is_never_given_a_vector_to_be_searched_by(
+        self, store: ConversationStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        shared = Owner(kind=OwnerKind.TENANT, id=tenant)
+        await say(store, tenant, shared, await open_one(store, tenant, shared), "on the speaker")
+        await say(store, tenant, owner, await open_one(store, tenant, owner), "by a person")
+
+        pending = await store.pending_embeddings(limit=1000, now=NOW + timedelta(days=30))
+
+        assert [p.question for p in pending if p.tenant_id == tenant] == ["by a person"]
 
 
 class TestSearchingByTime:

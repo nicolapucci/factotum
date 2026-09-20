@@ -75,8 +75,8 @@ this morning?") has no words to look for: what was said in that period is what c
 
 The small model is the one bound to the `chat.fast` role, which falls back to `chat.main` where the
 user bound nothing faster. Since the model sees only the message, what an earlier exchange says
-cannot steer it, and the call is cheap. It is not made at all when the owner has said nothing yet:
-there is nothing to refer to.
+cannot steer it, and the call is cheap. It is not made at all when the owner has said nothing yet
+(on a shared device: nothing in the last minute): there is nothing to refer to.
 
 **How a small model is asked.** The user chooses the model (ADR 0008), so it has to be asked in a
 way that any small model gets right, and asked for the label straight away three of them were wrong
@@ -148,8 +148,8 @@ Message: And in Italian?
 (where they came from, not their text) and whether the turn was `untrusted` (below). A turn that
 failed, or that the caller went away from, leaves nothing: half an answer is not something anybody
 said (the conversation it opened stays, so that a retry can name it, and is not listed until
-something has been said in it). The log belongs to the *owner* of the turn, the user, or the tenant
-for a shared device.
+something has been said in it). The log belongs to the *owner* of the turn: the user, or the tenant
+for a shared device, whose part of it is only a minute deep (see below).
 
 **Finding it again** is what a reading of `earlier` does, and what `POST /v1/history/search` offers:
 
@@ -197,14 +197,33 @@ conversation of this caller on this device that was active in the last 30 minute
 (`FACTOTUM_CONVERSATION_SESSION_MINUTES`), or to a new one. That is what "the last exchanges" of a
 continuation are the exchanges of: a shared kitchen speaker and a phone are not one conversation.
 
+**A shared device is stateless, with one exception made in good faith.** It acts for the tenant, so it
+reaches what is common (the shared collections of documents), but anybody may be speaking to it and
+nothing says who: it has no chat of its own to ask for, and what somebody said to it yesterday is not
+for whoever speaks to it today. But a follow-up ("and in English?") is most likely said by the same
+person, or with that person still there, and a speaker that forgot the last sentence would be no use.
+So for a shared device:
+
+* **What it sees is the window before a message**: the last minute
+  (`FACTOTUM_CONVERSATION_SHARED_WINDOW_SECONDS`), of what was said on *that* device, and nothing
+  older. A continuation, and any reference to something earlier, look only there: there is no search
+  of a log, because there is no log to search.
+* **Its conversation is that minute too**: a message more than a minute after the last one starts a
+  new conversation, and the small model is not even asked whether it refers to the past, since
+  there is nothing to refer to.
+* **What is said on it is kept twice as long as it can be seen, and then forgotten**, by the same
+  background work that makes the vectors; it is never given one, being never searched.
+* **It cannot ask for its chat**: listing, reading, deleting and searching conversations are for a
+  person, about their own (below).
+
 | | A person, on their own device | A shared device (it acts for the tenant) |
 | --- | --- | --- |
-| Talk, and be remembered | yes | yes, in the log of the tenant |
+| What a message can refer to | anything they said, at any time | what was said on that device in the last minute |
+| Kept for | until they forget it (or the retention) | two minutes |
 | List, read, delete conversations, forget everything, search the history | their own | **no** (`403`) |
 
-A shared device can be spoken to and remembered but is never a way to read or delete what the
-household said: administration does not go through a device (ADR 0004). What the tenant's log holds
-will be managed from the hub (slice 7).
+A shared device is never a way to read or delete what the household said: administration does not go
+through a device (ADR 0004).
 
 ## What goes wrong
 
@@ -263,6 +282,7 @@ Read from the environment (`FACTOTUM_*`) and, in development, from `.env`; every
 | `FACTOTUM_CONVERSATION_KNOWLEDGE_URL` | `http://127.0.0.1:8082` | where the knowledge service is |
 | `FACTOTUM_CONVERSATION_TIMEZONE` | `UTC` | the household's: "yesterday" and "last week" are counted in it |
 | `FACTOTUM_CONVERSATION_SESSION_MINUTES` | `30` | how long a conversation stays the current one of a caller and device |
+| `FACTOTUM_CONVERSATION_SHARED_WINDOW_SECONDS` | `60` | how far back a shared device sees what was said on it, and how long its conversation lasts; what is said on it is forgotten after twice as long |
 | `FACTOTUM_CONVERSATION_RECENT_EXCHANGES` | `3` | exchanges a continuation brings back |
 | `FACTOTUM_CONVERSATION_HISTORY_HITS` | `3` | exchanges a reference to something earlier brings back |
 | `FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES` | `6` | passages of the documents asked for |
@@ -432,6 +452,8 @@ first word.
   ("and in Italian?") is sent with them; a small model may then answer from them instead of from the
   exchange. Leaving out the ones plainly unrelated needs the knowledge service to say how near each
   is, which it does not yet.
+* **A shared device cannot be asked about anything older than a minute**, by anybody: it answers
+  that it does not remember, or, when the small model is not asked, answers the message as it is.
 * **The periods are six words.** "On Monday", "the other day" or "three weeks ago" are not one of
   them, and are looked for by the words of the message alone.
 * **A reference to two things at once** ("the router thing and the backup thing") gets one topic.

@@ -35,6 +35,14 @@ class TestDefaults:
     def test_what_is_said_is_kept_until_somebody_forgets_it(self) -> None:
         assert load().retention is None
 
+    def test_a_shared_device_sees_the_last_minute_and_what_is_said_on_it_is_kept_twice_that(
+        self,
+    ) -> None:
+        settings = load()
+
+        assert settings.turn.shared_window == timedelta(seconds=60)
+        assert settings.shared_keep == timedelta(seconds=120)
+
     def test_a_turn_looks_at_a_few_exchanges_and_a_few_passages(self) -> None:
         assert load().turn == TurnSettings(
             recent_exchanges=3,
@@ -55,6 +63,7 @@ class TestReadingTheEnvironment:
         monkeypatch.setenv("FACTOTUM_CONVERSATION_SESSION_MINUTES", "10")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_RETENTION_DAYS", "90")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES", "4")
+        monkeypatch.setenv("FACTOTUM_CONVERSATION_SHARED_WINDOW_SECONDS", "90")
 
         settings = load()
 
@@ -64,6 +73,8 @@ class TestReadingTheEnvironment:
         assert settings.retention == timedelta(days=90)
         assert settings.turn.session_gap == timedelta(minutes=10)
         assert settings.turn.document_passages == 4
+        assert settings.turn.shared_window == timedelta(seconds=90)
+        assert settings.shared_keep == timedelta(seconds=180)
 
     def test_the_database_is_the_one_compose_creates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("FACTOTUM_POSTGRES_HOST", "postgres")
@@ -86,6 +97,8 @@ class TestWhatIsRefused:
         [
             {"conversation_port": 0},
             {"conversation_session_minutes": 0},
+            {"conversation_shared_window_seconds": 0},
+            {"conversation_shared_window_seconds": 3601},
             {"conversation_recent_exchanges": 0},
             {"conversation_history_hits": 11},
             {"conversation_document_passages": 0},

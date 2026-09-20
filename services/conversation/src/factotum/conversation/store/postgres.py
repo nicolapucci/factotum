@@ -68,6 +68,13 @@ INSERT_SQL = (
     "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, "
     f"to_tsvector('{_WORDS}'::regconfig, $8 || ' ' || $9))"
 )
+PURGE_SHARED_EXCHANGES_SQL = (
+    "DELETE FROM conversation.exchanges WHERE owner_kind = 'tenant' AND created_at < $1"
+)
+PURGE_SHARED_CONVERSATIONS_SQL = (
+    "DELETE FROM conversation.conversations c WHERE c.owner_kind = 'tenant' AND c.last_at < $1 "
+    "AND NOT EXISTS (SELECT 1 FROM conversation.exchanges x WHERE x.conversation_id = c.id)"
+)
 FORGET_OTHER_SPACES_SQL = (
     "UPDATE conversation.exchanges e SET embedding = NULL, space_id = NULL, embed_after = NULL "  # noqa: S608
     f"WHERE {_MINE} AND e.space_id IS NOT NULL AND e.space_id <> $4"
@@ -255,6 +262,12 @@ class PostgresStore:
             )
         return _count(status)
 
+    async def purge_shared(self, cutoff: datetime) -> int:
+        async with self._db.transaction() as connection:
+            status = await connection.execute(PURGE_SHARED_EXCHANGES_SQL, cutoff)
+            await connection.execute(PURGE_SHARED_CONVERSATIONS_SQL, cutoff)
+        return _count(status)
+
     # ---- exchanges
     async def add_exchange(
         self,
@@ -328,7 +341,13 @@ class PostgresStore:
             )
 
     async def last_exchanges(
-        self, tenant_id: TenantId, owner: Owner, conversation_id: ConversationId, *, limit: int
+        self,
+        tenant_id: TenantId,
+        owner: Owner,
+        conversation_id: ConversationId,
+        *,
+        limit: int,
+        since: datetime | None = None,
     ) -> list[Exchange]:
         async with self._db.transaction(tenant_id) as connection:
             owned = await connection.fetchval(
@@ -342,9 +361,11 @@ class PostgresStore:
                 raise ConversationNotFoundError("the conversation does not exist")
             rows = await connection.fetch(
                 f"SELECT {_EXCHANGE} FROM conversation.exchanges e "  # noqa: S608
-                "WHERE e.conversation_id = $1 ORDER BY e.seq DESC LIMIT $2",
+                "WHERE e.conversation_id = $1 AND ($3::timestamptz IS NULL OR e.created_at >= $3) "
+                "ORDER BY e.seq DESC LIMIT $2",
                 conversation_id,
                 limit,
+                since,
             )
         return [_exchange(row) for row in reversed(rows)]
 
@@ -421,7 +442,7 @@ class PostgresStore:
         async with self._db.connection() as connection:
             rows = await connection.fetch(
                 "SELECT id, tenant_id, owner_kind, owner_id, question, answer "
-                "FROM conversation.exchanges WHERE embedding IS NULL "
+                "FROM conversation.exchanges WHERE embedding IS NULL AND owner_kind <> 'tenant' "
                 "AND (embed_after IS NULL OR embed_after <= $1) ORDER BY created_at LIMIT $2",
                 now,
                 limit,

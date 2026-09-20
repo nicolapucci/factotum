@@ -270,7 +270,8 @@ def _words_only(message: str) -> TurnWarning:
 
 
 class Keeper:
-    """The work in the background: give what was said its vector, and forget what is too old."""
+    """The work in the background: give what was said its vector, and forget what is too old: what
+    a person said after the retention, what was said on a shared device after ``shared_keep``."""
 
     def __init__(
         self,
@@ -280,6 +281,7 @@ class Keeper:
         interval_s: float = 5.0,
         batch: int = 16,
         retention: timedelta | None = None,
+        shared_keep: timedelta | None = None,
         now: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._history = history
@@ -287,6 +289,7 @@ class Keeper:
         self._interval_s = interval_s
         self._batch = batch
         self._retention = retention
+        self._shared_keep = shared_keep
         self._now = now
         self._purged_at: datetime | None = None
 
@@ -303,9 +306,12 @@ class Keeper:
                 await asyncio.wait_for(stop.wait(), self._interval_s)
 
     async def once(self) -> int:
-        """One round: vectors for some exchanges, and the retention once an hour."""
+        """One round: vectors for some exchanges, what was said on shared devices and has been
+        kept long enough forgotten, and the retention once an hour."""
         worked = await self._history.embed_pending(batch=self._batch)
         now = self._now()
+        if self._shared_keep is not None:
+            await self._store.purge_shared(now - self._shared_keep)
         if self._retention is not None and (
             self._purged_at is None or now - self._purged_at >= timedelta(hours=1)
         ):

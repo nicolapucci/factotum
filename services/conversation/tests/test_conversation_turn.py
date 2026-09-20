@@ -40,7 +40,14 @@ from factotum.contracts.errors import (
 from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.ids import ConversationId, DeviceId
 from factotum.contracts.models import ModelRole
-from factotum.contracts.testing import make_tenant_id, make_user_id, make_user_principal
+from factotum.contracts.testing import (
+    make_tenant_id,
+    make_tenant_principal,
+    make_user_id,
+    make_user_principal,
+)
+from factotum.conversation.context import PAST_MISSING
+from factotum.conversation.history import Keeper
 from factotum.conversation.store import InMemoryStore
 from factotum.conversation.testing import FakeChat, Harness, passage
 from factotum.conversation.turn import TurnSettings
@@ -341,6 +348,27 @@ class TestSomethingSaidEarlier:
         assert "Hold the reset button for ten seconds." in prompt_of(harness.chat)
         assert finished(events).exchanges_used == 1
 
+    async def test_when_what_was_referred_to_is_not_found_the_model_is_told_so(self) -> None:
+        harness = Harness()
+        await self.a_day_after(harness)
+        harness.chat.decisions.append(
+            Reference(kind=ReferenceKind.EARLIER, topic="submarine", when=Period.LAST_MONTH)
+        )
+
+        events = await harness.turn(alice(), "what did you tell me last month about the submarine?")
+
+        assert PAST_MISSING in prompt_of(harness.chat)
+        assert finished(events).exchanges_used == 0
+
+    async def test_the_model_is_not_told_so_when_something_was_found(self) -> None:
+        harness = Harness()
+        await self.a_day_after(harness)
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.EARLIER, topic="router"))
+
+        await harness.turn(alice(), "what did you tell me about the router?")
+
+        assert PAST_MISSING not in prompt_of(harness.chat)
+
     async def test_the_documents_are_searched_for_the_topic_and_the_message(self) -> None:
         harness = Harness()
         await self.a_day_after(harness)
@@ -567,6 +595,148 @@ class TestWhatCannotBeGotOver:
         assert harness.chat.streams_open == 0
 
 
+def kitchen(device: DeviceId | None = None) -> Principal:
+    """A shared device: it acts for the tenant, and anybody may be speaking to it."""
+    return make_tenant_principal(tenant_id=TENANT, device_id=device or KITCHEN)
+
+
+KITCHEN = DeviceId(uuid4())
+
+
+class TestASharedDevice:
+    """It has no history of its own, only a minute before a message, in which whoever said it is
+    most likely still there."""
+
+    async def a_first_exchange(self, harness: Harness) -> None:
+        harness.chat.answers.append(["Hold the reset button for ten seconds."])
+        await harness.turn(kitchen(), "how do I reset the router?")
+
+    async def test_a_follow_up_within_the_minute_is_understood_with_what_was_just_said(
+        self,
+    ) -> None:
+        harness = Harness()
+        await self.a_first_exchange(harness)
+        harness.clock.advance(seconds=40)
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
+
+        events = await harness.turn(kitchen(), "and how long?")
+
+        assert "how do I reset the router?" in prompt_of(harness.chat)
+        assert finished(events).reference is ReferenceKind.CONTINUATION
+        assert finished(events).exchanges_used == 1
+
+    async def test_after_the_minute_there_is_no_past_and_nobody_is_asked_about_it(self) -> None:
+        harness = Harness()
+        await self.a_first_exchange(harness)
+        harness.clock.advance(seconds=61)
+
+        events = await harness.turn(kitchen(), "and how long?")
+
+        assert harness.chat.classifications == []
+        assert finished(events).exchanges_used == 0
+        assert "how do I reset the router?" not in prompt_of(harness.chat)
+
+    async def test_a_message_after_the_minute_starts_a_conversation_and_one_within_it_carries_on(
+        self,
+    ) -> None:
+        harness = Harness()
+        [first] = [e for e in await harness.turn(kitchen(), "one") if isinstance(e, Started)]
+        harness.clock.advance(seconds=50)
+        [second] = [e for e in await harness.turn(kitchen(), "two") if isinstance(e, Started)]
+        harness.clock.advance(seconds=70)
+        [third] = [e for e in await harness.turn(kitchen(), "three") if isinstance(e, Started)]
+
+        assert second.conversation_id == first.conversation_id
+        assert third.conversation_id != first.conversation_id
+
+    async def test_a_reference_to_something_earlier_is_looked_for_in_the_minute_and_nowhere_else(
+        self,
+    ) -> None:
+        harness = Harness()
+        harness.clock.advance(hours=5)
+        await harness.turn(kitchen(), "long ago, about the router")
+        harness.clock.advance(hours=5)
+        await self.a_first_exchange(harness)
+        harness.clock.advance(seconds=30)
+        harness.chat.decisions.append(
+            Reference(kind=ReferenceKind.EARLIER, topic="router", when=Period.TODAY)
+        )
+
+        events = await harness.turn(kitchen(), "what did you tell me about the router?")
+
+        given = prompt_of(harness.chat)
+        assert "how do I reset the router?" in given
+        assert "long ago" not in given
+        assert finished(events).exchanges_used == 1
+        assert harness.embedder.calls == []  # nothing was searched: there is only the last minute
+
+    async def test_a_conversation_that_goes_on_for_longer_shows_only_the_last_minute_of_it(
+        self,
+    ) -> None:
+        harness = Harness()
+        for word in ("first", "second", "third"):
+            await harness.turn(kitchen(), word)
+            harness.clock.advance(seconds=50)  # each within the minute of the one before
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
+
+        events = await harness.turn(kitchen(), "and then?")
+
+        given = prompt_of(harness.chat)
+        assert "third" in given
+        assert "first" not in given
+        assert "second" not in given  # 100 seconds ago
+        assert finished(events).exchanges_used == 1
+
+    async def test_what_was_said_at_another_shared_device_is_not_seen(self) -> None:
+        harness = Harness()
+        await self.a_first_exchange(harness)
+        harness.clock.advance(seconds=10)
+
+        events = await harness.turn(kitchen(DeviceId(uuid4())), "and how long?")
+
+        assert harness.chat.classifications == []
+        assert finished(events).exchanges_used == 0
+
+    async def test_the_window_is_the_one_it_is_given(self) -> None:
+        harness = Harness(settings=TurnSettings(shared_window=timedelta(seconds=5)))
+        await self.a_first_exchange(harness)
+        harness.clock.advance(seconds=4)
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
+
+        within = await harness.turn(kitchen(), "and how long?")
+        harness.clock.advance(seconds=6)
+        after = await harness.turn(kitchen(), "and why?")
+
+        assert finished(within).exchanges_used == 1
+        assert finished(after).exchanges_used == 0
+
+    async def test_a_person_on_a_personal_device_is_not_held_to_the_minute(self) -> None:
+        harness = Harness()
+        harness.chat.answers.append(["Hold the reset button for ten seconds."])
+        await harness.turn(alice(), "how do I reset the router?")
+        harness.clock.advance(minutes=20)
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
+
+        events = await harness.turn(alice(), "and how long?")
+
+        assert finished(events).exchanges_used == 1
+
+    async def test_what_is_said_on_it_is_forgotten_when_it_is_of_no_use_any_more(self) -> None:
+        harness = Harness()
+        await self.a_first_exchange(harness)
+        keeper = Keeper(
+            harness.history, harness.store, shared_keep=timedelta(minutes=2), now=harness.clock
+        )
+
+        harness.clock.advance(minutes=1)
+        await keeper.once()
+        assert await saved(harness, kitchen()) == ["how do I reset the router?"]
+        harness.clock.advance(minutes=2)
+        await keeper.once()
+
+        assert await saved(harness, kitchen()) == []
+
+
 class TestConversations:
     async def test_a_message_soon_after_belongs_to_the_same_conversation(self) -> None:
         harness = Harness()
@@ -616,8 +786,6 @@ class TestConversations:
         assert harness.chat.profile_calls == 2
 
     async def test_the_same_person_on_a_shared_device_is_somebody_else(self) -> None:
-        from factotum.contracts.testing import make_tenant_principal
-
         harness = Harness()
         await harness.turn(alice(), "a private question")
         shared = make_tenant_principal(tenant_id=TENANT)
