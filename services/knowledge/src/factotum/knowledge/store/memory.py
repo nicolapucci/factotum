@@ -146,8 +146,10 @@ class InMemoryStore:
         )
 
     # ---- views
-    def _view_collection(self, found: _Collection) -> Collection:
-        documents = [d for d in self._documents.values() if d.collection_id == found.id]
+    def _view_collection(self, found: _Collection, *, counts: bool = True) -> Collection:
+        documents = (
+            [d for d in self._documents.values() if d.collection_id == found.id] if counts else []
+        )
         languages = sorted({d.language for d in documents if d.language})
         return Collection(
             id=found.id,
@@ -160,7 +162,11 @@ class InMemoryStore:
             status=found.status,
             languages=tuple(languages),
             document_count=len(documents),
-            chunk_count=sum(1 for c in self._chunks.values() if c.collection_id == found.id),
+            chunk_count=(
+                sum(1 for c in self._chunks.values() if c.collection_id == found.id)
+                if counts
+                else 0
+            ),
             created_at=found.created_at,
             updated_at=found.updated_at,
         )
@@ -219,11 +225,12 @@ class InMemoryStore:
     async def get_collection(self, tenant_id: TenantId, collection_id: CollectionId) -> Collection:
         return self._view_collection(self._collection(tenant_id, collection_id))
 
-    async def list_collections(self, tenant_id: TenantId) -> list[Collection]:
+    async def list_collections(
+        self, tenant_id: TenantId, *, counts: bool = True
+    ) -> list[Collection]:
         mine = [c for c in self._collections.values() if c.tenant_id == tenant_id]
-        return [
-            self._view_collection(c) for c in sorted(mine, key=lambda c: (c.created_at, c.name))
-        ]
+        ordered = sorted(mine, key=lambda c: (c.created_at, c.name))
+        return [self._view_collection(c, counts=counts) for c in ordered]
 
     async def update_collection(
         self, tenant_id: TenantId, collection_id: CollectionId, update: CollectionUpdate

@@ -107,7 +107,14 @@ class KnowledgeStore(Protocol):
         """Raises ``CollectionNotFoundError``."""
         ...
 
-    async def list_collections(self, tenant_id: TenantId) -> list[Collection]: ...
+    async def list_collections(
+        self, tenant_id: TenantId, *, counts: bool = True
+    ) -> list[Collection]:
+        """The collections of the tenant, oldest first. Without ``counts`` the number of documents
+        and pieces and the languages are left out (zero and empty): counting them reads a large
+        collection, and a search that only needs to know which collections there are does not
+        need it."""
+        ...
 
     async def update_collection(
         self, tenant_id: TenantId, collection_id: CollectionId, update: CollectionUpdate

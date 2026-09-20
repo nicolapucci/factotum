@@ -12,6 +12,9 @@ services:
       POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
       POSTGRES_PASSWORD: ${FACTOTUM_POSTGRES_PASSWORD:?set FACTOTUM_POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${FACTOTUM_POSTGRES_DB:-factotum}
+    # Docker gives a container 64 MB of shared memory, which Postgres uses for parallel queries and
+    # builds: a larger collection would run out of it.
+    shm_size: 256mb
     ports:
       # Loopback only: reachable from this machine for development, never from the network.
       - "127.0.0.1:${FACTOTUM_POSTGRES_PORT:-5432}:5432"

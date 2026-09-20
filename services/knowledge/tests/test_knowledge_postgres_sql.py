@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 
 from factotum.contracts.ids import CollectionId
 from factotum.knowledge.store.postgres import (
+    INDEX_BUILD_SETTINGS,
     VectorForm,
     vector_index_name,
     vector_index_sql,
@@ -84,3 +85,14 @@ class TestVectorText:
         text = vector_text(numbers)
 
         assert [float(part) for part in text[1:-1].split(",")] == numbers
+
+
+class TestBuildingAnIndex:
+    def test_it_is_built_by_one_process_so_that_it_needs_no_shared_memory(self) -> None:
+        assert INDEX_BUILD_SETTINGS["max_parallel_maintenance_workers"] == "0"
+
+    def test_every_setting_it_changes_is_a_plain_name_and_a_plain_value(self) -> None:
+        # They are written into SQL: nothing but letters, digits and underscores may get there.
+        for name, value in INDEX_BUILD_SETTINGS.items():
+            assert name.replace("_", "").isalnum()
+            assert value.isalnum()

@@ -45,6 +45,13 @@ def test_the_database_starts_by_default_and_the_services_only_on_request() -> No
     assert SERVICES["knowledge"]["profiles"] == ["services"]
 
 
+def test_the_database_has_the_shared_memory_a_large_collection_needs() -> None:
+    size = str(SERVICES["postgres"]["shm_size"]).lower()
+
+    assert size.endswith("mb")
+    assert int(size.removesuffix("mb")) >= 256
+
+
 def test_the_knowledge_service_waits_for_its_database_and_finds_the_gateway_by_name() -> None:
     knowledge = SERVICES["knowledge"]
 

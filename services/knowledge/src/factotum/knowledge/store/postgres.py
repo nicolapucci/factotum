@@ -58,7 +58,15 @@ _VECTOR_INDEX_LIMIT = 2000
 _HALFVEC_INDEX_LIMIT = 4000
 _MIN_EF_SEARCH = 40
 _MAX_EF_SEARCH = 1000
-_BUILD_MEMORY = "256MB"
+INDEX_BUILD_SETTINGS = {
+    "maintenance_work_mem": "256MB",
+    # A parallel build keeps its graph in shared memory, as much as maintenance_work_mem: more than
+    # the 64 MB Docker gives a container by default, and the build then fails with "could not resize
+    # shared memory segment" (found by building the index of a real book). One process needs none.
+    "max_parallel_maintenance_workers": "0",
+}
+"""What a session that builds an index is given, and gives back afterwards."""
+
 _MAX_ERROR_CHARS = 2000
 
 
@@ -161,6 +169,13 @@ SELECT c.id, c.tenant_id, c.owner_kind, c.owner_id, c.name, c.description, c.spa
              WHERE d.collection_id = c.id AND d.language IS NOT NULL),
            ARRAY[]::text[]
        ) AS languages
+FROM knowledge.collections c
+"""
+
+_COLLECTION_LIGHT = """
+SELECT c.id, c.tenant_id, c.owner_kind, c.owner_id, c.name, c.description, c.space_id,
+       c.dimensions, c.status, c.created_at, c.updated_at,
+       0 AS document_count, 0 AS chunk_count, ARRAY[]::text[] AS languages
 FROM knowledge.collections c
 """
 
@@ -315,10 +330,13 @@ class PostgresStore:
         async with self._db.transaction(tenant_id) as connection:
             return await self._read_collection(connection, tenant_id, collection_id)
 
-    async def list_collections(self, tenant_id: TenantId) -> list[Collection]:
+    async def list_collections(
+        self, tenant_id: TenantId, *, counts: bool = True
+    ) -> list[Collection]:
         async with self._db.transaction(tenant_id) as connection:
             rows = await connection.fetch(
-                f"{_COLLECTION} WHERE c.tenant_id = $1 ORDER BY c.created_at, c.name, c.id",
+                f"{_COLLECTION if counts else _COLLECTION_LIGHT} "
+                "WHERE c.tenant_id = $1 ORDER BY c.created_at, c.name, c.id",
                 tenant_id,
             )
         return [_collection(row) for row in rows]
@@ -436,11 +454,13 @@ class PostgresStore:
                     return
                 if state is False:  # a build that was interrupted leaves an unusable index behind
                     await connection.execute(f"DROP INDEX CONCURRENTLY IF EXISTS knowledge.{name}")
-                await connection.execute(f"SET maintenance_work_mem = '{_BUILD_MEMORY}'")
+                for setting, value in INDEX_BUILD_SETTINGS.items():
+                    await connection.execute(f"SET {setting} = '{value}'")
                 try:
                     await connection.execute(vector_index_sql(collection_id, collection.dimensions))
                 finally:
-                    await connection.execute("RESET maintenance_work_mem")
+                    for setting in INDEX_BUILD_SETTINGS:
+                        await connection.execute(f"RESET {setting}")
             finally:
                 await connection.execute("SELECT pg_advisory_unlock(hashtext($1))", name)
 

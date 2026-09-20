@@ -98,6 +98,23 @@ class TestCollections:
 
         assert [c.id for c in await store.list_collections(tenant)] == [first.id, second.id]
 
+    async def test_the_list_can_leave_out_what_costs_a_scan_to_count(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        document = await store.add_document(tenant, new_document(collection.id, language="en"))
+        await indexed(store, tenant, collection, document, pieces("one", "two"))
+
+        [light] = await store.list_collections(tenant, counts=False)
+        [full] = await store.list_collections(tenant)
+
+        assert (light.document_count, light.chunk_count, light.languages) == (0, 0, ())
+        assert (full.document_count, full.chunk_count, full.languages) == (1, 2, ("en",))
+        assert (
+            light.model_copy(update={"document_count": 1, "chunk_count": 2, "languages": ("en",)})
+            == full
+        )
+
     async def test_it_can_be_renamed_and_described(
         self, store: KnowledgeStore, tenant: TenantId, owner: Owner
     ) -> None:
