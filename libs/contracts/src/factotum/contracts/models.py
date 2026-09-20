@@ -58,24 +58,6 @@ ADDRESS_REQUIRED = frozenset({ProviderKind.OLLAMA, ProviderKind.OPENAI_COMPATIBL
 """Providers with no fixed address: the user must say where the server is."""
 
 
-class Locality(StrEnum):
-    """Where a model runs, from the point of view of the data sent to it."""
-
-    LOCAL = "local"
-    """Under the user's control: the same machine or the private network."""
-
-    REMOTE = "remote"
-    """Somebody else's servers."""
-
-
-class DataClassification(StrEnum):
-    """What a request may be sent to. Set by the caller from the data it put in the request."""
-
-    ANY = "any"
-    LOCAL_ONLY = "local_only"
-    """The payload holds content of a ``local_only`` collection: only a local model may see it."""
-
-
 class StructuredOutputSupport(StrEnum):
     NATIVE = "native"
     """The provider constrains the output to a JSON schema itself."""
@@ -127,10 +109,6 @@ class ModelBinding(Contract):
     secret_ref: str | None = None
     """Where the key lives (``env:OPENAI_API_KEY``), never the key itself."""
 
-    locality: Locality | None = None
-    """Declared by the user. When absent the gateway infers it from the address, and treats an
-    unknown address as remote."""
-
     options: BindingOptions = Field(default_factory=BindingOptions)
 
     @field_validator("owner")
@@ -175,5 +153,3 @@ class Profile(Contract):
     streaming: bool = True
     structured_output: StructuredOutputSupport | None = None
     """None for a role that does not produce text (embeddings, speech)."""
-
-    locality: Locality

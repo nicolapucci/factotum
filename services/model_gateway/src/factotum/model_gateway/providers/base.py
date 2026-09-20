@@ -27,7 +27,7 @@ from factotum.contracts.errors import (
     ProviderUnavailableError,
     RateLimitedError,
 )
-from factotum.contracts.models import BindingOptions, Locality, ModelBinding, ProviderKind
+from factotum.contracts.models import BindingOptions, ModelBinding, ProviderKind
 
 _MAX_MESSAGE_CHARS = 500
 _MAX_RETRY_AFTER_S = 3600.0
@@ -44,7 +44,6 @@ class ResolvedBinding:
     binding: ModelBinding
     base_url: str
     api_key: SecretStr | None
-    locality: Locality
 
     @property
     def model(self) -> str:

@@ -31,15 +31,16 @@ bindings:
     options:
       max_input_tokens: 2048
 
-  # A hosted provider, with your own key. Hosted providers are always treated as remote.
+  # A hosted provider, with your own key. What you send it goes to that provider: where your data
+  # goes is decided by the models you bind and by where you run Factotum, and nothing here
+  # second-guesses it.
   # - role: chat.main
   #   provider: openai        # or anthropic, gemini
   #   model: gpt-4o-mini
   #   secret_ref: env:OPENAI_API_KEY
 
   # Any server that speaks the OpenAI API: vLLM, LM Studio, llama.cpp, OpenRouter, Groq...
-  # The address is the API root, /v1 included. Whether it is local is inferred from the address;
-  # declare `locality: local` or `locality: remote` to say it yourself.
+  # The address is the API root, /v1 included.
   # - role: chat.main
   #   provider: openai_compatible
   #   model: qwen2.5-7b-instruct

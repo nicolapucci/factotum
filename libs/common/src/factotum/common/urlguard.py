@@ -9,7 +9,9 @@ The rules, applied to every address the host name resolves to:
 * Only ``http`` and ``https``, no credentials in the URL.
 * Link-local, multicast, unspecified, reserved and cloud-metadata addresses are always refused.
 * Private-network addresses (loopback, RFC 1918, unique-local...) are refused unless the policy
-  allows them, which is what an endpoint declared ``local`` needs (an Ollama on the LAN).
+  allows them, which a deployment that reaches a server on its own network needs (an Ollama on the
+  LAN, a device in the house). A deployment that must not reach into a network it shares with
+  others does not allow them.
 * A public address needs ``https``.
 * If any resolved address is refused the whole URL is refused, which defeats a name that resolves
   to a public and a private address at once.
@@ -77,16 +79,17 @@ def classify_ip(address: str) -> IpClass:
 @dataclass(frozen=True, slots=True)
 class UrlPolicy:
     allow_private_networks: bool = False
-    """True for an endpoint the user declared ``local`` (a server on the LAN or this machine)."""
+    """Whether the private network (this machine, the LAN) may be reached: a matter of what the
+    deployment is, not of what a user says about an address."""
 
     @classmethod
-    def remote(cls) -> Self:
-        """Public internet only."""
+    def public_only(cls) -> Self:
+        """The public internet only."""
         return cls(allow_private_networks=False)
 
     @classmethod
-    def local(cls) -> Self:
-        """The private network is allowed too."""
+    def private_networks_allowed(cls) -> Self:
+        """The private network too, as an on-premise deployment needs."""
         return cls(allow_private_networks=True)
 
 

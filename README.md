@@ -12,8 +12,10 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 - **You choose the models.** Every model (chat, embeddings, speech-to-text, text-to-speech) and the web
   search backend is provided by the user: a local server, or a hosted provider with the user's own
   key. No service in the system knows or hardcodes which model it is talking to.
-- **You control your documents.** Each collection carries a data policy that decides whether its
-  content may leave the machine. The system enforces it; it is not left to convention.
+- **You decide where your data goes, by choosing where to run it and which models to use.** On
+  premise with a local model such as Ollama, nothing leaves your network; with a hosted provider,
+  what you send goes there. The system does not ask you to declare that again and does not
+  police it.
 - **You teach it what to do.** An action is a skill: a markdown document with optional code, with the
   permissions it needs declared up front and run in isolation.
 - **Permissions never depend on a voice.** They come from whom a device acts for and from the device's

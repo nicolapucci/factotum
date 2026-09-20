@@ -16,7 +16,7 @@ from factotum.contracts.chat import (
     Usage,
     UsageEvent,
 )
-from factotum.contracts.models import DataClassification, ModelRole
+from factotum.contracts.models import ModelRole
 
 event_adapter: TypeAdapter[Any] = TypeAdapter(ChatEvent)
 
@@ -31,11 +31,10 @@ def request(**overrides: Any) -> ChatRequest:
 
 
 class TestChatRequest:
-    def test_a_plain_question_uses_the_main_role_and_may_go_anywhere(self) -> None:
+    def test_a_plain_question_uses_the_main_role(self) -> None:
         chat = request()
 
         assert chat.role is ModelRole.CHAT_MAIN
-        assert chat.data_classification is DataClassification.ANY
         assert chat.stream is False
         assert chat.response_schema is None
 
@@ -88,12 +87,18 @@ class TestChatRequest:
     def test_a_request_names_no_model(self) -> None:
         assert "model" not in ChatRequest.model_fields
 
+    def test_a_request_does_not_classify_its_data(self) -> None:
+        # Where the data goes is decided by the deployment and the providers the user picked
+        # (ADR 0010). A caller that still sends a classification is refused, not ignored: it must
+        # not believe that something enforces it.
+        with pytest.raises(ValidationError):
+            request(data_classification="local_only")
+
     def test_a_request_round_trips_through_json(self) -> None:
         chat = request(
             messages=(message(MessageRole.SYSTEM, "s"), message(MessageRole.USER, "u")),
             response_schema={"type": "object", "properties": {"a": {"type": "string"}}},
             temperature=0.2,
-            data_classification=DataClassification.LOCAL_ONLY,
         )
 
         assert ChatRequest.model_validate_json(chat.model_dump_json()) == chat

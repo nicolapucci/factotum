@@ -198,22 +198,24 @@ class TestChat:
 
         assert response.json()["parsed"] == {"city": "Rome"}
 
-    async def test_a_local_only_request_is_refused_by_a_remote_model(self) -> None:
-        remote = make_model_binding(
-            tenant_id=TENANT,
-            provider=ProviderKind.OPENAI,
-            base_url=None,
-            secret_ref="env:KEY",
-        )
-        service = Service(remote)
+    async def test_a_request_that_still_classifies_its_data_is_refused_and_not_ignored(
+        self,
+    ) -> None:
+        # Where the data goes is decided by the deployment and the providers the user bound
+        # (ADR 0010). A caller that still asks for a policy must hear that nothing enforces it.
+        service = Service(binding())
 
         async with service.client() as client:
             response = await client.post(
                 "/v1/chat", json=chat_body(data_classification="local_only")
             )
 
-        assert response.status_code == 403
-        assert response.json()["error"]["code"] == "policy_violation"
+        assert response.status_code == 422
+        assert response.json()["error"]["details"]["errors"][0]["loc"] == [
+            "body",
+            "data_classification",
+        ]
+        assert service.adapter.chats == []
 
 
 class TestAuthentication:
@@ -577,7 +579,6 @@ class TestProfiles:
             "max_output_tokens": 2048,
             "streaming": True,
             "structured_output": "native",
-            "locality": "local",
         }
         assert "do-not-reveal-this" not in response.text
 

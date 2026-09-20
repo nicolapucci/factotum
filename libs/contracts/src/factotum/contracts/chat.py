@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from factotum.contracts.base import Contract
-from factotum.contracts.models import DataClassification, ModelRole
+from factotum.contracts.models import ModelRole
 
 
 class MessageRole(StrEnum):
@@ -35,7 +35,6 @@ class ChatRequest(Contract):
     max_output_tokens: int | None = Field(default=None, ge=1)
     temperature: float | None = Field(default=None, ge=0, le=2)
     stream: bool = False
-    data_classification: DataClassification = DataClassification.ANY
 
     @field_validator("role")
     @classmethod

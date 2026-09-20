@@ -9,8 +9,7 @@ from pydantic import SecretStr
 
 from factotum.contracts.chat import ChatMessage, ChatRequest, ChatResult, EventUnion, MessageRole
 from factotum.contracts.errors import FactotumError
-from factotum.contracts.models import Locality, ModelBinding, ProviderKind
-from factotum.model_gateway.locality import infer_locality
+from factotum.contracts.models import ModelBinding, ProviderKind
 from factotum.model_gateway.providers.base import EmbeddingBatch, ResolvedBinding
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -30,7 +29,6 @@ def resolved(
         binding=binding,
         base_url=address.rstrip("/"),
         api_key=SecretStr(api_key) if api_key else None,
-        locality=binding.locality or infer_locality(address),
     )
 
 
@@ -219,7 +217,6 @@ async def events(stream: AsyncIterator[EventUnion]) -> list[EventUnion]:
 __all__ = [
     "FakeServer",
     "Handler",
-    "Locality",
     "ScriptedAdapter",
     "Sleeps",
     "TrackedClients",

@@ -38,6 +38,7 @@ services:
     restart: unless-stopped
     environment:
       FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
       FACTOTUM_GATEWAY_BINDINGS_FILE: /etc/factotum/bindings.dev.yaml

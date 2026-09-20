@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 import pytest
 
+from factotum.common.urlguard import UrlPolicy
 from factotum.contracts.chat import (
     ChatResult,
     ErrorEvent,
@@ -20,7 +21,6 @@ from factotum.contracts.errors import (
     ContentFilteredError,
     InvalidRequestError,
     InvalidStructuredOutputError,
-    PolicyViolationError,
     ProviderAuthError,
     ProviderUnavailableError,
     RateLimitedError,
@@ -31,8 +31,6 @@ from factotum.contracts.errors import (
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.models import (
     BindingOptions,
-    DataClassification,
-    Locality,
     ModelBinding,
     ModelRole,
     ProviderKind,
@@ -50,7 +48,7 @@ from factotum.model_gateway.core import (
     DEFAULT_BASE_URLS,
     ModelGateway,
     default_adapters,
-    guarded_client_factory,
+    guarded_clients,
 )
 from factotum.model_gateway.providers.base import EmbeddingBatch, ResolvedBinding
 from factotum.model_gateway.retry import RetryPolicy
@@ -101,7 +99,6 @@ def openai_binding(
     role: ModelRole = ModelRole.CHAT_MAIN,
     *,
     base_url: str | None = None,
-    locality: Locality | None = None,
     options: BindingOptions | None = None,
 ) -> ModelBinding:
     return make_model_binding(
@@ -111,7 +108,6 @@ def openai_binding(
         provider=ProviderKind.OPENAI,
         base_url=base_url,
         secret_ref="env:OPENAI_API_KEY",
-        locality=locality,
         options=options,
     )
 
@@ -281,121 +277,35 @@ class TestChat:
         assert rig.all_clients_closed()
 
 
-class TestDataLocality:
-    """Documents of a local-only collection must never reach a model on somebody else's servers."""
+class TestTheGatewayDoesNotJudgeWhereAModelRuns:
+    """Where the data goes is decided by the deployment and the providers the user bound
+    (ADR 0010). The gateway serves the request with the model it was told to use."""
 
-    async def test_local_only_data_is_refused_by_a_remote_model_before_any_network(self) -> None:
+    async def test_a_hosted_model_serves_a_request_like_any_other(self) -> None:
         rig = Rig(openai_binding())
-
-        with pytest.raises(PolicyViolationError, match="local-only") as caught:
-            await rig.gateway.chat(
-                TENANT_PRINCIPAL, ask(data_classification=DataClassification.LOCAL_ONLY)
-            )
-
-        assert caught.value.details == {"role": "chat.main", "locality": "remote"}
-        assert rig.clients.created == []
-        assert rig.adapter.chats == []
-
-    async def test_local_only_data_is_served_by_a_local_model(self) -> None:
-        rig = Rig(local_binding())
         rig.adapter.will_chat(reply())
 
-        result = await rig.gateway.chat(
-            TENANT_PRINCIPAL, ask(data_classification=DataClassification.LOCAL_ONLY)
-        )
+        result = await rig.gateway.chat(TENANT_PRINCIPAL, ask())
 
         assert result.text == "Hello!"
 
-    async def test_data_that_may_go_anywhere_may_go_to_a_remote_model(self) -> None:
-        rig = Rig(openai_binding())
-        rig.adapter.will_chat(reply())
-
-        await rig.gateway.chat(TENANT_PRINCIPAL, ask())
-
-        assert rig.last_resolved.locality is Locality.REMOTE
-
-    async def test_the_locality_of_a_server_the_user_pointed_us_at_is_inferred_from_where_it_is(
-        self,
-    ) -> None:
-        lan = make_model_binding(
-            tenant_id=TENANT,
-            provider=ProviderKind.OPENAI_COMPATIBLE,
-            base_url="http://192.168.1.50:8000/v1",
-        )
-        cloud = make_model_binding(
-            tenant_id=TENANT,
-            role=ModelRole.CHAT_FAST,
-            provider=ProviderKind.OPENAI_COMPATIBLE,
-            base_url="https://api.groq.com/openai/v1",
-        )
-        rig = Rig(lan, cloud)
-        rig.adapter.will_chat(reply(), reply())
-
-        await rig.gateway.chat(TENANT_PRINCIPAL, ask())
-        await rig.gateway.chat(TENANT_PRINCIPAL, ask(role=ModelRole.CHAT_FAST))
-
-        seen = [resolved_binding.locality for resolved_binding, _ in rig.adapter.chats]
-        assert seen == [Locality.LOCAL, Locality.REMOTE]
-
-    async def test_a_hosted_provider_is_remote_even_when_its_address_looks_local(self) -> None:
-        # A proxy on the LAN in front of OpenAI still sends the data to OpenAI.
+    async def test_a_hosted_provider_behind_a_proxy_on_the_lan_is_served_too(self) -> None:
         rig = Rig(openai_binding(base_url="http://192.168.1.10:4000/v1"))
-
-        with pytest.raises(PolicyViolationError):
-            await rig.gateway.chat(
-                TENANT_PRINCIPAL, ask(data_classification=DataClassification.LOCAL_ONLY)
-            )
-
-    async def test_a_hosted_provider_can_be_declared_local_by_the_user(self) -> None:
-        declared = openai_binding(base_url="http://192.168.1.10:4000/v1", locality=Locality.LOCAL)
-        rig = Rig(declared)
         rig.adapter.will_chat(reply())
 
-        await rig.gateway.chat(
-            TENANT_PRINCIPAL, ask(data_classification=DataClassification.LOCAL_ONLY)
-        )
+        await rig.gateway.chat(TENANT_PRINCIPAL, ask())
 
-        assert rig.last_resolved.locality is Locality.LOCAL
+        assert rig.last_resolved.base_url == "http://192.168.1.10:4000/v1"
 
-    async def test_a_declared_locality_wins_over_the_address(self) -> None:
-        secretly_remote = make_model_binding(
-            tenant_id=TENANT,
-            provider=ProviderKind.OLLAMA,
-            base_url="http://localhost:11434",
-            locality=Locality.REMOTE,
-        )
-        rig = Rig(secretly_remote)
+    async def test_a_user_may_use_a_hosted_chat_model_and_a_local_embedding_model(self) -> None:
+        rig = Rig(openai_binding(), local_binding(ModelRole.EMBEDDING))
+        rig.adapter.will_chat(reply())
+        rig.adapter.will_embed(EmbeddingBatch(vectors=((0.1, 0.2),)))
 
-        with pytest.raises(PolicyViolationError):
-            await rig.gateway.chat(
-                TENANT_PRINCIPAL, ask(data_classification=DataClassification.LOCAL_ONLY)
-            )
+        await rig.gateway.chat(TENANT_PRINCIPAL, ask())
+        await rig.gateway.embed(TENANT_PRINCIPAL, EmbeddingRequest(inputs=("a",)))
 
-    async def test_the_policy_applies_to_streams(self) -> None:
-        rig = Rig(openai_binding())
-
-        with pytest.raises(PolicyViolationError):
-            await events(
-                rig.gateway.chat_stream(
-                    TENANT_PRINCIPAL,
-                    ask(stream=True, data_classification=DataClassification.LOCAL_ONLY),
-                )
-            )
-
-        assert rig.adapter.streams == []
-
-    async def test_the_policy_applies_to_embeddings(self) -> None:
-        rig = Rig(openai_binding(ModelRole.EMBEDDING))
-
-        with pytest.raises(PolicyViolationError):
-            await rig.gateway.embed(
-                TENANT_PRINCIPAL,
-                EmbeddingRequest(
-                    inputs=("secret text",), data_classification=DataClassification.LOCAL_ONLY
-                ),
-            )
-
-        assert rig.adapter.embeds == []
+        assert len(rig.adapter.chats) == len(rig.adapter.embeds) == 1
 
 
 class TestRetries:
@@ -758,7 +668,6 @@ class TestProfile:
         assert profile.max_input_tokens == 32_000
         assert profile.max_output_tokens == 2048
         assert profile.streaming is True
-        assert profile.locality is Locality.LOCAL
         assert "secret-model-name" not in profile.model_dump_json()
 
     @pytest.mark.parametrize(
@@ -773,13 +682,6 @@ class TestProfile:
         profile = await rig.gateway.profile(TENANT_PRINCIPAL, ModelRole.CHAT_MAIN)
 
         assert profile.structured_output is expected
-
-    async def test_a_remote_role_says_so(self) -> None:
-        rig = Rig(openai_binding())
-
-        profile = await rig.gateway.profile(TENANT_PRINCIPAL, ModelRole.CHAT_MAIN)
-
-        assert profile.locality is Locality.REMOTE
 
     async def test_an_embedding_role_does_not_stream_and_has_no_structured_output(self) -> None:
         rig = Rig(local_binding(ModelRole.EMBEDDING))
@@ -816,7 +718,7 @@ class TestProfile:
 
         profile = await rig.gateway.profile(TENANT_PRINCIPAL, ModelRole.CHAT_MAIN)
 
-        assert profile.locality is Locality.REMOTE
+        assert profile.role is ModelRole.CHAT_MAIN
 
     async def test_no_binding_is_a_typed_error(self) -> None:
         with pytest.raises(BindingNotFoundError):
@@ -838,7 +740,6 @@ class TestLogging:
         assert record.__dict__["role"] == "chat.main"
         assert record.__dict__["provider"] == "ollama"
         assert record.__dict__["model"] == "llama3.1:8b"
-        assert record.__dict__["locality"] == "local"
         assert record.__dict__["outcome"] == "ok"
         assert record.__dict__["tenant_id"] == str(TENANT)
         assert record.__dict__["input_tokens"] == 9
@@ -1020,53 +921,65 @@ class TestDefaults:
         )
 
 
-def resolved_as(locality: Locality, *, timeout_s: float = 60.0) -> ResolvedBinding:
-    binding = make_model_binding(
-        tenant_id=TENANT, locality=locality, options=BindingOptions(timeout_s=timeout_s)
-    )
+def resolved_with(timeout_s: float = 60.0) -> ResolvedBinding:
+    binding = make_model_binding(tenant_id=TENANT, options=BindingOptions(timeout_s=timeout_s))
     return resolved(binding, base_url="http://localhost:11434")
 
 
-class TestTheDefaultClient:
-    """It is the last wall against a binding pointed somewhere it must not go."""
+class TestTheClientsOfADeployment:
+    """The last wall: which networks a binding may be pointed at is decided by the deployment."""
 
-    async def test_a_remote_model_cannot_reach_the_private_network(self) -> None:
-        client = guarded_client_factory(resolved_as(Locality.REMOTE))
+    async def test_a_deployment_that_shares_its_network_reaches_the_public_internet_only(
+        self,
+    ) -> None:
+        client = guarded_clients(UrlPolicy.public_only())(resolved_with())
 
         async with client:
             with pytest.raises(UrlNotAllowedError):
                 await client.get("http://127.0.0.1:9/")
 
-    async def test_a_local_model_may_reach_it(self) -> None:
-        client = guarded_client_factory(resolved_as(Locality.LOCAL))
+    async def test_an_on_premise_deployment_may_reach_its_own_network(self) -> None:
+        client = guarded_clients(UrlPolicy.private_networks_allowed())(resolved_with())
 
         async with client:
             with pytest.raises(httpx.ConnectError):  # allowed, and nothing is listening
                 await client.get("http://127.0.0.1:9/")
 
-    @pytest.mark.parametrize("locality", [Locality.LOCAL, Locality.REMOTE])
-    async def test_nobody_may_reach_the_cloud_metadata_service(self, locality: Locality) -> None:
-        client = guarded_client_factory(resolved_as(locality))
+    async def test_a_gateway_that_was_not_told_otherwise_reaches_the_public_internet_only(
+        self,
+    ) -> None:
+        # The default is the safe one: an on-premise deployment has to ask for the private network.
+        binding = local_binding()
+        gateway = ModelGateway(InMemoryBindingRepository([binding]), SECRETS)
+
+        with pytest.raises(UrlNotAllowedError):
+            await gateway.chat(TENANT_PRINCIPAL, ask())
+
+    @pytest.mark.parametrize(
+        "policy", [UrlPolicy.public_only(), UrlPolicy.private_networks_allowed()]
+    )
+    async def test_nobody_may_reach_the_cloud_metadata_service(self, policy: UrlPolicy) -> None:
+        client = guarded_clients(policy)(resolved_with())
 
         async with client:
             with pytest.raises(UrlNotAllowedError):
                 await client.get("http://169.254.169.254/latest/meta-data/")
 
     async def test_redirects_are_not_followed(self) -> None:
-        client = guarded_client_factory(resolved_as(Locality.LOCAL))
+        client = guarded_clients(UrlPolicy.private_networks_allowed())(resolved_with())
 
         async with client:
             assert client.follow_redirects is False
 
     async def test_the_timeout_of_the_binding_applies_and_connecting_gets_less_of_it(self) -> None:
-        client = guarded_client_factory(resolved_as(Locality.LOCAL, timeout_s=120.0))
+        client = guarded_clients(UrlPolicy.private_networks_allowed())(resolved_with(120.0))
 
         async with client:
             assert client.timeout.read == 120.0
             assert client.timeout.connect == 10.0
 
     async def test_a_short_timeout_shortens_the_connection_timeout_too(self) -> None:
-        client = guarded_client_factory(resolved_as(Locality.LOCAL, timeout_s=3.0))
+        client = guarded_clients(UrlPolicy.private_networks_allowed())(resolved_with(3.0))
 
         async with client:
             assert client.timeout.connect == 3.0

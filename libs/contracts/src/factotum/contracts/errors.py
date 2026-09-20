@@ -26,7 +26,7 @@ class AuthError(FactotumError):
 
 
 class PolicyViolationError(FactotumError):
-    """The request is refused by a policy (tenant, device, data locality...)."""
+    """The request is refused by a policy (a tenant setting, a device policy...)."""
 
     code = "policy_violation"
 

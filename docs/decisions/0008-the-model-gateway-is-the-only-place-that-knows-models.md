@@ -1,6 +1,7 @@
 # 0008. The model gateway is the only place that knows models
 
-Status: accepted, 2026-09-19
+Status: accepted, 2026-09-19. The data policy and the `local` or `remote` attribute of a binding
+were superseded by [0010](0010-where-data-goes-is-the-users-choice-of-deployment-and-providers.md).
 
 ## Context
 

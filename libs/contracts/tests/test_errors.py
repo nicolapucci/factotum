@@ -66,11 +66,11 @@ def test_provider_errors_are_caught_as_provider_errors() -> None:
 
 
 def test_an_error_keeps_its_message_and_details() -> None:
-    error = PolicyViolationError("no way", details={"reason": "local_only"})
+    error = PolicyViolationError("no way", details={"reason": "device_policy"})
 
     assert str(error) == "no way"
     assert error.message == "no way"
-    assert error.details == {"reason": "local_only"}
+    assert error.details == {"reason": "device_policy"}
 
 
 def test_details_are_copied_so_callers_cannot_alias_them() -> None:

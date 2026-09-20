@@ -17,6 +17,7 @@ import pytest
 
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
+from factotum.common.urlguard import UrlPolicy
 from factotum.contracts.chat import (
     ChatMessage,
     ChatRequest,
@@ -32,7 +33,7 @@ from factotum.contracts.models import BindingOptions, ModelRole, ProviderKind
 from factotum.contracts.testing import make_model_binding, make_tenant_principal
 from factotum.model_gateway.api import create_app
 from factotum.model_gateway.bindings import InMemoryBindingRepository
-from factotum.model_gateway.core import ModelGateway
+from factotum.model_gateway.core import ModelGateway, guarded_clients
 from factotum.model_gateway.secrets import EnvSecretResolver
 
 pytestmark = [
@@ -67,7 +68,12 @@ def gateway(*, options: BindingOptions | None = None) -> ModelGateway:
         base_url=URL,
         options=BindingOptions(timeout_s=300),
     )
-    return ModelGateway(InMemoryBindingRepository([chat, embedding]), EnvSecretResolver())
+    return ModelGateway(
+        InMemoryBindingRepository([chat, embedding]),
+        EnvSecretResolver(),
+        # An on-premise deployment: the model is on this machine.
+        client_factory=guarded_clients(UrlPolicy.private_networks_allowed()),
+    )
 
 
 def ask(text: str, **fields: Any) -> ChatRequest:
@@ -187,7 +193,6 @@ async def test_the_whole_service_answers_over_http() -> None:
     assert "pong" in whole.json()["text"].lower()
     assert streamed.headers["content-type"].startswith("text/event-stream")
     assert '"type":"finish"' in streamed.text
-    assert profile.json()["locality"] == "local"
     assert profile.json()["structured_output"] == "native"
     assert vectors.json()["dimensions"] > 100
 
@@ -199,7 +204,11 @@ async def test_an_unknown_model_is_a_typed_error_and_not_a_hang() -> None:
         model="this-model-does-not-exist:1b",
         base_url=URL,
     )
-    unbound = ModelGateway(InMemoryBindingRepository([missing]), EnvSecretResolver())
+    unbound = ModelGateway(
+        InMemoryBindingRepository([missing]),
+        EnvSecretResolver(),
+        client_factory=guarded_clients(UrlPolicy.private_networks_allowed()),
+    )
 
     with pytest.raises(InvalidRequestError, match="not found"):
         await unbound.chat(PRINCIPAL, ask("hi"))

@@ -11,8 +11,9 @@ from pydantic import ValidationError
 from factotum.common.config import Environment
 from factotum.common.devauth import SUBJECT_HEADER
 from factotum.contracts.errors import AuthError
+from factotum.contracts.identity import TenantMode
 from factotum.model_gateway import __main__ as entrypoint
-from factotum.model_gateway.app import build_app, build_gateway
+from factotum.model_gateway.app import build_app, build_gateway, provider_url_policy
 from factotum.model_gateway.settings import GatewaySettings
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -34,6 +35,15 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for name in [name for name in os.environ if name.startswith("FACTOTUM_")]:
         monkeypatch.delenv(name)
     monkeypatch.chdir(tmp_path)
+
+
+ON_A_CLOSED_PORT = """
+bindings:
+  - role: chat.main
+    provider: ollama
+    model: llama3.1:8b
+    base_url: http://127.0.0.1:9
+"""
 
 
 def settings(**kwargs: Any) -> GatewaySettings:
@@ -131,7 +141,6 @@ class TestBuilding:
 
         assert as_user.status_code == as_tenant.status_code == 200
         assert as_user.json()["max_input_tokens"] == 16000
-        assert as_user.json()["locality"] == "local"
 
     async def test_without_a_file_nothing_is_bound(self) -> None:
         app = build_app(settings(environment=Environment.DEVELOPMENT))
@@ -160,6 +169,66 @@ class TestBuilding:
 
         with pytest.raises(ValueError, match="already has a binding"):
             build_gateway(settings(gateway_bindings_file=twice))
+
+
+class TestWhereTheGatewayMayConnect:
+    """Which networks a binding may point at is a property of the deployment, not of a binding."""
+
+    def test_an_on_premise_deployment_may_reach_its_own_network(self) -> None:
+        policy = provider_url_policy(settings(tenant_mode=TenantMode.SINGLE_TENANT))
+
+        assert policy.allow_private_networks
+
+    def test_a_deployment_shared_by_tenants_reaches_the_public_internet_only(self) -> None:
+        policy = provider_url_policy(settings(tenant_mode=TenantMode.MULTI_TENANT))
+
+        assert not policy.allow_private_networks
+
+    def test_a_deployment_is_on_premise_unless_it_says_otherwise(self) -> None:
+        assert provider_url_policy(settings()).allow_private_networks
+
+    async def test_on_premise_a_binding_may_point_at_a_server_on_the_machine(
+        self, tmp_path: Path
+    ) -> None:
+        app = build_app(
+            settings(
+                environment=Environment.DEVELOPMENT,
+                tenant_mode=TenantMode.SINGLE_TENANT,
+                gateway_bindings_file=bindings_file(tmp_path, ON_A_CLOSED_PORT),
+            )
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://gateway"
+        ) as client:
+            response = await client.post(
+                "/v1/chat", json={"messages": [{"role": "user", "content": "hi"}]}
+            )
+
+        # Allowed to try, and nothing is listening on that port.
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "provider_unavailable"
+
+    async def test_in_a_shared_deployment_the_same_binding_is_refused_before_any_connection(
+        self, tmp_path: Path
+    ) -> None:
+        app = build_app(
+            settings(
+                environment=Environment.DEVELOPMENT,
+                tenant_mode=TenantMode.MULTI_TENANT,
+                gateway_bindings_file=bindings_file(tmp_path, ON_A_CLOSED_PORT),
+            )
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://gateway"
+        ) as client:
+            response = await client.post(
+                "/v1/chat", json={"messages": [{"role": "user", "content": "hi"}]}
+            )
+
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "url_not_allowed"
 
 
 class TestEntryPoint:

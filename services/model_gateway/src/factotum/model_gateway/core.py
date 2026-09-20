@@ -4,6 +4,10 @@ It is the only place that turns "the chat model of this user" into a provider, a
 key. Before the network it decides, in a fixed order, which binding serves the request, which key
 goes with it and whether the data may go there at all. Then it makes the call, retried where
 retrying may help, and returns the answer in the normalized shape.
+
+It does not judge where a model runs or what may be sent to it. That is decided by the deployment
+(on-premise with a local model, or in the cloud with a hosted one) and by the providers the user
+bound (ADR 0010); the only thing the gateway restricts is which networks it may reach.
 """
 
 import asyncio
@@ -28,15 +32,11 @@ from factotum.contracts.embeddings import EmbeddingRequest, EmbeddingResult, Emb
 from factotum.contracts.errors import (
     FactotumError,
     InvalidRequestError,
-    PolicyViolationError,
     ProviderError,
     ProviderUnavailableError,
 )
 from factotum.contracts.identity import Principal
 from factotum.contracts.models import (
-    HOSTED_PROVIDERS,
-    DataClassification,
-    Locality,
     ModelBinding,
     ModelRole,
     Profile,
@@ -44,7 +44,6 @@ from factotum.contracts.models import (
     StructuredOutputSupport,
 )
 from factotum.model_gateway.bindings import BindingRepository, select_binding
-from factotum.model_gateway.locality import infer_locality
 from factotum.model_gateway.providers.anthropic import AnthropicAdapter
 from factotum.model_gateway.providers.base import EmbeddingBatch, ProviderAdapter, ResolvedBinding
 from factotum.model_gateway.providers.gemini import GeminiAdapter
@@ -78,14 +77,24 @@ def default_adapters() -> dict[ProviderKind, ProviderAdapter]:
     }
 
 
-def guarded_client_factory(resolved: ResolvedBinding) -> httpx.AsyncClient:
-    """A client that reaches only what the locality of the binding allows: a local model may be on
-    the private network, a remote one only on the public internet. Every connection is vetted."""
-    policy = UrlPolicy.local() if resolved.locality is Locality.LOCAL else UrlPolicy.remote()
-    timeout = resolved.options.timeout_s
-    return guarded_client(
-        policy, timeout=httpx.Timeout(timeout, connect=min(_CONNECT_TIMEOUT_S, timeout))
-    )
+def guarded_clients(policy: UrlPolicy) -> ClientFactory:
+    """A factory of clients that reach only what ``policy`` allows, every connection vetted.
+
+    The policy belongs to the deployment and not to a binding: an on-premise deployment reaches the
+    models on its own network (an Ollama on the LAN), a multi-tenant one only the public internet.
+    What a model is, or where it runs, is the user's choice and is not the gateway's to judge.
+    """
+
+    def make(resolved: ResolvedBinding) -> httpx.AsyncClient:
+        timeout = resolved.options.timeout_s
+        return guarded_client(
+            policy, timeout=httpx.Timeout(timeout, connect=min(_CONNECT_TIMEOUT_S, timeout))
+        )
+
+    return make
+
+
+_PUBLIC_INTERNET_ONLY = guarded_clients(UrlPolicy.public_only())
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +113,7 @@ class ModelGateway:
         secrets: SecretResolver,
         *,
         adapters: Mapping[ProviderKind, ProviderAdapter] | None = None,
-        client_factory: ClientFactory = guarded_client_factory,
+        client_factory: ClientFactory = _PUBLIC_INTERNET_ONLY,
         retry: RetryPolicy = RetryPolicy(),  # noqa: B008 - a frozen value, safe to share
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
@@ -127,9 +136,7 @@ class ModelGateway:
         usage: Usage | None = None
         outcome = "ok"
         try:
-            call = prepared = await self._prepare(
-                principal, request.role, request.data_classification
-            )
+            call = prepared = await self._prepare(principal, request.role)
             async with prepared.client:
                 result = await self._chat(prepared, request)
             usage = result.usage
@@ -154,9 +161,7 @@ class ModelGateway:
         usage: Usage | None = None
         outcome = "cancelled"
         try:
-            call = prepared = await self._prepare(
-                principal, request.role, request.data_classification
-            )
+            call = prepared = await self._prepare(principal, request.role)
             async with prepared.client:
                 stream = await self._retrying(
                     lambda: _prime(
@@ -187,9 +192,7 @@ class ModelGateway:
         usage: Usage | None = None
         outcome = "ok"
         try:
-            call = prepared = await self._prepare(
-                principal, ModelRole.EMBEDDING, request.data_classification
-            )
+            call = prepared = await self._prepare(principal, ModelRole.EMBEDDING)
             async with prepared.client:
                 batch = await self._retrying(
                     lambda: prepared.adapter.embed(
@@ -223,26 +226,15 @@ class ModelGateway:
             max_output_tokens=binding.options.max_output_tokens,
             streaming=role.is_chat,
             structured_output=structured,
-            locality=resolved.locality,
         )
 
     # --- what happens before the network ---
 
-    async def _prepare(
-        self, principal: Principal, role: ModelRole, classification: DataClassification
-    ) -> _Call:
+    async def _prepare(self, principal: Principal, role: ModelRole) -> _Call:
         binding = await select_binding(
             self._repository, principal.tenant_id, principal.acts_as, role
         )
         resolved = self._resolve(binding)
-        if (
-            classification is DataClassification.LOCAL_ONLY
-            and resolved.locality is not Locality.LOCAL
-        ):
-            raise PolicyViolationError(
-                f"the data is local-only and the model bound to {role.value} is not local",
-                details={"role": role.value, "locality": resolved.locality.value},
-            )
         return _Call(
             role=role,
             principal=principal,
@@ -252,22 +244,10 @@ class ModelGateway:
         )
 
     def _resolve(self, binding: ModelBinding, *, with_secret: bool = True) -> ResolvedBinding:
-        base_url = binding.base_url or DEFAULT_BASE_URLS[binding.provider]
-        locality = binding.locality
-        if locality is None:
-            # A hosted provider is remote whatever its address says: a proxy on the LAN in front
-            # of OpenAI is still OpenAI. Only a server the user pointed us at is judged by where
-            # it is.
-            locality = (
-                Locality.REMOTE
-                if binding.provider in HOSTED_PROVIDERS
-                else infer_locality(base_url)
-            )
         return ResolvedBinding(
             binding=binding,
-            base_url=base_url,
+            base_url=binding.base_url or DEFAULT_BASE_URLS[binding.provider],
             api_key=self._secrets.resolve(binding.secret_ref) if with_secret else None,
-            locality=locality,
         )
 
     # --- the calls ---
@@ -338,7 +318,6 @@ class ModelGateway:
         if call is not None:
             fields["provider"] = call.resolved.binding.provider.value
             fields["model"] = call.resolved.model
-            fields["locality"] = call.resolved.locality.value
         if usage is not None:
             fields["input_tokens"] = usage.input_tokens
             fields["output_tokens"] = usage.output_tokens

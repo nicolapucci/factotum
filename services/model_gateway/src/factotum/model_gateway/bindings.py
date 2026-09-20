@@ -89,7 +89,7 @@ def load_bindings(
     """Bindings from a YAML document, for development before the hub manages them.
 
     ``bindings`` is a list; each entry has the fields of a binding (``role``, ``provider``,
-    ``model``, ``base_url``, ``secret_ref``, ``locality``, ``options``). It belongs to the tenant,
+    ``model``, ``base_url``, ``secret_ref``, ``options``). It belongs to the tenant,
     unless it has a ``user`` id: then it is that user's own.
     """
     document = yaml.safe_load(text)

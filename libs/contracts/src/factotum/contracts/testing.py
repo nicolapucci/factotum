@@ -14,7 +14,6 @@ from factotum.contracts.identity import Owner, OwnerKind, Principal, Role, Subje
 from factotum.contracts.ids import DeviceId, ModelBindingId, SkillId, TenantId, UserId
 from factotum.contracts.models import (
     BindingOptions,
-    Locality,
     ModelBinding,
     ModelRole,
     ProviderKind,
@@ -154,7 +153,6 @@ def make_model_binding(
     base_url: str | None = "http://localhost:11434",
     secret_ref: str | None = None,
     owner: Owner | None = None,
-    locality: Locality | None = None,
     options: BindingOptions | None = None,
 ) -> ModelBinding:
     """A model binding, owned by the tenant unless an owner is given; a local Ollama by default."""
@@ -167,6 +165,5 @@ def make_model_binding(
         model=model,
         base_url=base_url,
         secret_ref=secret_ref,
-        locality=locality,
         options=options or BindingOptions(),
     )

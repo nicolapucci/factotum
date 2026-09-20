@@ -19,8 +19,9 @@ later.
 1. **The user chooses the models.** Every model (chat, embeddings, speech, search) is provided by the
    user: a local server, or a hosted provider with the user's own key. Only the model gateway knows
    which one; no other service names or assumes a model.
-2. **The user controls their documents.** Each collection carries a data policy that decides whether
-   its content may leave the machine, and the system enforces it.
+2. **The user decides where their data goes, by choosing the deployment and the providers.** On
+   premise with a local model nothing leaves the network; with a hosted provider what is sent goes
+   there. The system does not ask for that choice again and does not police it (ADR 0010).
 3. **Contracts live in one place.** Every interface between services is a pydantic model in
    `factotum.contracts`, tested. The previous prototype's worst bugs were contracts that had drifted.
 4. **Permissions never depend on a voice.** They come from whom a device acts for, the device's
@@ -58,7 +59,7 @@ flowchart TD
 | `edge` | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement; later the voice pipeline | documents, models |
 | `conversation` | One conversation turn: routing with structured output, retrieval from `knowledge` and the web with timeouts and partial degradation, context budgeting, streamed answers with citations, short memory, the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
 | `knowledge` | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
-| `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction, data-locality policy | conversations and document content (it only sees them in transit) |
+| `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
 | `actions` | Skills (validation, versions, matching), permissions and grants, the policy decision, approvals, audit, dispatch of device commands | how a model was chosen |
 | `runner` | Runs skill scripts in isolation | everything else |
 | `hub` | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
@@ -215,8 +216,7 @@ at rest and bindings managed by the hub.
 
 - Services ask for a **role**, never a model: `chat.main`, `chat.fast`, `embedding`, `stt`, `tts`,
   `rerank`, `web_search`. Each user (or the tenant) binds a role to a **binding**: provider kind,
-  address, key, model name, options, and whether it is `local` or `remote`. If `chat.fast` is not
-  configured, `chat.main` is used.
+  address, key, model name and options. If `chat.fast` is not configured, `chat.main` is used.
 - One adapter per provider kind: OpenAI, Anthropic, Google Gemini, Ollama (its native API, so the
   context window is set explicitly) and a generic OpenAI-compatible one (vLLM, LM Studio, llama.cpp,
   OpenRouter, Groq...). Adapters are written on `httpx` and pydantic, without vendor SDKs, so timeouts,
@@ -224,20 +224,19 @@ at rest and bindings managed by the hub.
 - The API is normalized: streamed chat events, structured output (a JSON schema in, a validated
   object out, using each provider's native mechanism or validation with retries), typed errors.
 - Callers never see a model name; they may ask for a **profile** of a role (maximum input tokens,
-  streaming, native structured output, locality) to size the context. The maximum input is declared by
-  the user, because model catalogues change constantly.
+  streaming, native structured output) to size the context. The maximum input is declared by the
+  user, because model catalogues change constantly.
 - **Secrets**: plaintext only in the gateway's memory, encrypted at rest, write-only APIs, always in
   headers and never in URLs, redacted from every log (*implemented*: `factotum.common.redaction`
   and `factotum.common.logs`; for now a binding names an environment variable, and the gateway
   reads the key from it).
-- **Data policy**: each collection is `local_only` or `external_allowed`, each binding `local` or
-  `remote`. A `local_only` collection is embedded only with a `local` binding; the conversation
-  service does not put `local_only` excerpts in the prompt of a `remote` chat binding; the gateway
-  refuses such a request anyway, as a second line of defence.
+- **Where the data goes** is not a policy of the application (ADR 0010). The deployment and the
+  providers the user bound decide it, and neither a collection, a request nor a binding says
+  anything about it.
 - **User-chosen addresses** go through the URL guard: only http(s), no credentials in the URL,
-  link-local / metadata / multicast / reserved addresses always refused, private networks only for
-  `local` endpoints, https for public ones, every resolved address checked, and the connection made
-  to the checked address so that DNS cannot answer differently the second time.
+  link-local / metadata / multicast / reserved addresses always refused, private networks only in a
+  single-tenant (on-premise) deployment, https for public ones, every resolved address checked, and
+  the connection made to the checked address so that DNS cannot answer differently the second time.
 - An **embedding space** (provider, model, dimension, as an opaque id) belongs to a collection. If the
   user changes the embedding model the collection is marked for re-indexing; two spaces are never
   mixed silently.
@@ -255,18 +254,20 @@ iterative index scans, which stay behind the `VectorStore` interface.
 ## 9. Deployment
 
 - **Compose** (*implemented for Postgres and the model gateway*): pinned images, no default
-  database password, ports published on loopback only. The gateway image is built from the repository
-  root, runs as a non-root user, and starts only with `--profile services`. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set it
-  disables developer conveniences instead of enabling them.
+  database password, ports published on loopback only. The gateway image is built from the
+  repository root, runs as a non-root user, and starts only with `--profile services`.
+  `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set it disables developer
+  conveniences instead of enabling them.
 - `FACTOTUM_TENANT_MODE`: `single_tenant` (on-premise: one tenant and its admin created at first
   start) or `multi_tenant` (cloud). The code paths are the same: `tenant_id` always comes from the
   token, never from a request body, and each tenant-owned table will carry `tenant_id` with
   row-level security.
 - **Kubernetes** later, from the same configuration schema. Before offering a multi-tenant cloud:
-  a stronger skill sandbox (gVisor or Kata, or only instructions-mode skills), stricter provider
-  address rules (no `local` bindings), a `DeviceRouter` over a bus so a command reaches the edge
-  replica that holds the device, tenant partitioning of vectors, per-tenant quotas, keys and
-  observability, and onboarding.
+  a stronger skill sandbox (gVisor or Kata, or only instructions-mode skills), a `DeviceRouter`
+  over a bus so a command reaches the edge replica that holds the device, tenant partitioning of
+  vectors, per-tenant quotas, keys and observability, and onboarding. The address rule for
+  providers is already in place: a multi-tenant deployment reaches the public internet only
+  (ADR 0010).
 
 ## 10. Quality
 
@@ -283,7 +284,7 @@ iterative index scans, which stay behind the `VectorStore` interface.
 | # | Content | Status |
 | --- | --- | --- |
 | 0 | Foundations: workspace, tooling, CI, shared contracts, `authorize()`, redaction and logging, settings, URL guard, `SystemDevice`, compose with Postgres | done |
-| 1 | `model-gateway`: five adapters, structured output, streaming, retries, data-locality policy, HTTP API, container image | done |
+| 1 | `model-gateway`: five adapters, structured output, streaming, retries, HTTP API, container image | done |
 | 2 | `knowledge` | next |
 | 3 | `conversation` (text) | |
 | 4 | `edge` and a terminal client with device profiles | |

@@ -7,7 +7,7 @@ from pydantic import Field, field_validator, model_validator
 
 from factotum.contracts.base import Contract
 from factotum.contracts.chat import Usage
-from factotum.contracts.models import DataClassification, ProviderKind
+from factotum.contracts.models import ProviderKind
 
 MAX_INPUTS_PER_REQUEST = 256
 
@@ -32,7 +32,6 @@ class EmbeddingSpace(Contract):
 
 class EmbeddingRequest(Contract):
     inputs: tuple[str, ...] = Field(min_length=1, max_length=MAX_INPUTS_PER_REQUEST)
-    data_classification: DataClassification = DataClassification.ANY
 
     @field_validator("inputs")
     @classmethod

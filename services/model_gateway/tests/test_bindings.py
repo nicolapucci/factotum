@@ -9,7 +9,6 @@ from factotum.contracts.identity import Owner, OwnerKind, Subject
 from factotum.contracts.ids import TenantId, UserId
 from factotum.contracts.models import (
     BindingOptions,
-    Locality,
     ModelBinding,
     ModelRole,
     ProviderKind,
@@ -303,7 +302,9 @@ class TestLoadingBindings:
         assert embedding.secret_ref == "env:OPENAI_API_KEY"
         assert embedding.options == BindingOptions(dimensions=512, timeout_s=30)
 
-    def test_the_locality_can_be_declared(self) -> None:
+    def test_a_file_that_still_declares_a_locality_is_refused_and_not_ignored(self) -> None:
+        # Where a model runs is not something the system records or enforces (ADR 0010): a file
+        # that says so would let its author believe that something protects the documents.
         text = """
 bindings:
   - role: chat.main
@@ -313,7 +314,8 @@ bindings:
     locality: local
 """
 
-        assert load_bindings(text, tenant_id=TENANT)[0].locality is Locality.LOCAL
+        with pytest.raises(ValueError, match="locality"):
+            load_bindings(text, tenant_id=TENANT)
 
     def test_an_entry_with_a_user_is_that_users_own(self) -> None:
         text = f"""

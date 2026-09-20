@@ -9,7 +9,7 @@ from factotum.contracts.models import (
     ADDRESS_REQUIRED,
     HOSTED_PROVIDERS,
     BindingOptions,
-    Locality,
+    ModelBinding,
     ModelRole,
     Profile,
     ProviderKind,
@@ -137,13 +137,14 @@ class TestModelBinding:
 
         assert binding.owner == owner
 
-    def test_the_locality_can_be_declared_or_left_to_be_inferred(self) -> None:
-        tenant_id = make_tenant_id()
+    def test_a_binding_does_not_say_whether_the_model_is_local(self) -> None:
+        # The deployment and the provider the user picked are the policy (ADR 0010): the system
+        # neither records nor enforces where a model runs. A payload that still declares it is
+        # refused, not ignored, so nobody believes it protects anything.
+        payload = make_model_binding(tenant_id=make_tenant_id()).model_dump(mode="json")
 
-        assert make_model_binding(tenant_id=tenant_id).locality is None
-        assert make_model_binding(tenant_id=tenant_id, locality=Locality.LOCAL).locality is (
-            Locality.LOCAL
-        )
+        with pytest.raises(ValidationError):
+            ModelBinding.model_validate({**payload, "locality": "local"})
 
     def test_a_binding_round_trips_through_json(self) -> None:
         binding = make_model_binding(
@@ -154,8 +155,6 @@ class TestModelBinding:
             options=BindingOptions(max_input_tokens=32_000, temperature=0.2),
         )
 
-        from factotum.contracts.models import ModelBinding
-
         assert ModelBinding.model_validate_json(binding.model_dump_json()) == binding
 
     def test_unknown_fields_are_rejected(self) -> None:
@@ -163,8 +162,6 @@ class TestModelBinding:
             mode="json"
         )
         payload["api_key"] = "sk-should-never-be-accepted"
-
-        from factotum.contracts.models import ModelBinding
 
         with pytest.raises(ValidationError, match="api_key") as caught:
             ModelBinding.model_validate(payload)
@@ -182,7 +179,6 @@ def test_a_profile_says_what_a_role_can_do_without_naming_the_model() -> None:
         max_input_tokens=32_000,
         streaming=True,
         structured_output=StructuredOutputSupport.NATIVE,
-        locality=Locality.LOCAL,
     )
 
     assert set(profile.model_dump()) == {
@@ -191,7 +187,6 @@ def test_a_profile_says_what_a_role_can_do_without_naming_the_model() -> None:
         "max_output_tokens",
         "streaming",
         "structured_output",
-        "locality",
     }
 
 
@@ -200,7 +195,6 @@ def test_a_role_that_produces_no_text_has_no_structured_output_support() -> None
         role=ModelRole.EMBEDDING,
         max_input_tokens=8192,
         streaming=False,
-        locality=Locality.LOCAL,
     )
 
     assert profile.structured_output is None
@@ -212,5 +206,4 @@ def test_a_profile_needs_a_positive_context() -> None:
             role=ModelRole.CHAT_FAST,
             max_input_tokens=0,
             structured_output=StructuredOutputSupport.EMULATED,
-            locality=Locality.REMOTE,
         )

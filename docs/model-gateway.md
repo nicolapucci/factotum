@@ -12,7 +12,7 @@ Anthropic, Gemini, Ollama and any OpenAI-compatible server. The roles `stt`, `tt
 
 A **role** says what a service needs a model for: `chat.main` (writes answers), `chat.fast`
 (routing and extraction), `embedding`. A **binding** says which model serves a role: provider,
-model, address, where the key is, whether the model is local, and a few options. A user binds roles
+model, address, where the key is, and a few options. A user binds roles
 for themselves, the tenant for everybody.
 
 Which binding serves a request:
@@ -26,7 +26,7 @@ Which binding serves a request:
    tenants, and none for `embedding`.
 
 A **profile** says what a role can do without saying which model does it: maximum input tokens,
-maximum output tokens, streaming, structured output (`native` or `emulated`), locality. Callers use
+maximum output tokens, streaming, structured output (`native` or `emulated`). Callers use
 it to size their prompts. `GET /v1/profiles/{role}`.
 
 Binding options (all optional, all with prudent defaults):
@@ -120,26 +120,22 @@ never more than 8 s). A provider's `Retry-After` is honored when it is short; wh
 `rate_limited`, `provider_unavailable`, `provider_timeout`. Never retried: a refused key, an invalid
 request, a prompt that is too long, a refusal.
 
-## Data locality
+## Where your data goes, and which networks the gateway may reach
 
-A request says what its data may be sent to (`data_classification`: `any` or `local_only`). Before
-any network access, `local_only` data is refused by a model that is not local: `policy_violation`,
-403. This is the second line of defence: the conversation service does not put such content in the
-request in the first place.
+The gateway sends a request to the model the user bound, and does not judge where that model runs.
+Whoever chooses a hosted provider has chosen to send their prompts and documents there; whoever wants
+nothing to leave the machine runs Factotum on premise with a self-hosted model such as Ollama
+(ADR 0010). There is no data classification on requests or collections, and a binding does not
+declare where its model is. A request or a bindings file that still carries one is refused as an
+unknown field, so nobody believes something enforces it.
 
-Whether a model is local is what the user declares (`locality`), otherwise:
-
-- for `ollama` and `openai_compatible`, judged by the address: loopback, private ranges,
-  `host.docker.internal`, `.local`, `.lan`, `.internal` and bare names are local; the rest is remote;
-- for the hosted providers, **always remote**: a proxy on the LAN in front of OpenAI still sends the
-  data to OpenAI.
-
-An unknown address is remote: calling a local server remote costs some convenience, the opposite
-would leak documents.
-
-The HTTP client is the last wall. A local model may be on the private network, a remote one only on
-the public internet; cloud metadata addresses are never reachable; every resolved address is
-checked and the connection goes to the address that was checked; redirects are not followed.
+What the gateway does restrict is the network it may reach, because that is a security matter and it
+belongs to the deployment. A single-tenant (on-premise) deployment may connect to its own network,
+where an Ollama or a vLLM usually is (`localhost`, the LAN, `host.docker.internal`). A multi-tenant
+one reaches the public internet only, because the network is shared: it follows
+`FACTOTUM_TENANT_MODE`. In both, cloud metadata addresses are never reachable, every resolved address
+is checked and the connection goes to the address that was checked, and redirects are not followed.
+A `ModelGateway` that is not told otherwise is built for the public internet only.
 
 ## Secrets and logs
 
@@ -148,7 +144,7 @@ checked and the connection goes to the address that was checked; redirects are n
 - Provider error messages are redacted and cut to 500 characters, because providers sometimes quote
   the key they were given. Only the type of a transport error is reported, since its message may
   quote the address.
-- One log line per call: role, tenant, provider, model, locality, outcome, duration, token counts.
+- One log line per call: role, tenant, provider, model, outcome, duration, token counts.
   **Never the conversation.** A test checks that neither the prompt nor the key reaches the log.
 - A request that breaks the contract gets a 422 that says where and why, never what: the value could
   be the text of a conversation or a key.
@@ -176,7 +172,6 @@ roughly, whose fault it is:
 | Status | Codes |
 | --- | --- |
 | 401 | `auth_error` |
-| 403 | `policy_violation` |
 | 404 | `binding_not_found` |
 | 413 | `context_too_long`, `payload_too_large` (bodies over 8 MiB) |
 | 422 | `invalid_request_body`, `invalid_schema`, `invalid_request`, `role_not_supported`, `content_filtered` |

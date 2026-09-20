@@ -16,8 +16,8 @@ from factotum.common.urlguard import (
 from factotum.contracts.errors import UrlNotAllowedError
 
 PUBLIC = "8.8.8.8"
-REMOTE = UrlPolicy.remote()
-LOCAL = UrlPolicy.local()
+PUBLIC_ONLY = UrlPolicy.public_only()
+PRIVATE_OK = UrlPolicy.private_networks_allowed()
 
 
 def resolver_for(table: dict[str, list[str]]) -> Resolver:
@@ -76,7 +76,7 @@ class TestRemotePolicy:
     async def test_https_to_a_public_address_is_allowed(self) -> None:
         resolver = resolver_for({"api.example.org": [PUBLIC]})
 
-        addresses = await vet_url("https://api.example.org/v1", REMOTE, resolver=resolver)
+        addresses = await vet_url("https://api.example.org/v1", PUBLIC_ONLY, resolver=resolver)
 
         assert addresses == (PUBLIC,)
 
@@ -84,7 +84,7 @@ class TestRemotePolicy:
         resolver = resolver_for({"api.example.org": [PUBLIC]})
 
         with pytest.raises(UrlNotAllowedError, match="needs https"):
-            await check_url("http://api.example.org/v1", REMOTE, resolver=resolver)
+            await check_url("http://api.example.org/v1", PUBLIC_ONLY, resolver=resolver)
 
     @pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.5", "192.168.1.10", "::1", "fd00::1"])
     async def test_a_name_that_resolves_to_the_private_network_is_refused(
@@ -93,25 +93,25 @@ class TestRemotePolicy:
         resolver = resolver_for({"internal.example.org": [address]})
 
         with pytest.raises(UrlNotAllowedError, match="private-network"):
-            await check_url("https://internal.example.org", REMOTE, resolver=resolver)
+            await check_url("https://internal.example.org", PUBLIC_ONLY, resolver=resolver)
 
     async def test_a_name_that_resolves_to_a_public_and_a_private_address_is_refused(self) -> None:
         resolver = resolver_for({"sneaky.example.org": [PUBLIC, "10.0.0.5"]})
 
         with pytest.raises(UrlNotAllowedError, match="private-network"):
-            await check_url("https://sneaky.example.org", REMOTE, resolver=resolver)
+            await check_url("https://sneaky.example.org", PUBLIC_ONLY, resolver=resolver)
 
     async def test_an_ip_literal_is_checked_without_resolving_it(self) -> None:
-        assert await vet_url("https://8.8.8.8/x", REMOTE, resolver=never) == ("8.8.8.8",)
+        assert await vet_url("https://8.8.8.8/x", PUBLIC_ONLY, resolver=never) == ("8.8.8.8",)
         with pytest.raises(UrlNotAllowedError, match="private-network"):
-            await check_url("https://192.168.1.10/x", REMOTE, resolver=never)
+            await check_url("https://192.168.1.10/x", PUBLIC_ONLY, resolver=never)
 
     async def test_a_number_written_as_a_decimal_ip_is_caught_after_resolution(self) -> None:
         # 2130706433 is 127.0.0.1; the operating system resolves it, and the result is checked.
         resolver = resolver_for({"2130706433": ["127.0.0.1"]})
 
         with pytest.raises(UrlNotAllowedError, match="private-network"):
-            await check_url("https://2130706433/", REMOTE, resolver=resolver)
+            await check_url("https://2130706433/", PUBLIC_ONLY, resolver=resolver)
 
 
 class TestLocalPolicy:
@@ -129,17 +129,19 @@ class TestLocalPolicy:
     async def test_private_addresses_over_plain_http_are_allowed(
         self, url: str, table: dict[str, list[str]]
     ) -> None:
-        await check_url(url, LOCAL, resolver=resolver_for(table))
+        await check_url(url, PRIVATE_OK, resolver=resolver_for(table))
 
     async def test_a_public_address_still_needs_https(self) -> None:
         resolver = resolver_for({"api.example.org": [PUBLIC]})
 
         with pytest.raises(UrlNotAllowedError, match="needs https"):
-            await check_url("http://api.example.org", LOCAL, resolver=resolver)
+            await check_url("http://api.example.org", PRIVATE_OK, resolver=resolver)
 
 
 class TestAlwaysRefused:
-    @pytest.mark.parametrize("policy", [REMOTE, LOCAL], ids=["remote", "local"])
+    @pytest.mark.parametrize(
+        "policy", [PUBLIC_ONLY, PRIVATE_OK], ids=["public-only", "private-allowed"]
+    )
     @pytest.mark.parametrize(
         "url",
         [
@@ -159,7 +161,9 @@ class TestAlwaysRefused:
         with pytest.raises(UrlNotAllowedError, match=r"link-local|metadata|reserved|multicast"):
             await check_url(url, policy, resolver=never)
 
-    @pytest.mark.parametrize("policy", [REMOTE, LOCAL], ids=["remote", "local"])
+    @pytest.mark.parametrize(
+        "policy", [PUBLIC_ONLY, PRIVATE_OK], ids=["public-only", "private-allowed"]
+    )
     @pytest.mark.parametrize("host", ["metadata.google.internal", "metadata", "instance-data"])
     async def test_metadata_host_names_even_when_they_resolve_to_a_public_address(
         self, host: str, policy: UrlPolicy
@@ -187,27 +191,27 @@ class TestMalformedUrls:
         self, url: str, reason: str
     ) -> None:
         with pytest.raises(UrlNotAllowedError, match=reason):
-            await check_url(url, LOCAL, resolver=never)
+            await check_url(url, PRIVATE_OK, resolver=never)
 
     async def test_an_unresolvable_name_is_refused(self) -> None:
         with pytest.raises(UrlNotAllowedError, match="could not be resolved"):
-            await check_url("https://nowhere.example.org", REMOTE, resolver=resolver_for({}))
+            await check_url("https://nowhere.example.org", PUBLIC_ONLY, resolver=resolver_for({}))
 
     async def test_a_name_that_resolves_to_nothing_is_refused(self) -> None:
         resolver = resolver_for({"empty.example.org": []})
 
         with pytest.raises(UrlNotAllowedError, match="no address"):
-            await check_url("https://empty.example.org", REMOTE, resolver=resolver)
+            await check_url("https://empty.example.org", PUBLIC_ONLY, resolver=resolver)
 
     async def test_a_resolver_that_returns_garbage_is_refused(self) -> None:
         resolver = resolver_for({"odd.example.org": ["not-an-ip"]})
 
         with pytest.raises(UrlNotAllowedError, match="not an IP address"):
-            await check_url("https://odd.example.org", REMOTE, resolver=resolver)
+            await check_url("https://odd.example.org", PUBLIC_ONLY, resolver=resolver)
 
     async def test_secrets_in_a_refused_url_are_not_copied_into_the_error(self) -> None:
         with pytest.raises(UrlNotAllowedError) as caught:
-            await check_url("ftp://x.example.org/?key=TOPSECRET123", REMOTE, resolver=never)
+            await check_url("ftp://x.example.org/?key=TOPSECRET123", PUBLIC_ONLY, resolver=never)
 
         assert "TOPSECRET123" not in str(caught.value.details)
         assert "TOPSECRET123" not in caught.value.message
@@ -232,7 +236,7 @@ class TestGuardedTransport:
         inner = RecordingTransport()
         resolver = resolver_for({"api.example.org": [PUBLIC]})
 
-        async with guarded_client(REMOTE, resolver=resolver, inner=inner) as client:
+        async with guarded_client(PUBLIC_ONLY, resolver=resolver, inner=inner) as client:
             response = await client.get("https://api.example.org:8443/v1/models?x=1")
 
         assert response.status_code == 200
@@ -247,7 +251,7 @@ class TestGuardedTransport:
         inner = RecordingTransport()
         resolver = resolver_for({"v6.example.org": ["2606:4700:4700::1111"]})
 
-        async with guarded_client(REMOTE, resolver=resolver, inner=inner) as client:
+        async with guarded_client(PUBLIC_ONLY, resolver=resolver, inner=inner) as client:
             await client.get("https://v6.example.org/")
 
         assert inner.requests[0].url.host == "2606:4700:4700::1111"
@@ -255,7 +259,7 @@ class TestGuardedTransport:
     async def test_a_refused_request_never_reaches_the_network(self) -> None:
         inner = RecordingTransport()
 
-        async with guarded_client(REMOTE, resolver=never, inner=inner) as client:
+        async with guarded_client(PUBLIC_ONLY, resolver=never, inner=inner) as client:
             with pytest.raises(UrlNotAllowedError):
                 await client.get("http://169.254.169.254/latest/meta-data/")
 
@@ -265,7 +269,7 @@ class TestGuardedTransport:
         inner = RecordingTransport()
         resolver = resolver_for({"api.example.org": [PUBLIC]})
 
-        async with guarded_client(REMOTE, resolver=resolver, inner=inner) as client:
+        async with guarded_client(PUBLIC_ONLY, resolver=resolver, inner=inner) as client:
             await client.post("https://api.example.org/v1/chat", json={"model": "m"})
 
         (sent,) = inner.requests
@@ -277,7 +281,7 @@ class TestGuardedTransport:
         inner = RecordingTransport(redirect_to="http://192.168.0.5/admin")
         resolver = resolver_for({"api.example.org": [PUBLIC]})
 
-        async with guarded_client(REMOTE, resolver=resolver, inner=inner) as client:
+        async with guarded_client(PUBLIC_ONLY, resolver=resolver, inner=inner) as client:
             response = await client.get("https://api.example.org/")
 
         assert response.status_code == 302
@@ -288,7 +292,7 @@ class TestGuardedTransport:
         resolver = resolver_for({"api.example.org": [PUBLIC], "internal.example.org": ["10.0.0.5"]})
 
         async with guarded_client(
-            REMOTE, resolver=resolver, inner=inner, follow_redirects=True
+            PUBLIC_ONLY, resolver=resolver, inner=inner, follow_redirects=True
         ) as client:
             with pytest.raises(UrlNotAllowedError, match="private-network"):
                 await client.get("https://api.example.org/")
@@ -300,7 +304,7 @@ class TestGuardedTransport:
         resolver = resolver_for({"api.example.org": [PUBLIC], "other.example.org": ["1.1.1.1"]})
 
         async with guarded_client(
-            REMOTE, resolver=resolver, inner=inner, follow_redirects=True
+            PUBLIC_ONLY, resolver=resolver, inner=inner, follow_redirects=True
         ) as client:
             response = await client.get("https://api.example.org/")
 
@@ -310,7 +314,7 @@ class TestGuardedTransport:
     async def test_a_local_policy_lets_a_lan_server_be_reached(self) -> None:
         inner = RecordingTransport()
 
-        async with guarded_client(LOCAL, resolver=never, inner=inner) as client:
+        async with guarded_client(PRIVATE_OK, resolver=never, inner=inner) as client:
             response = await client.post("http://192.168.1.50:11434/api/chat", json={})
 
         assert response.status_code == 200
@@ -323,7 +327,7 @@ class TestGuardedTransport:
             async def aclose(self) -> None:
                 closed.append(True)
 
-        transport = GuardedTransport(REMOTE, inner=Closing())
+        transport = GuardedTransport(PUBLIC_ONLY, inner=Closing())
         await transport.aclose()
 
         assert closed == [True]

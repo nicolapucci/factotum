@@ -7,7 +7,7 @@ from factotum.contracts.embeddings import (
     EmbeddingResult,
     EmbeddingSpace,
 )
-from factotum.contracts.models import DataClassification, ProviderKind
+from factotum.contracts.models import ProviderKind
 
 
 class TestEmbeddingSpace:
@@ -54,10 +54,13 @@ class TestEmbeddingSpace:
 
 
 class TestEmbeddingRequest:
-    def test_a_request_holds_texts_and_may_go_anywhere_by_default(self) -> None:
-        request = EmbeddingRequest(inputs=("a", "b"))
+    def test_a_request_holds_texts(self) -> None:
+        assert EmbeddingRequest(inputs=("a", "b")).inputs == ("a", "b")
 
-        assert request.data_classification is DataClassification.ANY
+    def test_a_request_does_not_classify_its_data(self) -> None:
+        # See ADR 0010: refused, so that nobody believes something enforces it.
+        with pytest.raises(ValidationError):
+            EmbeddingRequest.model_validate({"inputs": ["a"], "data_classification": "local_only"})
 
     def test_at_least_one_text_is_needed(self) -> None:
         with pytest.raises(ValidationError):

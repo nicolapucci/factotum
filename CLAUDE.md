@@ -35,6 +35,10 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 
 - Services are model-agnostic: only `model-gateway` knows providers, addresses and keys. Everything
   else asks for a role.
+- Where data goes is decided by the deployment and the providers the user bound, not by a policy
+  in the app (ADR 0010): no `local_only`, no data classification on requests or collections, no
+  locality on bindings. Do not reintroduce them. The only network rule is which networks the
+  gateway may reach, and it follows `FACTOTUM_TENANT_MODE`.
 - Permissions never depend on a voice. There is no speaker recognition. `authorize()` is a pure
   function of the principal, the device policy and the action.
 - `tenant_id` comes from the authenticated token, never from a request body. Tenant-owned data is

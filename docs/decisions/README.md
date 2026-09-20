@@ -15,3 +15,4 @@ the old one instead of rewriting history.
 | [0007](0007-approval-is-out-of-band-and-fails-closed.md) | Approval is out of band and fails closed |
 | [0008](0008-the-model-gateway-is-the-only-place-that-knows-models.md) | The model gateway is the only place that knows models |
 | [0009](0009-on-premise-first-cloud-later.md) | On-premise first, cloud later |
+| [0010](0010-where-data-goes-is-the-users-choice-of-deployment-and-providers.md) | Where the data goes is the user's choice of deployment and providers |
