@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from factotum.contracts.errors import (
+    CollectionNotFoundError,
     EmbeddingNotConfiguredError,
     GatewayUnavailableError,
     RateLimitedError,
@@ -253,6 +254,20 @@ class TestIngesting:
         ready = await rig.document(document)
         assert ready.status is DocumentStatus.READY
         assert ready.chunks_embedded == ready.chunk_count > 0
+        assert await rig.store.claim_job("worker", lease_seconds=60) is None
+
+    async def test_a_collection_deleted_while_its_index_is_built_is_dropped_without_a_word(
+        self, rig: Rig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def gone(tenant: TenantId, collection_id: CollectionId) -> None:
+            raise CollectionNotFoundError("the collection does not exist")
+
+        monkeypatch.setattr(rig.store, "optimize", gone)
+        await rig.upload(PROSE)
+
+        job = await rig.work()
+
+        assert job is not None
         assert await rig.store.claim_job("worker", lease_seconds=60) is None
 
     async def test_a_real_pdf_is_read_by_the_isolated_reader(
