@@ -12,7 +12,10 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.pdfencrypt import StandardEncryption
 from reportlab.pdfgen import canvas
 
+from factotum.db.pool import Database
+from factotum.db.settings import DatabaseSettings
 from factotum.knowledge.store import InMemoryStore, KnowledgeStore
+from factotum.knowledge.store.postgres import PostgresStore, prepare
 
 PdfFactory = Callable[..., bytes]
 DocxFactory = Callable[..., bytes]
@@ -120,7 +123,20 @@ def blank_pdf() -> PdfFactory:
     return build_blank_pdf
 
 
-@pytest_asyncio.fixture(params=["memory"])
-async def store(request: pytest.FixtureRequest) -> AsyncIterator[KnowledgeStore]:
-    """A store to run the contract tests against: each implementation, in turn."""
-    yield InMemoryStore()
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def knowledge_database(database_settings: DatabaseSettings) -> AsyncIterator[Database]:
+    """A database of its own for each test module, with the service's tables in it."""
+    database = await Database.connect(database_settings)
+    await prepare(database)
+    yield database
+    await database.close()
+
+
+@pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.integration)])
+def store(request: pytest.FixtureRequest) -> KnowledgeStore:
+    """A store to run the contract tests against: each implementation, in turn. A module that
+    uses it needs ``pytest.mark.asyncio(loop_scope="module")``, for the sake of the database."""
+    if request.param == "memory":
+        return InMemoryStore()
+    database: Database = request.getfixturevalue("knowledge_database")
+    return PostgresStore(database, index_threshold=3)

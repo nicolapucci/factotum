@@ -276,6 +276,9 @@ class InMemoryStore:
         found.updated_at = _now()
         return self._view_collection(found)
 
+    async def optimize(self, tenant_id: TenantId, collection_id: CollectionId) -> None:
+        self._collection(tenant_id, collection_id)  # nothing to index: it is searched as it is
+
     # ---- documents
     def _drop_document(self, document: _Document) -> None:
         for chunk in self._chunks_of(document.id):

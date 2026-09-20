@@ -132,6 +132,11 @@ class KnowledgeStore(Protocol):
         self, tenant_id: TenantId, collection_id: CollectionId
     ) -> Collection: ...
 
+    async def optimize(self, tenant_id: TenantId, collection_id: CollectionId) -> None:
+        """Make a collection that has grown fast to search (an index). It can be called at any
+        time and as often as wanted: it does nothing when there is nothing to do."""
+        ...
+
     # ---- documents
     async def add_document(self, tenant_id: TenantId, new: NewDocument) -> Document:
         """Keep the file and queue it for reading. Raises ``CollectionNotFoundError``, and

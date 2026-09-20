@@ -6,6 +6,7 @@ import hashlib
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 
 from factotum.contracts.errors import (
     CollectionNotFoundError,
@@ -18,17 +19,34 @@ from factotum.contracts.knowledge import (
     Collection,
     CollectionStatus,
     CollectionUpdate,
-    Document,
     DocumentStatus,
 )
-from factotum.knowledge.chunker import Child, Chunks, Parent
 from factotum.knowledge.ids import chunk_id
-from factotum.knowledge.store import JobKind, KnowledgeStore, NewDocument
+from factotum.knowledge.store import JobKind, KnowledgeStore
+from factotum.knowledge.store.postgres import PostgresStore
+from factotum.knowledge.testing import (
+    family,
+    indexed,
+    make_collection,
+    new_document,
+    pieces,
+    wipe,
+)
+
+pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 X = (1.0, 0.0, 0.0, 0.0)
 Y = (0.0, 1.0, 0.0, 0.0)
 Z = (0.0, 0.0, 1.0, 0.0)
 XY = (1.0, 1.0, 0.0, 0.0)
+W = (0.0, 0.0, 0.0, 1.0)
+
+
+@pytest_asyncio.fixture(autouse=True, loop_scope="module")
+async def start_empty(store: KnowledgeStore) -> None:
+    """The database of Postgres lasts as long as the module: each test starts from nothing."""
+    if isinstance(store, PostgresStore):
+        await wipe(store.database)
 
 
 @pytest.fixture
@@ -39,79 +57,6 @@ def tenant() -> TenantId:
 @pytest.fixture
 def owner() -> Owner:
     return Owner(kind=OwnerKind.USER, id=uuid4())
-
-
-async def make_collection(
-    store: KnowledgeStore,
-    tenant: TenantId,
-    owner: Owner,
-    name: str = "Manuals",
-    dimensions: int = 4,
-    space_id: str = "emb-one",
-) -> Collection:
-    return await store.create_collection(
-        tenant, owner, name=name, description="", space_id=space_id, dimensions=dimensions
-    )
-
-
-def new_document(
-    collection_id: CollectionId,
-    content: bytes = b"content",
-    *,
-    title: str = "Router manual",
-    language: str | None = None,
-    declared: bool = False,
-    source: str | None = "router.pdf",
-) -> NewDocument:
-    return NewDocument(
-        collection_id=collection_id,
-        title=title,
-        source=source,
-        media_type="application/pdf",
-        size_bytes=len(content),
-        content_sha256=hashlib.sha256(content).hexdigest(),
-        language=language,
-        language_declared=declared,
-        data=content,
-    )
-
-
-def pieces(*texts: str, headings: tuple[str, ...] = (), page: int | None = None) -> Chunks:
-    """Each text is a child of a parent of its own."""
-    return Chunks(
-        tuple(Parent(i, text, headings, page) for i, text in enumerate(texts)),
-        tuple(Child(i, i, text, headings, page) for i, text in enumerate(texts)),
-    )
-
-
-def family(
-    context: str, *texts: str, headings: tuple[str, ...] = (), page: int | None = None
-) -> Chunks:
-    """Children of one parent."""
-    return Chunks(
-        (Parent(0, context, headings, page),),
-        tuple(Child(i, 0, text, headings, page) for i, text in enumerate(texts)),
-    )
-
-
-async def indexed(
-    store: KnowledgeStore,
-    tenant: TenantId,
-    collection: Collection,
-    document: Document,
-    chunks: Chunks,
-    vectors: list[tuple[float, ...]] | None = None,
-) -> list[ChunkId]:
-    """Give the document these pieces, and vectors for them when given."""
-    await store.replace_chunks(tenant, document.id, chunks)
-    if vectors is not None:
-        pending = await store.pending_embeddings(tenant, collection.id, limit=1000)
-        mine = [p for p in pending if p.document_id == document.id]
-        assert len(mine) == len(vectors)
-        await store.store_embeddings(
-            tenant, collection.id, [(p.chunk_id, v) for p, v in zip(mine, vectors, strict=True)]
-        )
-    return [chunk_id(document.id, child.ordinal) for child in chunks.children]
 
 
 class TestCollections:
@@ -275,6 +220,16 @@ class TestCollections:
 
         assert (await store.get_collection(tenant, collection.id)).languages == ("en", "it")
 
+    async def test_a_deleted_collection_takes_its_queued_reindex_with_it(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        await store.enqueue_reindex(tenant, collection.id)
+
+        await store.delete_collection(tenant, collection.id)
+
+        assert await store.claim_job("worker", lease_seconds=60) is None
+
 
 class TestReindexing:
     async def test_a_collection_is_marked_when_its_vectors_are_out_of_date(
@@ -352,6 +307,41 @@ class TestReindexing:
             )
         with pytest.raises(CollectionNotFoundError):
             await store.mark_needs_reindex(TenantId(uuid4()), collection.id)
+
+    async def test_reindexing_one_collection_leaves_the_vectors_of_another_alone(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        moving = await make_collection(store, tenant, owner, "Moving")
+        staying = await make_collection(store, tenant, owner, "Staying")
+        staying_document = await store.add_document(tenant, new_document(staying.id))
+        await indexed(store, tenant, staying, staying_document, pieces("router"), [X])
+
+        await store.begin_reindex(tenant, moving.id, space_id="emb-two", dimensions=3)
+
+        assert (await store.get_document(tenant, staying_document.id)).chunks_embedded == 1
+
+    async def test_optimizing_changes_no_answer(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        document = await store.add_document(tenant, new_document(collection.id))
+        await indexed(
+            store, tenant, collection, document, pieces("a", "b", "c", "d", "e"), [X, Y, Z, XY, W]
+        )
+        before = await store.search_vector(tenant, collection.id, X, limit=5)
+
+        await store.optimize(tenant, collection.id)
+        await store.optimize(tenant, collection.id)
+
+        assert await store.search_vector(tenant, collection.id, X, limit=5) == before
+
+    async def test_another_tenant_cannot_optimize_it(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+
+        with pytest.raises(CollectionNotFoundError):
+            await store.optimize(TenantId(uuid4()), collection.id)
 
 
 class TestDocuments:
@@ -835,6 +825,13 @@ class TestPieces:
         with pytest.raises(CollectionNotFoundError):
             await store.store_embeddings(stranger, collection.id, [])
 
+    async def test_storing_no_vectors_is_fine(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+
+        await store.store_embeddings(tenant, collection.id, [])
+
 
 class TestSearchByMeaning:
     async def test_the_nearest_piece_comes_first(
@@ -1103,3 +1100,8 @@ class TestSearchByWords:
 
         with pytest.raises(CollectionNotFoundError):
             await store.search_text(TenantId(uuid4()), [collection.id], "router", limit=10)
+
+    async def test_searching_no_collection_finds_nothing(
+        self, store: KnowledgeStore, tenant: TenantId
+    ) -> None:
+        assert await store.search_text(tenant, [], "router", limit=10) == []
