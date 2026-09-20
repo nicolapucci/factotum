@@ -137,6 +137,15 @@ one reaches the public internet only, because the network is shared: it follows
 is checked and the connection goes to the address that was checked, and redirects are not followed.
 A `ModelGateway` that is not told otherwise is built for the public internet only.
 
+**Connections are kept between calls.** Every call gets an HTTP client of its own, with the timeout
+of its binding and nothing (a cookie, say) that another call left behind, but the connections under
+it are lent by one transport that lives as long as the gateway: a provider that was called a moment
+ago is not connected to again, and a hosted one not negotiated TLS with again. There is a pool for
+each host name (never shared by two names that happen to resolve to the same address, since each
+connection was made, and its certificate checked, for one name); the 32 used last are kept, at most
+16 idle connections each and for 30 seconds, and a pool somebody is still reading from is never
+closed to make room. The service closes them all when it stops (`ModelGateway.aclose`).
+
 ## Secrets and logs
 
 - Keys live in the environment and in the gateway's memory (`SecretStr`, never in a `repr`), and go
@@ -237,7 +246,8 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k
 
 - The gateway does not count tokens: the provider says when a prompt does not fit
   (`context_too_long`), and callers budget with the profile.
-- Each call builds an HTTP client; pooling per binding will come when latency asks for it.
+- Nothing limits how many connections a busy gateway opens to one provider at once, or how many
+  calls a tenant may have in flight: quotas come with the cloud gates.
 - Asymmetric embedding models (a different prefix or task for a query and for a document) are not
   modelled yet; the knowledge service will decide how.
 - Keys come only from the environment. An encrypted store arrives with the hub.

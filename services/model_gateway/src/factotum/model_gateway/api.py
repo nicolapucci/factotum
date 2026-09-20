@@ -4,7 +4,8 @@ Every route takes and returns the normalized contracts. Errors, authentication a
 are the ones every service shares (``factotum.web``).
 """
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -38,8 +39,19 @@ async def _server_sent(
 def create_app(
     gateway: ModelGateway, authenticator: Authenticator, *, docs: bool = False
 ) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await gateway.aclose()  # the connections it keeps to the providers
+
     app = create_base_app(
-        "Factotum model gateway", authenticator, docs=docs, max_body_bytes=MAX_BODY_BYTES
+        "Factotum model gateway",
+        authenticator,
+        docs=docs,
+        max_body_bytes=MAX_BODY_BYTES,
+        lifespan=lifespan,
     )
 
     @app.get("/healthz", summary="Liveness")

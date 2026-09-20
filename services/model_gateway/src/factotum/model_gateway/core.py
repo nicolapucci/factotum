@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from factotum.common.urlguard import UrlPolicy, guarded_client
+from factotum.common.urlguard import GuardedTransport, LentTransport, Resolver, UrlPolicy
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -77,24 +77,38 @@ def default_adapters() -> dict[ProviderKind, ProviderAdapter]:
     }
 
 
-def guarded_clients(policy: UrlPolicy) -> ClientFactory:
-    """A factory of clients that reach only what ``policy`` allows, every connection vetted.
+class GuardedClients:
+    """A factory of clients that reach only what ``policy`` allows, every connection vetted, and
+    that keep their connections for the next call.
 
     The policy belongs to the deployment and not to a binding: an on-premise deployment reaches the
     models on its own network (an Ollama on the LAN), a multi-tenant one only the public internet.
     What a model is, or where it runs, is the user's choice and is not the gateway's to judge.
+
+    Every call gets a client of its own, with the timeout of its binding and nothing (a cookie, say)
+    that another call left behind, but the connections are lent by one transport that lives as long
+    as the factory: a provider that was called a moment ago is not connected to, and for a hosted
+    one not negotiated TLS with, again. ``aclose`` closes them.
     """
 
-    def make(resolved: ResolvedBinding) -> httpx.AsyncClient:
+    def __init__(self, policy: UrlPolicy, *, resolver: Resolver | None = None) -> None:
+        self._transport = GuardedTransport(policy, resolver=resolver)
+        self._lent = LentTransport(self._transport)
+
+    def __call__(self, resolved: ResolvedBinding) -> httpx.AsyncClient:
         timeout = resolved.options.timeout_s
-        return guarded_client(
-            policy, timeout=httpx.Timeout(timeout, connect=min(_CONNECT_TIMEOUT_S, timeout))
+        return httpx.AsyncClient(
+            transport=self._lent,
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout, connect=min(_CONNECT_TIMEOUT_S, timeout)),
         )
 
-    return make
+    async def aclose(self) -> None:
+        await self._transport.aclose()
 
 
-_PUBLIC_INTERNET_ONLY = guarded_clients(UrlPolicy.public_only())
+def guarded_clients(policy: UrlPolicy, *, resolver: Resolver | None = None) -> GuardedClients:
+    return GuardedClients(policy, resolver=resolver)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,18 +127,27 @@ class ModelGateway:
         secrets: SecretResolver,
         *,
         adapters: Mapping[ProviderKind, ProviderAdapter] | None = None,
-        client_factory: ClientFactory = _PUBLIC_INTERNET_ONLY,
+        client_factory: ClientFactory | None = None,
         retry: RetryPolicy = RetryPolicy(),  # noqa: B008 - a frozen value, safe to share
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
+        """``client_factory`` says how a call reaches a provider; unless told otherwise, only the
+        public internet. A ``GuardedClients`` given here is the gateway's to close (``aclose``)."""
         self._repository = repository
         self._secrets = secrets
         self._adapters = dict(adapters) if adapters is not None else default_adapters()
-        self._client_factory = client_factory
+        self._client_factory: ClientFactory = client_factory or guarded_clients(
+            UrlPolicy.public_only()
+        )
         self._retry = retry
         self._sleep = sleep
         self._jitter = jitter
+
+    async def aclose(self) -> None:
+        """Close the connections kept to the providers: call it when the service stops."""
+        if isinstance(self._client_factory, GuardedClients):
+            await self._client_factory.aclose()
 
     # --- the operations ---
 

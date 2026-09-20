@@ -10,6 +10,7 @@ FACTOTUM_LIVE_OLLAMA_CHAT_MODEL and FACTOTUM_LIVE_OLLAMA_EMBED_MODEL.
 
 import math
 import os
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -50,6 +51,16 @@ EMBED_MODEL = os.environ.get("FACTOTUM_LIVE_OLLAMA_EMBED_MODEL", "nomic-embed-te
 
 PRINCIPAL = make_tenant_principal(tenant_id=DEV_TENANT_ID)
 
+_opened: list[ModelGateway] = []
+
+
+@pytest.fixture(autouse=True)
+async def close_the_gateways() -> AsyncIterator[None]:
+    """A gateway keeps its connections to the provider open: each test closes what it opened."""
+    yield
+    while _opened:
+        await _opened.pop().aclose()
+
 
 def gateway(*, options: BindingOptions | None = None) -> ModelGateway:
     chat = make_model_binding(
@@ -68,12 +79,14 @@ def gateway(*, options: BindingOptions | None = None) -> ModelGateway:
         base_url=URL,
         options=BindingOptions(timeout_s=300),
     )
-    return ModelGateway(
+    made = ModelGateway(
         InMemoryBindingRepository([chat, embedding]),
         EnvSecretResolver(),
         # An on-premise deployment: the model is on this machine.
         client_factory=guarded_clients(UrlPolicy.private_networks_allowed()),
     )
+    _opened.append(made)
+    return made
 
 
 def ask(text: str, **fields: Any) -> ChatRequest:
@@ -209,6 +222,7 @@ async def test_an_unknown_model_is_a_typed_error_and_not_a_hang() -> None:
         EnvSecretResolver(),
         client_factory=guarded_clients(UrlPolicy.private_networks_allowed()),
     )
+    _opened.append(unbound)
 
     with pytest.raises(InvalidRequestError, match="not found"):
         await unbound.chat(PRINCIPAL, ask("hi"))
