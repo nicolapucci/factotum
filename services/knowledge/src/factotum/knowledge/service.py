@@ -62,6 +62,11 @@ class KnowledgeService:
         self._limits = limits or Limits()
         self._retriever = Retriever(store, embedder)
 
+    @property
+    def max_upload_bytes(self) -> int:
+        """The largest file that is kept."""
+        return self._limits.max_bytes
+
     # ---- collections
     async def create_collection(
         self, principal: Principal, request: CollectionCreate

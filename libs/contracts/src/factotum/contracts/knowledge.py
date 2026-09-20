@@ -81,6 +81,12 @@ class Collection(Contract):
     updated_at: AwareDatetime
 
 
+class CollectionList(Contract):
+    """What listing collections answers: the ones the caller may see."""
+
+    collections: tuple[Collection, ...] = ()
+
+
 class DocumentText(Contract):
     """A document sent as plain text instead of as a file."""
 
@@ -118,6 +124,12 @@ class Document(Contract):
         if self.chunk_count == 0:
             return 0.0
         return min(1.0, self.chunks_embedded / self.chunk_count)
+
+
+class DocumentList(Contract):
+    """What listing the documents of a collection answers, newest first."""
+
+    documents: tuple[Document, ...] = ()
 
 
 class Location(Contract):

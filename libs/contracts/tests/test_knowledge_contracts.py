@@ -10,10 +10,12 @@ from factotum.contracts.ids import ChunkId, CollectionId, DocumentId
 from factotum.contracts.knowledge import (
     Collection,
     CollectionCreate,
+    CollectionList,
     CollectionOwner,
     CollectionStatus,
     CollectionUpdate,
     Document,
+    DocumentList,
     DocumentStatus,
     DocumentText,
     Location,
@@ -248,3 +250,32 @@ class TestSearch:
 
         assert result.passages == ()
         assert result.warnings[0].code is SearchWarningCode.NEEDS_REINDEX
+
+
+class TestLists:
+    def test_a_list_of_collections_may_be_empty(self) -> None:
+        assert CollectionList().collections == ()
+
+    def test_a_list_of_collections_holds_collections_and_nothing_else(self) -> None:
+        listed = CollectionList(collections=(collection(), collection()))
+
+        assert len(listed.collections) == 2
+        with pytest.raises(ValidationError):
+            CollectionList.model_validate({"collections": [{"name": "not a collection"}]})
+        with pytest.raises(ValidationError):
+            CollectionList.model_validate({"collections": [], "total": 3})
+
+    def test_a_list_of_documents_may_be_empty(self) -> None:
+        assert DocumentList().documents == ()
+
+    def test_a_list_of_documents_holds_documents_and_nothing_else(self) -> None:
+        listed = DocumentList(documents=(document(),))
+
+        assert listed.documents[0].title == "Router manual"
+        with pytest.raises(ValidationError):
+            DocumentList.model_validate({"documents": ["Router manual"]})
+
+    def test_a_list_survives_the_trip_through_json(self) -> None:
+        listed = DocumentList(documents=(document(), document(title="Warranty")))
+
+        assert DocumentList.model_validate_json(listed.model_dump_json()) == listed

@@ -15,7 +15,8 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.exceptions import HTTPException
+from starlette.types import ASGIApp, Lifespan, Message, Receive, Scope, Send
 
 from factotum.contracts.errors import (
     AuthError,
@@ -106,24 +107,63 @@ Caller = Annotated[Principal, Depends(_principal_of)]
 """A route parameter of this type is the authenticated principal of the request."""
 
 
+class BodyTooLarge(HTTPException):
+    """Raised inside the application when the body being read turns out to be too big. It is an
+    ``HTTPException`` so that the framework lets it through instead of calling it a 400."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="the request body is too large")
+
+
 class BodySizeLimit:
-    """Refuses a request that declares a body bigger than ``max_bytes``, before reading it."""
+    """Refuses a request whose body is bigger than ``max_bytes``.
+
+    One that says so up front is refused before anything is read. One that does not say (chunked,
+    or lying) is refused as soon as it has sent more than the limit, so that a client cannot fill
+    the disk or the memory of a service with a body that never ends.
+    """
 
     def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
         self._app = app
         self._max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            declared = dict(scope["headers"]).get(b"content-length", b"")
-            if declared.isdigit() and int(declared) > self._max_bytes:
-                refusal = JSONResponse(
-                    error_body("payload_too_large", "the request body is too large"),
-                    status_code=413,
-                )
-                await refusal(scope, receive, send)
-                return
-        await self._app(scope, receive, send)
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        refusal = JSONResponse(
+            error_body("payload_too_large", "the request body is too large"), status_code=413
+        )
+        declared = dict(scope["headers"]).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > self._max_bytes:
+            await refusal(scope, receive, send)
+            return
+
+        received = 0
+        started = False
+
+        async def counting_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self._max_bytes:
+                    raise BodyTooLarge
+            return message
+
+        async def watching_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self._app(scope, counting_receive, watching_send)
+        except BodyTooLarge:
+            if started:
+                raise  # part of an answer is out: all that is left is to drop the connection
+            await refusal(scope, receive, send)
 
 
 def create_base_app(
@@ -132,17 +172,20 @@ def create_base_app(
     *,
     docs: bool = False,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    lifespan: Lifespan[FastAPI] | None = None,
 ) -> FastAPI:
     """An application with the authenticator, the body limit and the error handlers in place.
 
     The service adds its routes. ``docs`` serves the interactive documentation, which is for
-    development.
+    development. ``lifespan`` is what runs while the application is up: a service opens its
+    database and starts its workers in it.
     """
     app = FastAPI(
         title=title,
         docs_url="/docs" if docs else None,
         redoc_url=None,
         openapi_url="/openapi.json" if docs else None,
+        lifespan=lifespan,
     )
     app.state.authenticator = authenticator
     app.add_middleware(BodySizeLimit, max_bytes=max_body_bytes)
@@ -156,6 +199,12 @@ def create_base_app(
             jsonable_encoder(error_body(error.code, error.message, error.details)),
             status_code=status_for(error),
             headers=headers,
+        )
+
+    @app.exception_handler(BodyTooLarge)
+    async def body_too_large(request: Request, error: BodyTooLarge) -> JSONResponse:
+        return JSONResponse(
+            error_body("payload_too_large", "the request body is too large"), status_code=413
         )
 
     @app.exception_handler(RequestValidationError)

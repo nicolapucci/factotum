@@ -39,7 +39,7 @@ from factotum.contracts.errors import (
 from factotum.contracts.identity import Principal
 from factotum.contracts.testing import make_tenant_id, make_tenant_principal, make_user_principal
 from factotum.web import BodySizeLimit, Caller, create_base_app, error_body, status_for
-from factotum.web.api import register_status
+from factotum.web.api import BodyTooLarge, register_status
 
 SECRET = "sk-live-0123456789abcdefghijklmnop"
 
@@ -301,12 +301,71 @@ class TestBodySizeLimit:
         assert sent[0]["status"] == 413
 
     @pytest.mark.parametrize("length", [None, b"", b"many"])
-    async def test_a_body_that_declares_no_usable_length_is_not_judged_here(
+    async def test_a_body_that_declares_no_usable_length_is_not_judged_up_front(
         self, length: bytes | None
     ) -> None:
         was_reached, _ = await self.reached(10, self.http(length))
 
         assert was_reached
+
+    @staticmethod
+    async def streamed(
+        limit: int, chunks: list[bytes], *, answer_first: bool = False
+    ) -> list[Message]:
+        """An application that reads the whole body, and (if it says so) starts answering first."""
+        sent: list[Message] = []
+        pending = [
+            {"type": "http.request", "body": chunk, "more_body": n < len(chunks) - 1}
+            for n, chunk in enumerate(chunks)
+        ]
+
+        async def app(scope: Scope, receive: Receive, send: Send) -> None:
+            if answer_first:
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+            while True:
+                message = await receive()
+                if not message.get("more_body"):
+                    break
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        async def receive() -> Message:
+            return pending.pop(0)
+
+        async def send(message: Message) -> None:
+            sent.append(message)
+
+        await BodySizeLimit(app, max_bytes=limit)({"type": "http", "headers": []}, receive, send)
+        return sent
+
+    async def test_a_body_that_says_nothing_and_never_ends_is_cut_off_at_the_limit(self) -> None:
+        sent = await self.streamed(10, [b"12345", b"67890", b"1"])
+
+        assert sent[0]["status"] == 413
+
+    async def test_a_body_that_says_nothing_and_stays_within_the_limit_is_read(self) -> None:
+        sent = await self.streamed(10, [b"12345", b"67890"])
+
+        assert sent[0]["status"] == 200
+
+    async def test_a_body_that_is_too_big_after_an_answer_has_begun_drops_the_connection(
+        self,
+    ) -> None:
+        with pytest.raises(BodyTooLarge):
+            await self.streamed(10, [b"12345", b"67890", b"1"], answer_first=True)
+
+    async def test_a_body_that_says_nothing_is_cut_off_through_the_whole_application(self) -> None:
+        async def endless() -> Any:
+            for _ in range(20):
+                yield b"x" * 100
+
+        async with build(max_body_bytes=500) as client:
+            response = await client.post(
+                "/note", content=endless(), headers={"content-type": "application/json"}
+            )
+
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "payload_too_large"
 
     async def test_what_is_not_http_passes_through(self) -> None:
         was_reached, _ = await self.reached(10, {"type": "lifespan"})
@@ -323,3 +382,19 @@ class TestBodySizeLimit:
 
         assert response.status_code == 413
         assert response.json()["error"]["code"] == "payload_too_large"
+
+    async def test_a_message_that_is_not_a_piece_of_the_body_is_not_counted(self) -> None:
+        seen: list[Message] = []
+
+        async def app(scope: Scope, receive: Receive, send: Send) -> None:
+            seen.append(await receive())
+
+        async def receive() -> Message:
+            return {"type": "http.disconnect"}
+
+        async def send(message: Message) -> None:  # pragma: no cover - nothing is answered
+            raise AssertionError(message)
+
+        await BodySizeLimit(app, max_bytes=1)({"type": "http", "headers": []}, receive, send)
+
+        assert seen == [{"type": "http.disconnect"}]
