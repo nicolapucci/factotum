@@ -48,6 +48,8 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # Asserts and obviously fake secrets are expected in tests.
 "**/tests/**" = ["S101", "S105", "S106"]
+# A live test reports what it measured: it is run by a person, with -s, to read it.
+"**/tests/live/**" = ["T201"]
 
 [tool.mypy]
 python_version = "3.13"

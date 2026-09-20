@@ -215,7 +215,21 @@ class Ingestor:
                 await self._cut(tenant, document_id, parsed, config)
 
         await self._store.set_document_state(tenant, document_id, DocumentStatus.READY)
-        await self._store.optimize(tenant, document.collection_id)
+        await self._optimize(tenant, document.collection_id)
+
+    async def _optimize(self, tenant: TenantId, collection_id: CollectionId) -> None:
+        """Make a grown collection fast to search. It is an optimization: a search is right without
+        it, so failing to build the index is never a reason to fail the document that was just
+        made searchable. The next document or re-index tries again."""
+        try:
+            await self._store.optimize(tenant, collection_id)
+        except CollectionNotFoundError:
+            raise
+        except Exception:
+            logger.exception(
+                "the search index of a collection could not be built",
+                extra={"collection_id": str(collection_id)},
+            )
 
     async def _read(
         self, tenant: TenantId, document_id: DocumentId, media_type: str, declared: bool
@@ -278,4 +292,4 @@ class Ingestor:
         )
         if await self._embed_pending(job, collection_id, None):
             await self._store.finish_reindex(tenant, collection_id)
-            await self._store.optimize(tenant, collection_id)
+            await self._optimize(tenant, collection_id)

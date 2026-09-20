@@ -16,7 +16,7 @@ from factotum.contracts.errors import (
     RateLimitedError,
 )
 from factotum.contracts.identity import Owner, OwnerKind
-from factotum.contracts.ids import TenantId
+from factotum.contracts.ids import CollectionId, TenantId
 from factotum.contracts.knowledge import (
     Collection,
     CollectionStatus,
@@ -238,6 +238,22 @@ class TestIngesting:
         assert spy.await_count == len(rig.embedder.calls)
         assert spy.await_args is not None
         assert spy.await_args.kwargs == {"lease_seconds": rig.settings.lease_seconds}
+
+    async def test_an_index_that_cannot_be_built_does_not_fail_the_document(
+        self, rig: Rig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def broken(tenant: TenantId, collection_id: CollectionId) -> None:
+            raise RuntimeError("the disk is full")
+
+        monkeypatch.setattr(rig.store, "optimize", broken)
+        document = await rig.upload(PROSE)
+
+        await rig.work()
+
+        ready = await rig.document(document)
+        assert ready.status is DocumentStatus.READY
+        assert ready.chunks_embedded == ready.chunk_count > 0
+        assert await rig.store.claim_job("worker", lease_seconds=60) is None
 
     async def test_a_real_pdf_is_read_by_the_isolated_reader(
         self, rig: Rig, pdf: Callable[..., bytes]
