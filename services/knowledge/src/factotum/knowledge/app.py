@@ -15,12 +15,12 @@ from fastapi import FastAPI
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
 from factotum.db.pool import Database
 from factotum.knowledge.api import create_app
-from factotum.knowledge.embedder import DevDelegation, GatewayEmbedder
 from factotum.knowledge.ingestion import Ingestor
 from factotum.knowledge.service import KnowledgeService
 from factotum.knowledge.settings import KnowledgeSettings
 from factotum.knowledge.store.postgres import PostgresStore, prepare
 from factotum.knowledge.worker import Worker
+from factotum.model_client import DevDelegation, GatewayEmbedder
 
 _GATEWAY_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 """Embedding a batch with a model on the machine takes seconds; reaching the gateway does not."""

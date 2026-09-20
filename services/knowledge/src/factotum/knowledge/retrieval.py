@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
 
+from factotum.common.fusion import DEFAULT_K, reciprocal_rank_fusion
 from factotum.contracts.errors import (
     CollectionNotFoundError,
     EmbeddingNotConfiguredError,
@@ -39,10 +40,9 @@ from factotum.contracts.knowledge import (
     SearchWarning,
     SearchWarningCode,
 )
-from factotum.knowledge.embedder import Embedder
-from factotum.knowledge.fusion import DEFAULT_K, reciprocal_rank_fusion
 from factotum.knowledge.policy import can_read
 from factotum.knowledge.store import Hit, KnowledgeStore
+from factotum.model_client import Embedder
 
 _PIECES_PER_PASSAGE = 8
 _MIN_CANDIDATES = 40

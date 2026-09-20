@@ -8,6 +8,7 @@ dependencies = [
   "factotum-common",
   "factotum-db",
   "factotum-web",
+  "factotum-model-client",
   "beautifulsoup4>=4.12",
   "fastapi>=0.115",
   "httpx>=0.28",
@@ -32,3 +33,4 @@ factotum-contracts = { workspace = true }
 factotum-common = { workspace = true }
 factotum-db = { workspace = true }
 factotum-web = { workspace = true }
+factotum-model-client = { workspace = true }

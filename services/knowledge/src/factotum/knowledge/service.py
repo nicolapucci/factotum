@@ -21,12 +21,12 @@ from factotum.contracts.knowledge import (
     SearchResult,
 )
 from factotum.knowledge.document import Limits
-from factotum.knowledge.embedder import PROBE, Embedder
 from factotum.knowledge.language import normalize_language
 from factotum.knowledge.loaders import sniff
 from factotum.knowledge.policy import can_read, manageable, owner_for, readable
 from factotum.knowledge.retrieval import Retriever
 from factotum.knowledge.store import KnowledgeStore, NewDocument
+from factotum.model_client import PROBE, Embedder
 
 _MAX_NAME = 200
 _MAX_TITLE = 300

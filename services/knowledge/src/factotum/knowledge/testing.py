@@ -20,12 +20,12 @@ from factotum.contracts.knowledge import (
 from factotum.db.pool import Database
 from factotum.knowledge.chunker import Child, Chunks, Parent
 from factotum.knowledge.document import Limits, ParsedDocument
-from factotum.knowledge.embedder import Embedded
 from factotum.knowledge.ids import chunk_id
 from factotum.knowledge.ingestion import IngestionSettings, Ingestor
 from factotum.knowledge.loaders.reader import parse_document
 from factotum.knowledge.service import KnowledgeService
 from factotum.knowledge.store import InMemoryStore, KnowledgeStore, NewDocument
+from factotum.model_client import Embedded
 
 
 async def make_collection(

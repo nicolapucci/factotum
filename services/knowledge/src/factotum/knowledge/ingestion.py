@@ -33,10 +33,10 @@ from factotum.contracts.ids import CollectionId, DocumentId, TenantId
 from factotum.contracts.knowledge import Collection, CollectionStatus, DocumentStatus
 from factotum.knowledge.chunker import ChunkingConfig, Chunks, chunk, embedding_input
 from factotum.knowledge.document import Limits, ParsedDocument
-from factotum.knowledge.embedder import PROBE, Embedder
 from factotum.knowledge.language import detect_language
 from factotum.knowledge.loaders.isolation import parse_isolated
 from factotum.knowledge.store import Job, JobKind, KnowledgeStore
+from factotum.model_client import PROBE, Embedder
 
 logger = logging.getLogger("factotum.knowledge")
 

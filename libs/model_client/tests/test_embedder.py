@@ -18,7 +18,7 @@ from factotum.contracts.errors import (
     RateLimitedError,
 )
 from factotum.contracts.identity import Owner, OwnerKind
-from factotum.knowledge.embedder import (
+from factotum.model_client import (
     DevDelegation,
     Embedded,
     GatewayEmbedder,

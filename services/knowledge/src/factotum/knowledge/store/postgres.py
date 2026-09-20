@@ -25,6 +25,7 @@ from uuid import uuid4
 
 import asyncpg
 
+from factotum.common.fusion import reciprocal_rank_fusion
 from factotum.contracts.errors import (
     CollectionNotFoundError,
     ConflictError,
@@ -43,7 +44,6 @@ from factotum.db.migrations import load_migrations, migrate
 from factotum.db.pool import Database
 from factotum.db.types import Connection
 from factotum.knowledge.chunker import Chunks, breadcrumb
-from factotum.knowledge.fusion import reciprocal_rank_fusion
 from factotum.knowledge.ids import chunk_id, parent_id
 from factotum.knowledge.language import fts_config
 from factotum.knowledge.store.base import Hit, Job, JobKind, NewDocument, PendingChunk

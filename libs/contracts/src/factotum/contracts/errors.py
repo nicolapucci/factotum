@@ -175,6 +175,12 @@ class EmbeddingNotConfiguredError(FactotumError):
     code = "embedding_not_configured"
 
 
+class ChatNotConfiguredError(FactotumError):
+    """The owner has no chat model bound, so nothing can be answered."""
+
+    code = "chat_not_configured"
+
+
 class GatewayError(FactotumError):
     """The model gateway answered with an error the caller cannot fix by asking again."""
 

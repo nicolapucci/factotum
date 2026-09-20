@@ -43,7 +43,6 @@ from factotum.contracts.models import BindingOptions, ModelRole, ProviderKind
 from factotum.contracts.testing import make_model_binding, make_user_principal
 from factotum.db.pool import Database
 from factotum.db.settings import DatabaseSettings
-from factotum.knowledge.embedder import DevDelegation, GatewayEmbedder
 from factotum.knowledge.ingestion import IngestionSettings, Ingestor
 from factotum.knowledge.service import KnowledgeService
 from factotum.knowledge.store import Hit
@@ -55,6 +54,7 @@ from factotum.knowledge.store.postgres import (
     vector_text,
 )
 from factotum.knowledge.worker import Worker
+from factotum.model_client import DevDelegation, GatewayEmbedder
 from factotum.model_gateway.api import create_app
 from factotum.model_gateway.bindings import InMemoryBindingRepository
 from factotum.model_gateway.core import ModelGateway, guarded_clients

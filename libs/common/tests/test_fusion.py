@@ -2,7 +2,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from factotum.knowledge.fusion import DEFAULT_K, reciprocal_rank_fusion
+from factotum.common.fusion import DEFAULT_K, reciprocal_rank_fusion
 
 
 def order(rankings: list[list[str]], **kwargs: object) -> list[str]:

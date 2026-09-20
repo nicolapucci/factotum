@@ -21,6 +21,7 @@ from starlette.types import ASGIApp, Lifespan, Message, Receive, Scope, Send
 from factotum.contracts.errors import (
     AuthError,
     BindingNotFoundError,
+    ChatNotConfiguredError,
     CollectionNotFoundError,
     ConflictError,
     ContentFilteredError,
@@ -60,6 +61,7 @@ _STATUS: dict[type, int] = {
     DocumentNotFoundError: 404,
     ConflictError: 409,
     EmbeddingNotConfiguredError: 409,
+    ChatNotConfiguredError: 409,
     UnsupportedDocumentError: 415,
     DocumentTooLargeError: 413,
     GatewayError: 502,

@@ -14,6 +14,7 @@ members = [
     "factotum-db",
     "factotum-devices",
     "factotum-knowledge",
+    "factotum-model-client",
     "factotum-model-gateway",
     "factotum-web",
 ]
@@ -536,6 +537,7 @@ dependencies = [
     { name = "factotum-common" },
     { name = "factotum-contracts" },
     { name = "factotum-db" },
+    { name = "factotum-model-client" },
     { name = "factotum-web" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -554,6 +556,7 @@ requires-dist = [
     { name = "factotum-common", editable = "libs/common" },
     { name = "factotum-contracts", editable = "libs/contracts" },
     { name = "factotum-db", editable = "libs/db" },
+    { name = "factotum-model-client", editable = "libs/model_client" },
     { name = "factotum-web", editable = "libs/web" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
@@ -564,6 +567,25 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.1" },
     { name = "python-multipart", specifier = ">=0.0.12" },
     { name = "uvicorn", specifier = ">=0.32" },
+]
+
+[[package]]
+name = "factotum-model-client"
+version = "0.0.0"
+source = { editable = "libs/model_client" }
+dependencies = [
+    { name = "factotum-common" },
+    { name = "factotum-contracts" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-common", editable = "libs/common" },
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.11" },
 ]
 
 [[package]]
