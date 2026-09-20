@@ -105,25 +105,25 @@ class Stack:
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def stack(database_settings: DatabaseSettings) -> AsyncIterator[Stack]:
     settings = ServiceSettings(environment=Environment.TEST, _env_file=None)
-    gateway_app = create_app(
-        ModelGateway(
-            InMemoryBindingRepository(
-                [
-                    make_model_binding(
-                        tenant_id=DEV_TENANT_ID,
-                        role=ModelRole.EMBEDDING,
-                        provider=ProviderKind.OLLAMA,
-                        model=EMBED_MODEL,
-                        base_url=URL,
-                        options=BindingOptions(timeout_s=300),
-                    )
-                ]
-            ),
-            EnvSecretResolver(),
-            # An on-premise deployment: the model is on this machine.
-            client_factory=guarded_clients(UrlPolicy.private_networks_allowed()),
+    gateway = ModelGateway(
+        InMemoryBindingRepository(
+            [
+                make_model_binding(
+                    tenant_id=DEV_TENANT_ID,
+                    role=ModelRole.EMBEDDING,
+                    provider=ProviderKind.OLLAMA,
+                    model=EMBED_MODEL,
+                    base_url=URL,
+                    options=BindingOptions(timeout_s=300),
+                )
+            ]
         ),
-        DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID),
+        EnvSecretResolver(),
+        # An on-premise deployment: the model is on this machine.
+        client_factory=guarded_clients(UrlPolicy.private_networks_allowed()),
+    )
+    gateway_app = create_app(
+        gateway, DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     )
     database = await Database.connect(database_settings)
     await prepare(database)
@@ -150,6 +150,7 @@ async def stack(database_settings: DatabaseSettings) -> AsyncIterator[Stack]:
         finally:
             stop.set()
             await asyncio.wait_for(working, 60)
+    await gateway.aclose()
     await database.close()
 
 
@@ -478,15 +479,28 @@ async def test_a_whole_book_is_read_and_answers_questions_in_two_languages(stack
 
     # The search by meaning is answered by the index, on real vectors.
     probe = await stack.embedder.embed(stack.owner, ["how do I change the permissions of a file"])
-    async with stack.database.transaction() as connection:
-        await connection.execute("SET LOCAL enable_seqscan = off")
-        plan = await connection.fetchval(
-            "EXPLAIN (FORMAT JSON) " + vector_search_sql(collection.id, dimensions),
-            DEV_TENANT_ID,
-            vector_text(probe.vectors[0]),
-            20,
-        )
-    assert vector_index_name(collection.id) in str(plan)
+
+    async def planned(*, asked_for_the_index: bool) -> str:
+        async with stack.database.transaction() as connection:
+            if asked_for_the_index:
+                await connection.execute("SET LOCAL enable_seqscan = off")
+                await connection.execute("SET LOCAL enable_sort = off")
+            plan = await connection.fetchval(
+                "EXPLAIN (FORMAT JSON) " + vector_search_sql(collection.id, dimensions),
+                DEV_TENANT_ID,
+                vector_text(probe.vectors[0]),
+                20,
+            )
+        return str(plan)
+
+    # The query is written in a way the index can answer. Whether the planner, left to itself, uses
+    # it is its call, by cost: for a collection of this size reading every piece may be cheaper.
+    assert vector_index_name(collection.id) in await planned(asked_for_the_index=True)
+    left_to_itself = vector_index_name(collection.id) in await planned(asked_for_the_index=False)
+    print(
+        "  left to itself the planner "
+        + ("uses the index" if left_to_itself else "reads every piece (cheaper at this size)")
+    )
 
     async def by_meaning(question: str) -> list[Hit]:
         vector = (await stack.embedder.embed(stack.owner, [question])).vectors[0]

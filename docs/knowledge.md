@@ -130,8 +130,10 @@ on, without asking the model again.
 carries a question in one language to a passage in another, and only a multilingual model puts both
 in the same space. Detecting the language and choosing a model per language would put the vectors in
 different spaces, which cannot be compared. With an English-centric model such as `nomic-embed-text`
-a question finds passages in its own language well and in another poorly (see *Measured*). Bind a
-multilingual model to `embedding` and re-index.
+a question finds passages in its own language well and in another poorly; with a multilingual one
+such as `bge-m3` it finds them across languages almost as well (82% of Italian questions over an
+English book against 91% of English ones, see *Measured*). Bind a multilingual model to `embedding`
+and re-index.
 
 **A passage is the nearest, not always near.** By meaning the nearest pieces always come back, even
 when none is near. `matched_by` and `score` are how a caller tells a strong answer (found by both
@@ -235,7 +237,14 @@ applied when the service starts, each once, never edited afterwards).
   index is, with the collection as a literal: a test asks the planner for its plan and finds the
   index in it. Building the index is an optimization and never a reason to fail a document: if it
   cannot be built, the document is ready and searched exactly, and the next document or re-index tries
-  again.
+  again. Whether Postgres then uses the index for a search is its call, by cost, and it can only
+  judge that from what it knows of the table: the ingestion puts the pieces in before their vectors,
+  so the statistics of a table just filled say they have none, and the planner then sorts a whole
+  collection however large. The service therefore analyzes the three columns that matter
+  (`collection_id`, `tenant_id`, `embedding`, a matter of milliseconds) as soon as it has made an
+  index. A test checks the statistics; on 12,000 pieces of 1024 dimensions the planner uses the index
+  with them and reads every piece without them (found by a real book, whose 2956 pieces it reads in
+  full even with them, being cheaper at that size).
 * The text search configurations are shipped by the migration, one per language Postgres knows, with
   accents ignored where the language has them, and a `simple` one for a document in no language the
   service knows.
@@ -267,57 +276,73 @@ FACTOTUM_LIVE_BOOK=/path/to/book.pdf  ...same command...
 ## Measured
 
 From the live tests (`services/knowledge/tests/live`, the command is under *Trying it*): the real
-gateway code, `nomic-embed-text` (768 dimensions) through Ollama, Postgres 18 with pgvector 0.8.6 in
-Docker, on one developer's PC (Ryzen 5 5600G, RTX 3060 Ti, Windows 11). The book is an English PDF of
-931 pages about Linux that its owner keeps out of the repository: the test reads whatever
-`FACTOTUM_LIVE_BOOK` points to and skips itself when it is not set.
+gateway code, Ollama, Postgres 18 with pgvector 0.8.6 in Docker, on one developer's PC (Ryzen 5 5600G,
+RTX 3060 Ti, Windows 11), with two embedding models: `nomic-embed-text` (768 dimensions, 274 MB, made
+for English) and `bge-m3` (1024 dimensions, 1.16 GB, multilingual). The book is an English PDF of 931
+pages about Linux that its owner keeps out of the repository: the test reads whatever
+`FACTOTUM_LIVE_BOOK` points to and skips itself when it is not set. Which model to use is
+`FACTOTUM_LIVE_OLLAMA_EMBED_MODEL`.
 
-**Reading the book**: 2956 pieces in 784 sections, from upload to `ready` in 80 to 120 seconds over
-several runs (two workers), the vector index made just after, and used: the test asks the planner
-for its plan and finds the index in it.
+**Reading the book**: 2956 pieces in 784 sections, from upload to `ready` in 80 to 120 seconds with
+`nomic-embed-text` and 100 to 125 with `bge-m3` (two workers), the vector index made just after. The
+test asks the planner for its plan with the index asked for and finds it in it (the query is written
+so that the index can answer); left to itself, the planner reads every piece at this size, which is
+cheaper.
 
 **Finding**, over that book: 44 questions in English, the same kind in Italian (34), and 22 names as
 they are written (`ssh-keygen`, `lvcreate`). A section *answers* when it, whole (what a caller gets
 as `context`), holds the command that does what was asked. *hit@5* is the share of questions with an
 answer among the first five sections; *precision@5* the share of those five that answer.
 
-| Asked | by meaning | by words | both (the service) |
-| --- | --- | --- | --- |
-| in English (44) | 84% / 55% | 84% / 48% | **93% / 55%** |
-| in Italian (34) | 47% / 22% | 32% / 14% | **47% / 23%** |
-| by name (22) | 86% / 59% | **91% / 83%** | 86% / 78% |
+| Asked | Model | by meaning | by words | both (the service) |
+| --- | --- | --- | --- | --- |
+| in English (44) | `nomic-embed-text` | 84% / 55% | 84% / 48% | **93% / 55%** |
+| | `bge-m3` | 91% / 54% | 84% / 48% | **93% / 56%** |
+| in Italian (34) | `nomic-embed-text` | 47% / 22% | 32% / 14% | **47% / 23%** |
+| | `bge-m3` | 82% / 49% | 32% / 14% | **82% / 46%** |
+| by name (22) | `nomic-embed-text` | 86% / 59% | **91% / 83%** | 86% / 78% |
+| | `bge-m3` | 86% / 65% | **91% / 83%** | 86% / 77% |
 
-(hit@5 / precision@5.) What it says:
+(hit@5 / precision@5; the search by words does not depend on the model.) What it says:
 
-* In the language of the book, the two together find an answer for more questions than either alone.
+* In the language of the book, the two together find an answer for as many questions as the better
+  of the two, or more (93% with both models).
 * By name, the words are what finds: the meaning gets the right section into the first five almost
-  as often (86% and 91%), and then fills the rest with sections that are only alike (precision 59%,
-  against 83% by words and 78% by both).
-* Across languages, an English-centric model finds an answer for about half the questions, and the
-  words alone find fewer (they share only accidental words with the passage). The service takes
-  nothing away, and cannot add what the model does not have. The small library of the other live test
-  (four documents in English, the same four in Italian) says the same: in one language the right
-  document is first for all eight questions; across languages it is somewhere between second and
-  seventh, always found and seldom on top. A multilingual model is the fix (*Across languages*).
+  as often (86% and 91%), and then fills the rest with sections that are only alike (precision 59% to
+  65%, against 83% by words and 77% to 78% by both).
+* **Across languages is the model's doing.** Questions in Italian over the English book find an
+  answer 47% of the time with `nomic-embed-text` and 82% with `bge-m3` (91% for questions in English),
+  and the words alone, which share only accidental words with the passage, 32%. Nothing in the
+  service changes: bind the multilingual model to `embedding` and re-index. The small library of the
+  other live test (four documents in English, the same four in Italian) says the same: with
+  `bge-m3` the right document is among the first two for all sixteen questions, across languages too
+  (the other of the two is the same subject in the other language), with `nomic-embed-text` it
+  went down to seventh place across languages.
+* With a model that already understands the question, the words add little: 82% with both and with
+  the meaning alone in Italian, a precision a little lower (46% against 49%).
 
-**How much the words count, and how much is looked at** were tuned on these questions (with a script
-that is not in the repository). At a full weight for every question the words displaced what the
-meaning had found (in Italian 38% instead of 47%); at half for every question a name found only by
-the words would land below the sixty-first passage, hence full weight for names and codes and half for
-questions. Looking at twenty pieces for each search instead of forty cost English questions nine
-points (84% instead of 93%): a section holds several pieces, and the fusion needs sections.
+**How much the words count, and how much is looked at** were tuned on these questions with
+`nomic-embed-text` (with a script that is not in the repository). At a full weight for every question
+the words displaced what the meaning had found (in Italian 38% instead of 47%); at half for every
+question a name found only by the words would land below the sixty-first passage, hence full weight
+for names and codes and half for questions. Looking at twenty pieces for each search instead of
+forty cost English questions nine points (84% instead of 93%): a section holds several pieces, and
+the fusion needs sections. The table above is with those weights for both models.
 
-**Speed**: a search, the embedding of the question included, over that book: median 87 to 94 ms, 90th
-percentile 106 to 130 ms, slowest 139 to 459 ms (100 searches in each of two runs, index in use). On
+**Speed**: a search, the embedding of the question included, over that book: median 87 to 95 ms, 90th
+percentile 106 to 130 ms, slowest 136 to 459 ms (100 searches in each of three runs, index in use). On
 a small collection the parts were 43 ms for the embedding of the question through the gateway, 7 ms
 for the search by meaning and 7 ms for the search by words.
 
 **What a real run found that the unit tests could not**, all fixed: every call to a model made a new
 HTTP client, and creating its TLS settings takes about 300 ms on Windows, even for a model on the
 same machine over plain HTTP (a search went from 341 ms to 60 ms once the settings were shared, on a
-small collection); building the vector index with parallel workers ran out of Docker's 64 MB of
-shared memory and failed the document (now one process builds it, Postgres gets 256 MB, and an index
-that cannot be built never fails a document); and the two points above about the words.
+small collection), and the gateway now keeps the connections it makes between calls
+([`model-gateway.md`](model-gateway.md)); building the vector index with parallel workers ran out of
+Docker's 64 MB of shared memory and failed the document (now one process builds it, Postgres gets
+256 MB, and an index that cannot be built never fails a document); the planner, told by the
+statistics of a table just filled that no piece had a vector, sorted whole collections instead of
+using the index (now analyzed after the index is made); and the two points above about the words.
 
 ## Known limits
 
