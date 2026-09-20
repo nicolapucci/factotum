@@ -1,12 +1,19 @@
 """Support for the tests of the service: things to put in a store, and a way to empty a database."""
 
 import hashlib
+import math
+import re
+import unicodedata
+import zlib
+from collections.abc import Awaitable, Callable, Sequence
 
+from factotum.contracts.errors import ContextTooLongError
 from factotum.contracts.identity import Owner
 from factotum.contracts.ids import ChunkId, CollectionId, TenantId
 from factotum.contracts.knowledge import Collection, Document
 from factotum.db.pool import Database
 from factotum.knowledge.chunker import Child, Chunks, Parent
+from factotum.knowledge.embedder import Embedded
 from factotum.knowledge.ids import chunk_id
 from factotum.knowledge.store import KnowledgeStore, NewDocument
 
@@ -97,3 +104,45 @@ async def wipe(database: Database) -> None:
             "TRUNCATE knowledge.jobs, knowledge.chunks, knowledge.parents, "
             "knowledge.document_data, knowledge.documents, knowledge.collections"
         )
+
+
+class FakeEmbedder:
+    """An embedder that needs no model. A word makes a direction, so texts that share words are near
+    each other and a search by meaning finds something. It can be told to fail, or to refuse texts
+    that are too long, and it keeps what it was asked."""
+
+    def __init__(self, *, space_id: str = "emb-fake", dimensions: int = 64) -> None:
+        self.space_id = space_id
+        self.dimensions = dimensions
+        self.calls: list[tuple[Owner, list[str]]] = []
+        self.failures: list[Exception | None] = []
+        """One for each call, in turn: an error is raised, ``None`` lets the call through."""
+
+        self.max_chars: int | None = None
+        """A text longer than this does not fit the model."""
+
+        self.during: Callable[[], Awaitable[None]] | None = None
+        """Something that happens while a call is being answered."""
+
+    async def embed(self, owner: Owner, texts: Sequence[str]) -> Embedded:
+        self.calls.append((owner, list(texts)))
+        if self.during is not None:
+            await self.during()
+        if self.failures:
+            failure = self.failures.pop(0)
+            if failure is not None:
+                raise failure
+        if self.max_chars is not None and any(len(text) > self.max_chars for text in texts):
+            raise ContextTooLongError("a text is too long for the model")
+        return Embedded(tuple(self.vector(text) for text in texts), self.space_id, self.dimensions)
+
+    def vector(self, text: str) -> tuple[float, ...]:
+        folded = unicodedata.normalize("NFKD", text.casefold())
+        plain = "".join(char for char in folded if not unicodedata.combining(char))
+        counts = [0.0] * self.dimensions
+        for word in re.findall(r"\w+", plain):
+            counts[zlib.crc32(word.encode()) % self.dimensions] += 1.0
+        norm = math.sqrt(sum(count * count for count in counts))
+        if norm == 0:
+            counts[0], norm = 1.0, 1.0
+        return tuple(count / norm for count in counts)

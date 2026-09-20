@@ -244,6 +244,18 @@ class TestReindexing:
             CollectionStatus.NEEDS_REINDEX
         )
 
+    async def test_a_collection_being_reindexed_can_be_marked_again_if_the_model_changes_once_more(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        await store.begin_reindex(tenant, collection.id, space_id="emb-two", dimensions=4)
+
+        await store.mark_needs_reindex(tenant, collection.id)
+
+        assert (await store.get_collection(tenant, collection.id)).status is (
+            CollectionStatus.NEEDS_REINDEX
+        )
+
     async def test_reindexing_moves_it_to_the_new_space_and_forgets_the_old_vectors(
         self, store: KnowledgeStore, tenant: TenantId, owner: Owner
     ) -> None:
@@ -610,6 +622,32 @@ class TestJobs:
 
         assert await store.claim_job("worker", lease_seconds=60) is None
 
+    async def test_a_worker_that_is_still_at_it_keeps_its_job(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        await store.add_document(tenant, new_document(collection.id))
+        job = await store.claim_job("worker", lease_seconds=0)
+        assert job is not None
+
+        await store.extend_job(job, lease_seconds=3600)
+
+        assert await store.claim_job("other", lease_seconds=60) is None
+
+    async def test_a_worker_that_lost_its_claim_cannot_keep_the_job_going(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        await store.add_document(tenant, new_document(collection.id))
+        slow = await store.claim_job("slow", lease_seconds=0)
+        current = await store.claim_job("current", lease_seconds=0)
+        assert slow is not None
+        assert current is not None
+
+        await store.extend_job(slow, lease_seconds=3600)
+
+        assert await store.claim_job("third", lease_seconds=60) is not None
+
     async def test_a_worker_that_lost_its_claim_cannot_finish_the_job_of_the_one_who_has_it(
         self, store: KnowledgeStore, tenant: TenantId, owner: Owner
     ) -> None:
@@ -771,6 +809,21 @@ class TestPieces:
         assert [p.text for p in batch] == ["piece 0", "piece 1"]
         assert [p.text for p in rest] == ["piece 2", "piece 3", "piece 4"]
         assert (await store.get_document(tenant, document.id)).chunks_embedded == 2
+
+    async def test_the_pieces_waiting_can_be_asked_for_one_document_at_a_time(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        first = await store.add_document(tenant, new_document(collection.id, b"first"))
+        second = await store.add_document(tenant, new_document(collection.id, b"second"))
+        await store.replace_chunks(tenant, first.id, pieces("f0", "f1"))
+        await store.replace_chunks(tenant, second.id, pieces("s0"))
+
+        of_second = await store.pending_embeddings(
+            tenant, collection.id, limit=10, document_id=second.id
+        )
+
+        assert [(p.document_id, p.text) for p in of_second] == [(second.id, "s0")]
 
     async def test_a_vector_of_the_wrong_size_is_refused_and_nothing_is_stored(
         self, store: KnowledgeStore, tenant: TenantId, owner: Owner

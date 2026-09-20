@@ -248,7 +248,7 @@ class InMemoryStore:
 
     async def mark_needs_reindex(self, tenant_id: TenantId, collection_id: CollectionId) -> None:
         found = self._collection(tenant_id, collection_id)
-        if found.status is CollectionStatus.ACTIVE:
+        if found.status is not CollectionStatus.NEEDS_REINDEX:
             found.status = CollectionStatus.NEEDS_REINDEX
             found.updated_at = _now()
 
@@ -402,6 +402,11 @@ class InMemoryStore:
         found = self._jobs.get(job.id)
         return found if found is not None and found.attempts == job.attempts else None
 
+    async def extend_job(self, job: Job, *, lease_seconds: float) -> None:
+        found = self._mine(job)
+        if found is not None and found.state == "running":
+            found.lease_until = self._clock() + lease_seconds
+
     async def finish_job(self, job: Job) -> None:
         if self._mine(job) is not None:
             del self._jobs[job.id]
@@ -445,14 +450,21 @@ class InMemoryStore:
         document.updated_at = _now()
 
     async def pending_embeddings(
-        self, tenant_id: TenantId, collection_id: CollectionId, *, limit: int
+        self,
+        tenant_id: TenantId,
+        collection_id: CollectionId,
+        *,
+        limit: int,
+        document_id: DocumentId | None = None,
     ) -> list[PendingChunk]:
         collection = self._collection(tenant_id, collection_id)
         ordered = sorted(
             (
                 c
                 for c in self._chunks.values()
-                if c.collection_id == collection.id and c.embedding is None
+                if c.collection_id == collection.id
+                and c.embedding is None
+                and (document_id is None or c.document_id == document_id)
             ),
             key=lambda c: (self._documents[c.document_id].sequence, c.ordinal),
         )

@@ -366,7 +366,7 @@ class PostgresStore:
             await _collection_row(connection, tenant_id, collection_id, lock=True)
             await connection.execute(
                 "UPDATE knowledge.collections SET status = 'needs_reindex', updated_at = now() "
-                "WHERE tenant_id = $1 AND id = $2 AND status = 'active'",
+                "WHERE tenant_id = $1 AND id = $2 AND status <> 'needs_reindex'",
                 tenant_id,
                 collection_id,
             )
@@ -614,6 +614,16 @@ class PostgresStore:
             attempts=row["attempts"],
         )
 
+    async def extend_job(self, job: Job, *, lease_seconds: float) -> None:
+        async with self._db.connection() as connection:
+            await connection.execute(
+                "UPDATE knowledge.jobs SET lease_until = now() + make_interval(secs => $3) "
+                "WHERE id = $1 AND attempts = $2 AND state = 'running'",
+                job.id,
+                job.attempts,
+                lease_seconds,
+            )
+
     async def finish_job(self, job: Job) -> None:
         async with self._db.connection() as connection:
             await connection.execute(
@@ -704,7 +714,12 @@ class PostgresStore:
             )
 
     async def pending_embeddings(
-        self, tenant_id: TenantId, collection_id: CollectionId, *, limit: int
+        self,
+        tenant_id: TenantId,
+        collection_id: CollectionId,
+        *,
+        limit: int,
+        document_id: DocumentId | None = None,
     ) -> list[PendingChunk]:
         async with self._db.transaction(tenant_id) as connection:
             await _collection_row(connection, tenant_id, collection_id)
@@ -712,10 +727,12 @@ class PostgresStore:
                 "SELECT c.id, c.document_id, c.headings, c.text FROM knowledge.chunks c "
                 "JOIN knowledge.documents d ON d.id = c.document_id "
                 "WHERE c.tenant_id = $1 AND c.collection_id = $2 AND c.embedding IS NULL "
+                "AND ($4::uuid IS NULL OR c.document_id = $4::uuid) "
                 "ORDER BY d.seq, c.ordinal LIMIT $3",
                 tenant_id,
                 collection_id,
                 limit,
+                document_id,
             )
         return [
             PendingChunk(

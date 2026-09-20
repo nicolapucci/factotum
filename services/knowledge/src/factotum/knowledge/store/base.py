@@ -118,7 +118,8 @@ class KnowledgeStore(Protocol):
         ...
 
     async def mark_needs_reindex(self, tenant_id: TenantId, collection_id: CollectionId) -> None:
-        """The embedding model is no longer the one that made the vectors."""
+        """The embedding model is no longer the one that made the vectors (the ones it has, or the
+        ones a re-embedding was making)."""
         ...
 
     async def begin_reindex(
@@ -179,6 +180,10 @@ class KnowledgeStore(Protocol):
         is this worker's. Two workers never get the same one."""
         ...
 
+    async def extend_job(self, job: Job, *, lease_seconds: float) -> None:
+        """Say the worker is still at it: the job stays its own for ``lease_seconds`` from now."""
+        ...
+
     async def finish_job(self, job: Job) -> None: ...
 
     async def retry_job(self, job: Job, *, delay_seconds: float) -> None: ...
@@ -193,8 +198,16 @@ class KnowledgeStore(Protocol):
         ...
 
     async def pending_embeddings(
-        self, tenant_id: TenantId, collection_id: CollectionId, *, limit: int
-    ) -> list[PendingChunk]: ...
+        self,
+        tenant_id: TenantId,
+        collection_id: CollectionId,
+        *,
+        limit: int,
+        document_id: DocumentId | None = None,
+    ) -> list[PendingChunk]:
+        """The pieces of the collection that have no vector yet, in the order of the documents;
+        only those of one document when it is given."""
+        ...
 
     async def store_embeddings(
         self,
