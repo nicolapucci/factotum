@@ -384,6 +384,22 @@ class TestStreaming:
             {"type": "finish", "reason": "stop"},
         ]
 
+    async def test_the_spaces_between_the_chunks_of_an_answer_arrive_with_them(self) -> None:
+        service = Service(binding())
+        service.adapter.will_stream(
+            TextDelta(text="Hold"),
+            TextDelta(text=" the reset"),
+            TextDelta(text=" button "),
+            TextDelta(text="now."),
+            FinishEvent(reason=FinishReason.STOP),
+        )
+
+        async with service.client() as client:
+            response = await client.post("/v1/chat", json=chat_body(stream=True))
+
+        said = "".join(f["text"] for f in frames(response) if f["type"] == "text_delta")
+        assert said == "Hold the reset button now."
+
     async def test_every_event_is_a_frame_of_its_own(self) -> None:
         service = Service(binding())
         service.adapter.will_stream(TextDelta(text="a"), FinishEvent(reason=FinishReason.STOP))

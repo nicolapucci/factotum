@@ -129,6 +129,11 @@ class TestTheEventsOfATurn:
     def test_each_event_survives_the_wire_as_the_same_kind(self, event: TurnEvent) -> None:
         assert EVENTS.validate_json(event.model_dump_json()) == event
 
+    @pytest.mark.parametrize("chunk", [" world", "Hello ", " and "])
+    def test_a_chunk_of_the_answer_keeps_the_spaces_at_its_edges(self, chunk: str) -> None:
+        assert EVENTS.validate_json(Delta(text=chunk).model_dump_json()) == Delta(text=chunk)
+        assert Delta(text=chunk).text == chunk
+
     def test_an_event_of_a_kind_nobody_sends_is_refused(self) -> None:
         with pytest.raises(ValidationError):
             EVENTS.validate_json('{"type": "surprise"}')

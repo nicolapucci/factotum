@@ -8,7 +8,7 @@ exchanges themselves, and the events a turn streams while it is answered.
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, ConfigDict, Field, model_validator
 
 from factotum.contracts.base import Contract
 from factotum.contracts.chat import Usage
@@ -108,6 +108,8 @@ class Status(Contract):
 
 
 class Delta(Contract):
+    model_config = ConfigDict(str_strip_whitespace=False)  # a chunk keeps the space at its edge
+
     type: Literal["delta"] = "delta"
     text: str
 

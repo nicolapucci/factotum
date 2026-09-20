@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from factotum.contracts.base import Contract
 from factotum.contracts.models import ModelRole
@@ -78,6 +78,10 @@ class ChatResult(Contract):
 
 
 class TextDelta(Contract):
+    model_config = ConfigDict(str_strip_whitespace=False)
+    """A chunk of text is not trimmed: the space at its edge is what separates it from the next
+    word, and stripping it glues the words of a streamed answer together."""
+
     type: Literal["text_delta"] = "text_delta"
     text: str
 

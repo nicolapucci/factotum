@@ -143,6 +143,21 @@ class TestChatEvents:
         assert restored == event
         assert type(restored) is type(event)
 
+    @pytest.mark.parametrize("chunk", [" world", "Hello ", " and ", "\n", "  indented"])
+    def test_a_chunk_of_text_keeps_the_spaces_at_its_edges(self, chunk: str) -> None:
+        event = TextDelta(text=chunk)
+
+        assert event.text == chunk
+        assert event_adapter.validate_json(event.model_dump_json()) == event
+
+    def test_the_chunks_of_an_answer_put_back_together_are_the_answer(self) -> None:
+        chunks = ["Hold", " the", " reset", " button", " for", " ten", " seconds", "."]
+
+        assert (
+            "".join(TextDelta(text=c).text for c in chunks)
+            == "Hold the reset button for ten seconds."
+        )
+
     def test_the_type_selects_the_event(self) -> None:
         assert isinstance(
             event_adapter.validate_python({"type": "text_delta", "text": "a"}), TextDelta
