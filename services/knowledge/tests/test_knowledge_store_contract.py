@@ -540,6 +540,68 @@ class TestDocuments:
         kept = await store.get_document(tenant, document.id)
         assert (kept.language, kept.language_declared) == ("de", True)
 
+    async def test_a_document_that_failed_can_be_tried_again(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        document = await store.add_document(tenant, new_document(collection.id))
+        first = await store.claim_job("worker", lease_seconds=60)
+        assert first is not None
+        await store.fail_job(first, "it did not work")
+        await store.set_document_state(
+            tenant, document.id, DocumentStatus.FAILED, error_code="x", error_message="broken"
+        )
+
+        again = await store.retry_document(tenant, document.id)
+
+        assert again.status is DocumentStatus.PENDING
+        assert (again.error_code, again.error_message) == (None, None)
+        job = await store.claim_job("worker", lease_seconds=60)
+        assert job is not None
+        assert (job.kind, job.document_id) == (JobKind.INGEST, document.id)
+
+    async def test_asking_twice_queues_it_once(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        document = await store.add_document(tenant, new_document(collection.id))
+        job = await store.claim_job("worker", lease_seconds=60)
+        assert job is not None
+        await store.finish_job(job)
+        await store.set_document_state(
+            tenant, document.id, DocumentStatus.FAILED, error_code="x", error_message="broken"
+        )
+
+        await store.retry_document(tenant, document.id)
+        await store.set_document_state(
+            tenant, document.id, DocumentStatus.FAILED, error_code="x", error_message="broken"
+        )
+        await store.retry_document(tenant, document.id)
+
+        assert await store.claim_job("worker", lease_seconds=60) is not None
+        assert await store.claim_job("worker", lease_seconds=60) is None
+
+    async def test_a_document_that_did_not_fail_cannot_be_tried_again(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        document = await store.add_document(tenant, new_document(collection.id))
+
+        with pytest.raises(ConflictError):
+            await store.retry_document(tenant, document.id)
+
+    async def test_another_tenant_cannot_retry_it(
+        self, store: KnowledgeStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        collection = await make_collection(store, tenant, owner)
+        document = await store.add_document(tenant, new_document(collection.id))
+        await store.set_document_state(
+            tenant, document.id, DocumentStatus.FAILED, error_code="x", error_message="broken"
+        )
+
+        with pytest.raises(DocumentNotFoundError):
+            await store.retry_document(TenantId(uuid4()), document.id)
+
     async def test_deleting_a_document_takes_its_pieces_and_its_job(
         self, store: KnowledgeStore, tenant: TenantId, owner: Owner
     ) -> None:

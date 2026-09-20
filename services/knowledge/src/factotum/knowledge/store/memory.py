@@ -335,6 +335,20 @@ class InMemoryStore:
     async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None:
         self._drop_document(self._document(tenant_id, document_id))
 
+    async def retry_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document:
+        found = self._document(tenant_id, document_id)
+        if found.status is not DocumentStatus.FAILED:
+            raise ConflictError("only a document that failed can be tried again")
+        found.status = DocumentStatus.PENDING
+        found.error_code = found.error_message = None
+        found.updated_at = _now()
+        if not any(
+            j.kind is JobKind.INGEST and j.document_id == found.id and j.state != "failed"
+            for j in self._jobs.values()
+        ):
+            self._enqueue(tenant_id, JobKind.INGEST, found.collection_id, found.id)
+        return self._view_document(found)
+
     async def set_document_state(
         self,
         tenant_id: TenantId,

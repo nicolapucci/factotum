@@ -33,6 +33,9 @@ from factotum.contracts.identity import Owner, OwnerKind
 
 DEFAULT_BATCH = 64
 
+PROBE = "a text to learn where the vectors of the embedding model live"
+"""What is embedded to learn the space and the size of an owner's vectors."""
+
 
 @dataclass(frozen=True, slots=True)
 class Embedded:
@@ -70,13 +73,11 @@ class DevDelegation:
             )
 
     def headers(self, owner: Owner) -> Mapping[str, str]:
-        match owner.kind:
-            case OwnerKind.USER:
-                return {SUBJECT_HEADER: "user"}
-            case OwnerKind.TENANT:
-                return {SUBJECT_HEADER: "tenant"}
-            case OwnerKind.DEVICE:
-                raise ValueError("a collection is owned by a user or by the tenant")
+        if owner.kind is OwnerKind.USER:
+            return {SUBJECT_HEADER: "user"}
+        if owner.kind is OwnerKind.TENANT:
+            return {SUBJECT_HEADER: "tenant"}
+        raise ValueError("a collection is owned by a user or by the tenant")
 
 
 def _error_classes() -> dict[str, type[FactotumError]]:

@@ -156,6 +156,11 @@ class KnowledgeStore(Protocol):
 
     async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None: ...
 
+    async def retry_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document:
+        """Queue a document that failed to be read again. Raises ``ConflictError`` for one that
+        did not fail."""
+        ...
+
     async def set_document_state(
         self,
         tenant_id: TenantId,

@@ -547,6 +547,35 @@ class PostgresStore:
         if deleted is None:
             raise DocumentNotFoundError("the document does not exist")
 
+    async def retry_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document:
+        async with self._db.transaction(tenant_id) as connection:
+            row = await connection.fetchrow(
+                "SELECT collection_id, status FROM knowledge.documents "
+                "WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+                tenant_id,
+                document_id,
+            )
+            if row is None:
+                raise DocumentNotFoundError("the document does not exist")
+            if row["status"] != DocumentStatus.FAILED.value:
+                raise ConflictError("only a document that failed can be tried again")
+            await connection.execute(
+                "UPDATE knowledge.documents SET status = 'pending', error_code = NULL, "
+                "error_message = NULL, updated_at = now() WHERE id = $1",
+                document_id,
+            )
+            await connection.execute(
+                "INSERT INTO knowledge.jobs (id, tenant_id, kind, collection_id, document_id) "
+                "VALUES ($1, $2, 'ingest', $3, $4) "
+                "ON CONFLICT (document_id) WHERE kind = 'ingest' AND state <> 'failed' "
+                "DO NOTHING",
+                uuid4(),
+                tenant_id,
+                row["collection_id"],
+                document_id,
+            )
+            return await self._read_document(connection, tenant_id, document_id)
+
     async def set_document_state(
         self,
         tenant_id: TenantId,

@@ -8,14 +8,24 @@ import zlib
 from collections.abc import Awaitable, Callable, Sequence
 
 from factotum.contracts.errors import ContextTooLongError
-from factotum.contracts.identity import Owner
+from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.ids import ChunkId, CollectionId, TenantId
-from factotum.contracts.knowledge import Collection, Document
+from factotum.contracts.knowledge import (
+    Collection,
+    CollectionCreate,
+    CollectionOwner,
+    Document,
+    DocumentText,
+)
 from factotum.db.pool import Database
 from factotum.knowledge.chunker import Child, Chunks, Parent
+from factotum.knowledge.document import Limits, ParsedDocument
 from factotum.knowledge.embedder import Embedded
 from factotum.knowledge.ids import chunk_id
-from factotum.knowledge.store import KnowledgeStore, NewDocument
+from factotum.knowledge.ingestion import IngestionSettings, Ingestor
+from factotum.knowledge.loaders.reader import parse_document
+from factotum.knowledge.service import KnowledgeService
+from factotum.knowledge.store import InMemoryStore, KnowledgeStore, NewDocument
 
 
 async def make_collection(
@@ -124,6 +134,10 @@ class FakeEmbedder:
         self.during: Callable[[], Awaitable[None]] | None = None
         """Something that happens while a call is being answered."""
 
+        self.aliases: dict[str, str] = {}
+        """Words that mean the same to it: ``{"car": "automobile"}`` puts them in one direction,
+        which is what a real model does across words, and across languages."""
+
     async def embed(self, owner: Owner, texts: Sequence[str]) -> Embedded:
         self.calls.append((owner, list(texts)))
         if self.during is not None:
@@ -141,8 +155,59 @@ class FakeEmbedder:
         plain = "".join(char for char in folded if not unicodedata.combining(char))
         counts = [0.0] * self.dimensions
         for word in re.findall(r"\w+", plain):
+            word = self.aliases.get(word, word)
             counts[zlib.crc32(word.encode()) % self.dimensions] += 1.0
         norm = math.sqrt(sum(count * count for count in counts))
         if norm == 0:
             counts[0], norm = 1.0, 1.0
         return tuple(count / norm for count in counts)
+
+
+async def parse_in_process(data: bytes, media_type: str, limits: Limits) -> ParsedDocument:
+    """Read a document without a process of its own: fast, and for tests that are not about that."""
+    return parse_document(data, media_type, limits)
+
+
+class Harness:
+    """The service with everything in memory: a store, an embedder that needs no model, the workers
+    that read documents, and the operations a caller sees."""
+
+    def __init__(self, *, settings: IngestionSettings | None = None) -> None:
+        self.store = InMemoryStore()
+        self.embedder = FakeEmbedder()
+        self.ingestor = Ingestor(
+            self.store, self.embedder, settings=settings, parser=parse_in_process
+        )
+        self.service = KnowledgeService(self.store, self.embedder)
+
+    async def collection(
+        self,
+        principal: Principal,
+        name: str = "Manuals",
+        *,
+        owner: CollectionOwner = CollectionOwner.USER,
+    ) -> Collection:
+        return await self.service.create_collection(
+            principal, CollectionCreate(name=name, owner=owner)
+        )
+
+    async def add_text(
+        self,
+        principal: Principal,
+        collection: Collection,
+        title: str,
+        text: str,
+        *,
+        language: str | None = None,
+    ) -> Document:
+        return await self.service.add_text(
+            principal, collection.id, DocumentText(title=title, text=text, language=language)
+        )
+
+    async def process(self) -> int:
+        """Do every job that is due. Returns how many there were."""
+        done = 0
+        while (job := await self.store.claim_job("harness", lease_seconds=60)) is not None:
+            await self.ingestor.run(job)
+            done += 1
+        return done

@@ -33,7 +33,7 @@ from factotum.contracts.ids import CollectionId, DocumentId, TenantId
 from factotum.contracts.knowledge import Collection, CollectionStatus, DocumentStatus
 from factotum.knowledge.chunker import ChunkingConfig, Chunks, chunk, embedding_input
 from factotum.knowledge.document import Limits, ParsedDocument
-from factotum.knowledge.embedder import Embedder
+from factotum.knowledge.embedder import PROBE, Embedder
 from factotum.knowledge.language import detect_language
 from factotum.knowledge.loaders.isolation import parse_isolated
 from factotum.knowledge.store import Job, JobKind, KnowledgeStore
@@ -49,7 +49,6 @@ _RETRYABLE = (
     RateLimitedError,
 )
 _MAX_BACKOFF_S = 900.0
-_PROBE = "a text to learn where the vectors of the embedding model live"
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,7 +272,7 @@ class Ingestor:
     async def _reindex(self, job: Job) -> None:
         tenant, collection_id = job.tenant_id, job.collection_id
         collection: Collection = await self._store.get_collection(tenant, collection_id)
-        current = await self._embedder.embed(collection.owner, [_PROBE])
+        current = await self._embedder.embed(collection.owner, [PROBE])
         await self._store.begin_reindex(
             tenant, collection_id, space_id=current.space_id, dimensions=current.dimensions
         )

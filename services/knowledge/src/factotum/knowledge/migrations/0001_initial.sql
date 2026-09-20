@@ -155,6 +155,9 @@ CREATE TABLE knowledge.jobs (
 );
 
 CREATE INDEX jobs_due ON knowledge.jobs (due_at, seq) WHERE state <> 'failed';
+-- A document is read by one job at a time.
+CREATE UNIQUE INDEX jobs_one_ingest ON knowledge.jobs (document_id)
+    WHERE kind = 'ingest' AND state <> 'failed';
 -- A collection is re-embedded by one job at a time.
 CREATE UNIQUE INDEX jobs_one_reindex ON knowledge.jobs (collection_id)
     WHERE kind = 'reindex' AND state <> 'failed';
