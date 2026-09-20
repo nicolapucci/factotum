@@ -23,6 +23,7 @@ src = [
   "libs/web/src",
   "libs/db/src",
   "services/model_gateway/src",
+  "services/knowledge/src",
 ]
 
 [tool.ruff.lint]
@@ -59,10 +60,15 @@ mypy_path = [
   "libs/web/src",
   "libs/db/src",
   "services/model_gateway/src",
+  "services/knowledge/src",
 ]
 explicit_package_bases = true
 namespace_packages = true
 files = ["libs", "services"]
+
+[[tool.mypy.overrides]]
+module = ["langdetect", "langdetect.*", "reportlab", "reportlab.*"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
@@ -91,6 +97,7 @@ source = [
   "libs/web/src",
   "libs/db/src",
   "services/model_gateway/src",
+  "services/knowledge/src",
 ]
 
 [tool.coverage.report]
@@ -113,6 +120,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-socket>=0.8.1",
     "pyyaml>=6.0.3",
+    "reportlab>=5.0.1",
     "respx>=0.23.1",
     "ruff>=0.16.8",
     "types-jsonschema>=4.26.0.20260518",
