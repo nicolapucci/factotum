@@ -223,7 +223,10 @@ class TestAMessageThatStandsAlone:
         events = await harness.turn(alice(), "what is the capital of France?")
 
         [request] = harness.chat.classifications
-        assert [m.content for m in request.messages[1:]] == ["what is the capital of France?"]
+        sent = [m.content for m in request.messages]
+        assert sent[-1] == "what is the capital of France?"
+        assert "first" not in sent  # what was said before stays out of it
+        assert "An answer." not in sent
         assert phases(events)[0] is Phase.UNDERSTANDING
         assert Phase.RECALLING not in phases(events)
 
@@ -310,6 +313,33 @@ class TestSomethingSaidEarlier:
         assert finished(events).reference is ReferenceKind.EARLIER
         assert finished(events).exchanges_used == 1
         assert Phase.RECALLING in phases(events)
+
+    async def test_a_message_that_names_neither_a_topic_nor_a_time_is_looked_up_by_what_it_says(
+        self,
+    ) -> None:
+        harness = Harness()
+        await self.a_day_after(harness)
+        await harness.history.embed_pending()
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.EARLIER))
+
+        events = await harness.turn(alice(), "what was that reset button of the router?")
+
+        given = prompt_of(harness.chat)
+        assert "Hold the reset button for ten seconds." in given
+        assert "carbonara" not in given
+        assert finished(events).exchanges_used == 1
+
+    async def test_a_period_the_model_got_wrong_does_not_hide_what_was_meant(self) -> None:
+        harness = Harness()
+        await self.a_day_after(harness)  # it was said yesterday
+        harness.chat.decisions.append(
+            Reference(kind=ReferenceKind.EARLIER, topic="router", when=Period.LAST_WEEK)
+        )
+
+        events = await harness.turn(alice(), "what did you say last week about the router?")
+
+        assert "Hold the reset button for ten seconds." in prompt_of(harness.chat)
+        assert finished(events).exchanges_used == 1
 
     async def test_the_documents_are_searched_for_the_topic_and_the_message(self) -> None:
         harness = Harness()

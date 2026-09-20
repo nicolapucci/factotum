@@ -42,8 +42,9 @@ class Period(StrEnum):
 
 
 class Reference(Contract):
-    """What is made of a message: does it refer to an earlier exchange, and to which. It is also the
-    shape of the answer a model is asked for, so its fields are few and its words plain."""
+    """What is made of a message: does it refer to an earlier exchange, and to which. A small model
+    reads it out of the message (see the gate of the conversation service); its words are plain, and
+    a schema of it names the kinds and the periods a model may use."""
 
     kind: ReferenceKind
     topic: str | None = Field(default=None, max_length=200)

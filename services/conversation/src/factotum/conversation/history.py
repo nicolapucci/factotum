@@ -31,7 +31,7 @@ from factotum.contracts.identity import Owner
 from factotum.contracts.ids import ExchangeId, TenantId
 from factotum.conversation.periods import bounds
 from factotum.conversation.store import ConversationStore, Found, Pending, Vector
-from factotum.model_client import Embedder
+from factotum.model_client import Embedded, Embedder
 
 logger = logging.getLogger("factotum.conversation")
 
@@ -46,6 +46,10 @@ _TOO_LONG_RETRY = timedelta(days=1)
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+_Embedding = tuple[Embedded | None, tuple[TurnWarning, ...]]
+"""What embedding a search came to: the vector, or nothing and a warning that says why."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,21 +84,32 @@ class History:
         query: str | None,
         when: Period | None,
         limit: int,
+        strict: bool = True,
+        by_words: bool = True,
     ) -> Recall:
         """Earlier exchanges of ``owner``: those with words or a meaning near ``query``, within
-        ``when`` if it says. Without words, the exchanges of the period, the latest first."""
+        ``when`` if it says. Without a query, the exchanges of the period, the latest first.
+
+        A period a person asked for is a wall (``strict``). One a model read in a message is a hint,
+        and models get it wrong now and then: when nothing in it matches, what was said at any time
+        is looked at before giving up on the query.
+
+        ``by_words=False`` is for a query that is a whole message: the words that matter are lost
+        among those that do not (they are neither stemmed nor dropped, since what was said may be in
+        any language), and the meaning is the better judge. Where there is no embedding model the
+        words are all there is, and are used."""
         since, until = bounds(when, self._now(), self._zone) if when is not None else (None, None)
         if query is None:
             return Recall(await self._by_time(tenant_id, owner, since, until, limit))
 
-        candidates = max(limit * 4, 20)
-        by_words, (by_meaning, warnings) = await asyncio.gather(
-            self._store.search_words(
-                tenant_id, owner, query, since=since, until=until, limit=candidates
-            ),
-            self._by_meaning(tenant_id, owner, query, since, until, candidates),
-        )
-        hits = self._fused(by_words, by_meaning, limit)
+        embedding = await self._embed_query(tenant_id, owner, query)
+        words = by_words or embedding[0] is None
+        hits = await self._matching(tenant_id, owner, query, words, embedding, since, until, limit)
+        if not hits and when is not None and not strict:
+            hits = await self._matching(
+                tenant_id, owner, query, words, embedding, None, None, limit
+            )
+        warnings = embedding[1]
         if not hits and when is not None:
             # The words did not find it, but the message says when: what was said then is what
             # there is to go by, and a model can tell which of it is meant.
@@ -112,25 +127,39 @@ class History:
         found = await self._store.in_period(tenant_id, owner, since=since, until=until, limit=limit)
         return tuple(HistoryHit(exchange=e, score=1.0) for e in found)
 
-    async def _by_meaning(
+    async def _matching(
         self,
         tenant_id: TenantId,
         owner: Owner,
         query: str,
+        words: bool,
+        embedding: _Embedding,
         since: datetime | None,
         until: datetime | None,
         limit: int,
-    ) -> tuple[list[Found], tuple[TurnWarning, ...]]:
+    ) -> tuple[HistoryHit, ...]:
+        candidates = max(limit * 4, 20)
+        by_words, by_meaning = await asyncio.gather(
+            self._store.search_words(
+                tenant_id, owner, query, since=since, until=until, limit=candidates
+            )
+            if words
+            else _nothing(),
+            self._by_meaning(tenant_id, owner, embedding, since, until, candidates),
+        )
+        return self._fused(by_words, by_meaning, limit)
+
+    async def _embed_query(self, tenant_id: TenantId, owner: Owner, query: str) -> _Embedding:
         try:
             embedded = await self._embedder.embed(owner, [query])
         except EmbeddingNotConfiguredError:
-            return [], (
+            return None, (
                 _words_only(
                     "no embedding model is set up: earlier exchanges are searched by words only"
                 ),
             )
         except FactotumError:
-            return [], (
+            return None, (
                 _words_only(
                     "the embedding model did not answer: earlier exchanges are searched by "
                     "words only"
@@ -138,6 +167,20 @@ class History:
             )
         # What another model made is no use now: forget it, and it is made again in the background.
         await self._store.forget_other_spaces(tenant_id, owner, embedded.space_id)
+        return embedded, ()
+
+    async def _by_meaning(
+        self,
+        tenant_id: TenantId,
+        owner: Owner,
+        embedding: _Embedding,
+        since: datetime | None,
+        until: datetime | None,
+        limit: int,
+    ) -> list[Found]:
+        embedded, _ = embedding
+        if embedded is None:
+            return []
         found = await self._store.search_vector(
             tenant_id,
             owner,
@@ -149,7 +192,7 @@ class History:
         )
         # The nearest exchanges always come back, near or not: what is not near enough is not what
         # was meant, and quoting it to a model only misleads it.
-        return [f for f in found if f.score >= self._min_similarity], ()
+        return [f for f in found if f.score >= self._min_similarity]
 
     @staticmethod
     def _fused(
@@ -216,6 +259,10 @@ class History:
                 ]
             )
             return len(items)
+
+
+async def _nothing() -> list[Found]:
+    return []
 
 
 def _words_only(message: str) -> TurnWarning:

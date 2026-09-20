@@ -97,7 +97,8 @@ class Model:
     def chat(self, request: httpx.Request) -> httpx.Response:
         body: dict[str, Any] = json.loads(request.content)
         if body.get("response_schema") is not None:
-            decision = self.decisions.pop(0) if self.decisions else {"kind": "none"}
+            said = self.decisions.pop(0) if self.decisions else {"kind": "none"}
+            decision = {"reason": "as told", **said}  # a model says why before it says which
             return httpx.Response(
                 200,
                 json={

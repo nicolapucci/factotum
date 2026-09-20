@@ -32,6 +32,7 @@ from factotum.contracts.chat import (
     UsageEvent,
 )
 from factotum.contracts.conversation import (
+    MAX_HISTORY_QUERY_CHARS,
     Cited,
     Delta,
     Exchange,
@@ -197,12 +198,21 @@ class TurnEngine:
                     query = f"{earlier[0].question}\n{message}"
             elif reference.kind is ReferenceKind.EARLIER:
                 yield Status(phase=Phase.RECALLING)
+                # What to look for is the topic. A message that gives neither a topic nor a period
+                # has only itself to go by, and it is looked for by its meaning. The period was read
+                # by a model, and is a hint.
+                looked_for = reference.topic
+                whole_message = looked_for is None and reference.when is None
+                if whole_message:
+                    looked_for = message[:MAX_HISTORY_QUERY_CHARS]
                 recall = await self._history.search(
                     tenant,
                     owner,
-                    query=reference.topic,
+                    query=looked_for,
                     when=reference.when,
                     limit=settings.history_hits,
+                    strict=False,
+                    by_words=not whole_message,
                 )
                 earlier = [hit.exchange for hit in recall.hits]
                 for warning in recall.warnings:

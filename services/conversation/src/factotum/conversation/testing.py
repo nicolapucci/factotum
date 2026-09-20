@@ -1,6 +1,7 @@
 """Stand-ins for what a turn depends on (a chat model, the documents, an embedding model, the
 clock), so that the tests of everything above them need no network and no model."""
 
+import json
 import re
 import zlib
 from collections.abc import AsyncGenerator, Sequence
@@ -83,11 +84,9 @@ class FakeChat:
         decision = self.decisions.pop(0) if self.decisions else Reference(kind=ReferenceKind.NONE)
         if isinstance(decision, Exception):
             raise decision
-        return ChatResult(
-            text=decision.model_dump_json(),
-            parsed=decision.model_dump(mode="json", exclude_none=True),
-            finish_reason=FinishReason.STOP,
-        )
+        # What a model that is asked for a reading answers: why, and then the decision.
+        parsed = {"reason": "as told", **decision.model_dump(mode="json", exclude_none=True)}
+        return ChatResult(text=json.dumps(parsed), parsed=parsed, finish_reason=FinishReason.STOP)
 
     async def chat_stream(self, owner: Owner, request: ChatRequest) -> AsyncGenerator[EventUnion]:
         self.requests.append((owner, request))

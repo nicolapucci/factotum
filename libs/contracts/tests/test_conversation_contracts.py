@@ -61,7 +61,7 @@ def exchange(**overrides: Any) -> Exchange:
 
 class TestTheDecisionAboutAMessage:
     @pytest.mark.parametrize("kind", ["none", "continuation", "earlier"])
-    def test_the_words_a_model_is_asked_to_use_are_the_kinds(self, kind: str) -> None:
+    def test_the_kinds_are_three_plain_words(self, kind: str) -> None:
         assert Reference.model_validate({"kind": kind}).kind is ReferenceKind(kind)
 
     def test_an_earlier_exchange_can_be_looked_for_by_words_and_by_period(self) -> None:
@@ -79,7 +79,7 @@ class TestTheDecisionAboutAMessage:
         with pytest.raises(ValidationError):
             Reference.model_validate({"kind": "earlier", "when": "a long time ago"})
 
-    def test_the_schema_a_model_is_given_names_the_kinds(self) -> None:
+    def test_the_schema_names_the_kinds(self) -> None:
         schema = Reference.model_json_schema()
 
         assert set(schema["$defs"]["ReferenceKind"]["enum"]) == {"none", "continuation", "earlier"}

@@ -79,8 +79,18 @@ class Rig:
         *,
         limit: int = 3,
         owner: Owner = OWNER,
+        strict: bool = True,
+        by_words: bool = True,
     ) -> Recall:
-        return await self.history.search(TENANT, owner, query=query, when=when, limit=limit)
+        return await self.history.search(
+            TENANT,
+            owner,
+            query=query,
+            when=when,
+            limit=limit,
+            strict=strict,
+            by_words=by_words,
+        )
 
 
 class TestSearchingByTimeAlone:
@@ -206,6 +216,91 @@ class TestSearchingByWordsAndMeaning:
 
         assert [h.exchange.question for h in with_a_period.hits] == ["a chat about pasta"]
         assert without.hits == ()
+
+
+class TestAPeriodReadFromAMessage:
+    """A person's period is a wall; one a model read from a message is a hint, and is let go of
+    when nothing in it matches: models get a day wrong now and then, and what was asked for is not
+    lost."""
+
+    async def test_what_matches_outside_it_is_found_when_nothing_matches_inside(self) -> None:
+        rig = Rig()
+        await rig.say("the router recipe", ago=timedelta(days=9))
+
+        found = await rig.search("router", Period.YESTERDAY, strict=False)
+
+        assert [h.exchange.question for h in found.hits] == ["the router recipe"]
+
+    async def test_what_matches_inside_it_is_all_that_is_found_when_something_does(self) -> None:
+        rig = Rig()
+        await rig.say("the router of last month", ago=timedelta(days=9))
+        await rig.say("the router of yesterday", ago=timedelta(days=1, hours=1))
+
+        found = await rig.search("router", Period.YESTERDAY, strict=False)
+
+        assert [h.exchange.question for h in found.hits] == ["the router of yesterday"]
+
+    async def test_a_period_a_person_asked_for_is_a_wall(self) -> None:
+        rig = Rig()
+        await rig.say("the router recipe", ago=timedelta(days=9))
+
+        found = await rig.search("router", Period.YESTERDAY)
+
+        assert found.hits == ()
+
+    async def test_when_nothing_matches_anywhere_the_period_is_what_there_is_to_go_by(self) -> None:
+        rig = Rig()
+        await rig.say("a chat about pasta", ago=timedelta(days=1, hours=1))
+
+        found = await rig.search("submarine", Period.YESTERDAY, strict=False)
+
+        assert [h.exchange.question for h in found.hits] == ["a chat about pasta"]
+
+    async def test_the_query_is_embedded_once_however_many_times_it_is_looked_for(self) -> None:
+        rig = Rig()
+        await rig.say("the router recipe", ago=timedelta(days=9))
+
+        await rig.search("router", Period.YESTERDAY, strict=False)
+
+        assert [texts for _, texts in rig.embedder.calls] == [["router"]]
+
+
+class TestAQueryThatIsAWholeMessage:
+    async def test_it_is_looked_for_by_meaning_and_not_by_the_words_that_it_happens_to_share(
+        self,
+    ) -> None:
+        rig = Rig(min_similarity=0.2)
+        await rig.say("how do I reset the router?", "Hold the button.")
+        await rig.say("what is in a carbonara?", "Eggs and guanciale.")
+        await rig.history.embed_pending()
+
+        found = await rig.search("what was that about the router?", by_words=False)
+
+        assert [h.exchange.question for h in found.hits] == ["how do I reset the router?"]
+        assert found.hits[0].matched_by == ("vector",)
+
+    async def test_the_same_query_by_words_finds_what_shares_a_word_with_it(self) -> None:
+        rig = Rig(min_similarity=0.2)
+        await rig.say("how do I reset the router?", "Hold the button.")
+        await rig.say("what is in a carbonara?", "Eggs and guanciale.")
+        await rig.history.embed_pending()
+
+        found = await rig.search("what was that about the router?", limit=5)
+
+        assert {h.exchange.question for h in found.hits} == {
+            "how do I reset the router?",
+            "what is in a carbonara?",
+        }
+
+    async def test_where_there_is_no_embedding_model_the_words_are_all_there_is(self) -> None:
+        rig = Rig()
+        rig.embedder.failures.append(EmbeddingNotConfiguredError("none"))
+        await rig.say("how do I reset the router?")
+
+        found = await rig.search("what was that about the router?", by_words=False)
+
+        assert [h.matched_by for h in found.hits] == [("text",)]
+        assert found.warnings[0].code is WarningCode.HISTORY_WORDS_ONLY
 
 
 class TestWhenTheMeaningCannotBeUsed:
