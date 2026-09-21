@@ -65,6 +65,21 @@ def test_a_dotenv_file_is_read(tmp_path: Path) -> None:
     assert settings.log_level == "WARNING"
 
 
+def test_a_test_runs_where_the_env_file_of_a_developer_is_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stack that is up has a ``.env`` in the repository (its passwords, its keys, the
+    environment): a unit test must not find it by looking where it is run."""
+    monkeypatch.delenv("FACTOTUM_ENVIRONMENT", raising=False)
+    assert not Path(".env").exists()
+    assert not any(Path.cwd().iterdir())
+    assert ServiceSettings().environment is Environment.PRODUCTION
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("FACTOTUM_ENVIRONMENT=development\n", encoding="utf-8")
+    assert ServiceSettings().environment is Environment.DEVELOPMENT
+
+
 def test_the_environment_wins_over_the_dotenv_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
