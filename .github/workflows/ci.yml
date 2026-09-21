@@ -67,6 +67,12 @@ jobs:
       - name: Build the actions image
         run: docker build -f services/actions/Dockerfile -t factotum-actions:ci .
 
+      - name: Build the egress proxy image
+        run: docker build -f services/egress/Dockerfile -t factotum-egress:ci .
+
+      - name: Build the runner image
+        run: docker build -f services/runner/Dockerfile -t factotum-runner:ci .
+
   integration:
     name: Integration tests against Postgres with pgvector
     runs-on: ubuntu-latest
@@ -98,6 +104,11 @@ jobs:
 
       - name: Install
         run: uv sync --all-packages --locked
+
+      # The tests of the runner that need a real engine run scripts in the image that scripts run in,
+      # which the runner never pulls: without it they skip.
+      - name: Pull the image that scripts run in
+        run: docker pull python:3.13-slim
 
       # The coverage floor belongs to the unit tests: these are a different slice of the suite.
       - name: Integration tests

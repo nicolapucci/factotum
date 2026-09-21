@@ -174,9 +174,11 @@ services:
   actions:
     # What a message asks to be done: it chooses the skill, decides whether it may run, asks for a
     # yes when it must, and audits it. Like the others it is not started by a plain
-    # `docker compose up`: it needs the "services" profile, and until the hub registers devices it
-    # reads them from config/devices.dev.yaml (copy config/devices.example.yaml) and only runs with
-    # FACTOTUM_ENVIRONMENT=development. Until slice 5b a skill is not run: it says what it would do.
+    # `docker compose up`: it needs the "services" profile, and until the hub registers devices and
+    # keeps secrets it reads them from config/devices.dev.yaml and config/secrets.dev.yaml (copy the
+    # example files) and only runs with FACTOTUM_ENVIRONMENT=development. It runs the script of a
+    # skill in the runner and has a device do what it answers with through the edge; it is given
+    # neither an engine nor a device connection itself.
     profiles: ["services"]
     build:
       context: .
@@ -185,6 +187,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # It does not need the runner to start: without it a skill fails, and says so. (Not the edge:
+      # the edge waits for the conversation service, which asks this one.)
+      runner:
+        condition: service_healthy
+        required: false
     environment:
       FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
@@ -196,9 +203,12 @@ services:
       FACTOTUM_POSTGRES_PASSWORD: ${FACTOTUM_POSTGRES_PASSWORD:?set FACTOTUM_POSTGRES_PASSWORD in .env}
       FACTOTUM_POSTGRES_DB: ${FACTOTUM_POSTGRES_DB:-factotum}
       # It never knows a model or a key: the gateway is asked to read every message and to embed
-      # every skill. The secrets a skill needs are the runner's, and it has none of them.
+      # every skill. A script runs in the runner, and a command reaches a device through the edge.
       FACTOTUM_ACTIONS_GATEWAY_URL: http://model-gateway:8081
+      FACTOTUM_ACTIONS_RUNNER_URL: http://runner:8086
+      FACTOTUM_ACTIONS_EDGE_URL: http://edge:8084
       FACTOTUM_ACTIONS_DEVICES_FILE: /etc/factotum/devices.dev.yaml
+      FACTOTUM_ACTIONS_SECRETS_FILE: /etc/factotum/secrets.dev.yaml
       FACTOTUM_ACTIONS_SKILLS_DIR: /skills
       FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR: ${FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR:-false}
       FACTOTUM_ACTIONS_MATCH_THRESHOLD: ${FACTOTUM_ACTIONS_MATCH_THRESHOLD:-0.45}
@@ -211,6 +221,7 @@ services:
       FACTOTUM_ACTIONS_APPROVAL_WAIT_S: ${FACTOTUM_ACTIONS_APPROVAL_WAIT_S:-20}
       FACTOTUM_ACTIONS_APPROVAL_MINUTES: ${FACTOTUM_ACTIONS_APPROVAL_MINUTES:-10}
       FACTOTUM_ACTIONS_RUN_MARGIN_S: ${FACTOTUM_ACTIONS_RUN_MARGIN_S:-5}
+      FACTOTUM_ACTIONS_EDGE_TIMEOUT_S: ${FACTOTUM_ACTIONS_EDGE_TIMEOUT_S:-15}
       FACTOTUM_ACTIONS_MAX_DEVICES_SHOWN: ${FACTOTUM_ACTIONS_MAX_DEVICES_SHOWN:-10}
     volumes:
       - ./config:/etc/factotum:ro
@@ -218,6 +229,115 @@ services:
     ports:
       # Loopback only, for development. Services reach it by name on the compose network.
       - "127.0.0.1:${FACTOTUM_ACTIONS_PORT:-8085}:8085"
+
+  egress:
+    # The only way out of the sandbox of a skill. A container that runs a script is on a network with
+    # nothing on it but this proxy, which lets it reach the hosts its grant lists and nothing else.
+    # It is on the sandbox network to be reached, and on a network of its own to get out: nothing
+    # else of the deployment (the database, the other services) is on that one, so a script cannot
+    # reach them through it. Like the others it needs the "services" profile.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/egress/Dockerfile
+    restart: unless-stopped
+    networks:
+      - sandbox
+      - egress
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      # The key that grants are signed with: the runner has it, and nothing else. There is no
+      # default and no placeholder: without one from .env (32 characters or more) it does not start,
+      # and says so, which is all that stops the rest of the deployment from being asked to.
+      FACTOTUM_EGRESS_KEY: ${FACTOTUM_EGRESS_KEY:-}
+      FACTOTUM_EGRESS_CONNECT_PORTS: ${FACTOTUM_EGRESS_CONNECT_PORTS:-443}
+      FACTOTUM_EGRESS_MAX_CONNECTIONS: ${FACTOTUM_EGRESS_MAX_CONNECTIONS:-64}
+      FACTOTUM_EGRESS_HEADER_TIMEOUT_S: ${FACTOTUM_EGRESS_HEADER_TIMEOUT_S:-10}
+      FACTOTUM_EGRESS_CONNECT_TIMEOUT_S: ${FACTOTUM_EGRESS_CONNECT_TIMEOUT_S:-10}
+      FACTOTUM_EGRESS_IDLE_TIMEOUT_S: ${FACTOTUM_EGRESS_IDLE_TIMEOUT_S:-30}
+      FACTOTUM_EGRESS_MAX_DURATION_S: ${FACTOTUM_EGRESS_MAX_DURATION_S:-130}
+      FACTOTUM_EGRESS_MAX_MB: ${FACTOTUM_EGRESS_MAX_MB:-20}
+    # It needs nothing from the system: no capability, nothing to write to.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    extra_hosts:
+      # A device or a service on this machine is reachable as host.docker.internal, when a skill
+      # names it (a private address is only reached by a host that is named as it is).
+      - "host.docker.internal:host-gateway"
+
+  sandbox-image:
+    # Makes sure the image that scripts run in is on the engine (the runner never pulls it), and
+    # does nothing else: it ends at once.
+    profiles: ["services"]
+    image: ${FACTOTUM_RUNNER_IMAGE:-python:3.13-slim}
+    entrypoint: ["true"]
+    restart: "no"
+
+  runner:
+    # Runs the script of a skill in a container of its own, made for the run and thrown away after
+    # it. It is the only service that is given the socket of the engine to make them with, which is
+    # as much as being root on this machine: the reason it does nothing but run jobs, and cannot be
+    # told what a container is like (see docs/runner.md). Like the others it needs the "services"
+    # profile, and until the hub issues real credentials it only runs with
+    # FACTOTUM_ENVIRONMENT=development.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/runner/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      egress:
+        condition: service_healthy
+      sandbox-image:
+        condition: service_completed_successfully
+    # The socket belongs to a group of the engine's, and the runner does not run as root: this is
+    # that group (`stat -c %g /var/run/docker.sock`, 0 on Docker Desktop).
+    group_add: ["${FACTOTUM_DOCKER_GID:-0}"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_RUNNER_DOCKER_HOST: unix:///var/run/docker.sock
+      FACTOTUM_RUNNER_IMAGE: ${FACTOTUM_RUNNER_IMAGE:-python:3.13-slim}
+      # What a script that was granted hosts is given to go out through: the proxy, by its name on
+      # the network of the sandboxes, and the key its grants are signed with.
+      FACTOTUM_RUNNER_NETWORK: factotum-sandbox
+      FACTOTUM_RUNNER_EGRESS_URL: http://egress:3128
+      FACTOTUM_RUNNER_EGRESS_KEY: ${FACTOTUM_EGRESS_KEY:-}
+      FACTOTUM_RUNNER_UID: ${FACTOTUM_RUNNER_UID:-10002}
+      FACTOTUM_RUNNER_MEMORY_MB: ${FACTOTUM_RUNNER_MEMORY_MB:-128}
+      FACTOTUM_RUNNER_CPUS: ${FACTOTUM_RUNNER_CPUS:-0.5}
+      FACTOTUM_RUNNER_PIDS: ${FACTOTUM_RUNNER_PIDS:-64}
+      FACTOTUM_RUNNER_TMP_MB: ${FACTOTUM_RUNNER_TMP_MB:-16}
+      FACTOTUM_RUNNER_LOG_KB: ${FACTOTUM_RUNNER_LOG_KB:-256}
+      FACTOTUM_RUNNER_MAX_CONCURRENCY: ${FACTOTUM_RUNNER_MAX_CONCURRENCY:-4}
+      FACTOTUM_RUNNER_QUEUE_WAIT_S: ${FACTOTUM_RUNNER_QUEUE_WAIT_S:-5}
+      FACTOTUM_RUNNER_GRACE_S: ${FACTOTUM_RUNNER_GRACE_S:-10}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      # Loopback only, for development. Services reach it by name on the compose network.
+      - "127.0.0.1:${FACTOTUM_RUNNER_PORT:-8086}:8086"
+
+networks:
+  sandbox:
+    # Where a script runs. Nothing is on it but the egress proxy, and it has no way out of its own:
+    # a container on it can reach the proxy and nothing else. Named, because the runner finds it by
+    # name when it makes a container.
+    name: factotum-sandbox
+    internal: true
+  egress:
+    # What the egress proxy goes out through, and nothing else is on it.
 
 volumes:
   postgres_data:
