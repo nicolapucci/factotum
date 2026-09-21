@@ -298,7 +298,7 @@ class TestTheCommandLineOnARealConnection:
             assert (
                 out.getvalue()
                 .splitlines()[-1]
-                .startswith(f"--       the edge closed the connection ({CloseCode.GOING_AWAY}")
+                .startswith(f"--       the connection to the edge ended ({CloseCode.GOING_AWAY}")
             )
             assert await forgotten(rig)
 

@@ -316,7 +316,7 @@ class TestWhenTheConnectionEnds:
         code, out, _ = await session("speaker", idle, never, connection=connection)
 
         assert code == 1
-        assert out[-1] == "--       the edge closed the connection (4002: idle)"
+        assert out[-1] == "--       the connection to the edge ended (4002: idle)"
 
     async def test_a_connection_that_ends_with_an_answer_due_does_not_leave_it_waiting(
         self,
@@ -329,7 +329,7 @@ class TestWhenTheConnectionEnds:
         code, out, _ = await session("speaker", "hello", gone_in_a_while, connection=connection)
 
         assert code == 1
-        assert out[-1] == "--       the edge closed the connection (1006)"
+        assert out[-1] == "--       the connection to the edge ended (1006)"
 
     async def test_a_connection_that_cannot_be_written_to_is_a_connection_that_was_lost(
         self,
@@ -342,13 +342,13 @@ class TestWhenTheConnectionEnds:
         code, out, _ = await session("speaker", cut, "anyone?", connection=connection)
 
         assert code == 1
-        assert out[-1].startswith("--       the edge closed the connection")
+        assert out[-1].startswith("--       the connection to the edge ended")
 
     async def test_a_person_who_leaves_is_not_a_connection_that_was_lost(self) -> None:
         code, out, _ = await session("speaker", "/quit")
 
         assert code == 0
-        assert not any("closed the connection" in line for line in out)
+        assert not any("the connection to the edge ended" in line for line in out)
 
 
 class TestWhenThereIsNoEdge:

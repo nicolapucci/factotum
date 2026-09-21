@@ -69,8 +69,12 @@ class WebSocketConnection:
         await self._websocket.close()
 
 
+CLOSED_ABNORMALLY = 1006
+"""What the standard says a connection that ended with no close frame (a cable, a crash) was."""
+
+
 def _lost(closed: ConnectionClosed) -> ConnectionLost:
     received = closed.rcvd
-    return ConnectionLost(
-        received.code if received is not None else None, received.reason if received else ""
-    )
+    if received is None:
+        return ConnectionLost(CLOSED_ABNORMALLY, "")
+    return ConnectionLost(received.code, received.reason)

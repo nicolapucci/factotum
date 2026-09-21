@@ -234,7 +234,7 @@ async def run(
     lost = await converse(client, device, options.profile, typed, out)
     if lost is not None:
         why = f": {lost.reason}" if lost.reason else ""
-        renderer.notice(f"the edge closed the connection ({lost.code}{why})")
+        renderer.notice(f"the connection to the edge ended ({lost.code}{why})")
         return 1
     return 0
 
