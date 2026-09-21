@@ -238,6 +238,7 @@ class Session:
                 "auth_failed",
                 "the device is not known, or its credential is wrong",
                 CloseCode.POLICY,
+                claimed=hello.hardware_id,
             )
             return False
 
@@ -316,8 +317,19 @@ class Session:
         with contextlib.suppress(Exception):
             await self._wire.close(int(CloseCode.NORMAL))
 
-    async def _refuse(self, code: str, message: str, close: CloseCode) -> None:
-        """Tell the device what is wrong, and end the connection."""
+    async def _refuse(
+        self, code: str, message: str, close: CloseCode, *, claimed: str | None = None
+    ) -> None:
+        """Tell the device what is wrong, and end the connection. It is logged, with the hardware id
+        that was claimed when it is not known (never the credential): somebody who installs a device
+        has nowhere else to find out why it does not connect."""
+        extra: dict[str, str] = {"session": self.session_id, "code": code}
+        if claimed is not None:
+            extra["claimed_hardware_id"] = claimed
+        logger.warning(
+            "a device was sent away" if self.record is not None else "a device was refused",
+            extra=extra,
+        )
         with contextlib.suppress(Disconnected):
             await self._send(ErrorFrame(code=code, message=message, fatal=True))
         await self.close(close, code)

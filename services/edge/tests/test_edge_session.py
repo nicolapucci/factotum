@@ -242,6 +242,34 @@ class TestWhoIsRefused:
             assert wire.closed_with is not None
             assert wire.closed_with[0] == CloseCode.POLICY
 
+    async def test_a_device_that_is_refused_is_logged_with_the_hardware_id_it_gave_and_why(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="factotum.edge")
+        async with Rig() as rig:
+            _, wire, task = rig.open()
+            wire.say(hello(rig.devices[0], token="not-the-credential"))
+            await task
+
+        [record] = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert record.getMessage() == "a device was refused"
+        assert record.code == "auth_failed"  # type: ignore[attr-defined]
+        assert record.claimed_hardware_id == "kitchen-01"  # type: ignore[attr-defined]
+        assert "not-the-credential" not in caplog.text
+
+    async def test_a_device_that_is_sent_away_after_it_was_known_is_logged_as_such(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="factotum.edge")
+        async with Rig(settings=quick_settings(idle_timeout_s=0.05)) as rig:
+            connected = await rig.connect()
+            await connected.task
+
+        [record] = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert record.getMessage() == "a device was sent away"
+        assert record.code == "idle"  # type: ignore[attr-defined]
+        assert not hasattr(record, "claimed_hardware_id")
+
     async def test_the_credential_is_in_no_log(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.DEBUG)
         secret = "a-secret-credential-that-must-not-leak"
