@@ -61,6 +61,9 @@ jobs:
       - name: Build the conversation service image
         run: docker build -f services/conversation/Dockerfile -t factotum-conversation:ci .
 
+      - name: Build the edge image
+        run: docker build -f services/edge/Dockerfile -t factotum-edge:ci .
+
   integration:
     name: Integration tests against Postgres with pgvector
     runs-on: ubuntu-latest

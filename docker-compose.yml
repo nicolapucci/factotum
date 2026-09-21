@@ -130,5 +130,40 @@ services:
       # Loopback only, for development. Services reach it by name on the compose network.
       - "127.0.0.1:${FACTOTUM_CONVERSATION_PORT:-8083}:8083"
 
+  edge:
+    # The door of the system devices: they connect to it over a WebSocket. Like the others it is not
+    # started by a plain `docker compose up`: it needs the "services" profile, and until the hub
+    # registers devices it reads them from config/devices.dev.yaml (copy config/devices.example.yaml)
+    # and only runs with FACTOTUM_ENVIRONMENT=development.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/edge/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      conversation:
+        condition: service_healthy
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      # It asks the conversation service for every answer and knows nothing else: no database, no
+      # model, no key, no document.
+      FACTOTUM_EDGE_CONVERSATION_URL: http://conversation:8083
+      FACTOTUM_EDGE_DEVICES_FILE: /etc/factotum/devices.dev.yaml
+      FACTOTUM_EDGE_HELLO_TIMEOUT_S: ${FACTOTUM_EDGE_HELLO_TIMEOUT_S:-10}
+      FACTOTUM_EDGE_HEARTBEAT_S: ${FACTOTUM_EDGE_HEARTBEAT_S:-20}
+      FACTOTUM_EDGE_IDLE_TIMEOUT_S: ${FACTOTUM_EDGE_IDLE_TIMEOUT_S:-60}
+      FACTOTUM_EDGE_COMMAND_TIMEOUT_S: ${FACTOTUM_EDGE_COMMAND_TIMEOUT_S:-10}
+      FACTOTUM_EDGE_TURN_TIMEOUT_S: ${FACTOTUM_EDGE_TURN_TIMEOUT_S:-130}
+      FACTOTUM_EDGE_SEND_TIMEOUT_S: ${FACTOTUM_EDGE_SEND_TIMEOUT_S:-10}
+    volumes:
+      - ./config:/etc/factotum:ro
+    ports:
+      # Loopback only, for development. Services reach it by name on the compose network; devices
+      # elsewhere on the network will reach it through what the deployment puts in front of it.
+      - "127.0.0.1:${FACTOTUM_EDGE_PORT:-8084}:8084"
+
 volumes:
   postgres_data:

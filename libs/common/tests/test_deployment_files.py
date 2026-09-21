@@ -44,6 +44,7 @@ def test_the_database_starts_by_default_and_the_services_only_on_request() -> No
     assert SERVICES["model-gateway"]["profiles"] == ["services"]
     assert SERVICES["knowledge"]["profiles"] == ["services"]
     assert SERVICES["conversation"]["profiles"] == ["services"]
+    assert SERVICES["edge"]["profiles"] == ["services"]
 
 
 def test_the_database_has_the_shared_memory_a_large_collection_needs() -> None:
@@ -69,6 +70,23 @@ def test_the_conversation_service_waits_for_its_database_and_finds_the_others_by
     assert environment["FACTOTUM_POSTGRES_HOST"] == "postgres"
     assert environment["FACTOTUM_CONVERSATION_GATEWAY_URL"] == "http://model-gateway:8081"
     assert environment["FACTOTUM_CONVERSATION_KNOWLEDGE_URL"] == "http://knowledge:8082"
+
+
+def test_the_edge_finds_the_conversation_service_by_name_and_has_no_database_of_its_own() -> None:
+    edge = SERVICES["edge"]
+    environment = edge["environment"]
+
+    assert edge["depends_on"]["conversation"]["condition"] == "service_healthy"
+    assert "postgres" not in edge["depends_on"]
+    assert environment["FACTOTUM_EDGE_CONVERSATION_URL"] == "http://conversation:8083"
+    assert not [key for key in environment if key.startswith("FACTOTUM_POSTGRES")]
+
+
+def test_the_edge_reads_its_devices_from_where_the_config_folder_is_mounted() -> None:
+    edge = SERVICES["edge"]
+    folder = edge["environment"]["FACTOTUM_EDGE_DEVICES_FILE"].rsplit("/", 1)[0]
+
+    assert f"./config:{folder}:ro" in edge["volumes"]
 
 
 def test_no_service_is_given_a_provider_key_but_the_gateway() -> None:
@@ -100,7 +118,7 @@ def test_the_provider_keys_compose_passes_on_are_documented_in_the_env_example()
     assert passed <= documented, f"missing from .env.example: {sorted(passed - documented)}"
 
 
-@pytest.mark.parametrize("service", ["model_gateway", "knowledge", "conversation"])
+@pytest.mark.parametrize("service", ["model_gateway", "knowledge", "conversation", "edge"])
 def test_the_image_does_not_run_as_root(service: str) -> None:
     dockerfile = (REPO_ROOT / "services" / service / "Dockerfile").read_text("utf-8")
     users = re.findall(r"^USER\s+(\S+)", dockerfile, re.M)
