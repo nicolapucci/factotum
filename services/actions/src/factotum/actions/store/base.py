@@ -112,6 +112,12 @@ class ActionsStore(Protocol):
 
     async def get_skill(self, tenant_id: TenantId, skill_id: SkillId) -> StoredSkill | None: ...
 
+    async def get_version(
+        self, tenant_id: TenantId, skill_id: SkillId, version: int
+    ) -> StoredVersion | None:
+        """One version of a skill, whichever it is: the latest, the one that runs, an older one."""
+        ...
+
     async def get_files(
         self, tenant_id: TenantId, skill_id: SkillId, version: int
     ) -> dict[str, bytes] | None:

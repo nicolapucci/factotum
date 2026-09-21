@@ -208,6 +208,10 @@ class SkillReload(Contract):
     installed: tuple[str, ...] = ()
     """``name@version`` of what was new."""
 
+    enabled: tuple[str, ...] = ()
+    """``name@version`` of what was enabled by reading it (development only: where a folder is the
+    administrator's own, what is in it is taken to be reviewed)."""
+
     unchanged: int = Field(default=0, ge=0)
     problems: tuple[SkillLoadProblem, ...] = ()
 

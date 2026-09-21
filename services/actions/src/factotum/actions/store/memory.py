@@ -107,6 +107,13 @@ class InMemoryStore:
         skill = self._mine(tenant_id, skill_id)
         return None if skill is None else self._stored(skill)
 
+    async def get_version(
+        self, tenant_id: TenantId, skill_id: SkillId, version: int
+    ) -> StoredVersion | None:
+        skill = self._mine(tenant_id, skill_id)
+        held = None if skill is None else self._version(skill, version)
+        return None if held is None else self._stored_version(held)
+
     async def get_files(
         self, tenant_id: TenantId, skill_id: SkillId, version: int
     ) -> dict[str, bytes] | None:
@@ -245,7 +252,7 @@ class InMemoryStore:
             and (skill_name is None or record.skill_name == skill_name)
             and (device_id is None or record.device_id == device_id)
         ]
-        found.sort(key=lambda record: record.occurred_at, reverse=True)
+        found.sort(key=lambda record: (record.occurred_at, record.id), reverse=True)
         return found[:limit]
 
     # ---- helpers

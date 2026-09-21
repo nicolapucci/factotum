@@ -229,6 +229,20 @@ class PostgresStore:
             )
         return stored
 
+    async def get_version(
+        self, tenant_id: TenantId, skill_id: SkillId, version: int
+    ) -> StoredVersion | None:
+        async with self._db.transaction(tenant_id) as connection:
+            row = await connection.fetchrow(
+                "SELECT version, content_sha256, created_at, manifest, instructions, granted, "
+                "enabled_at, enabled_by FROM actions.skill_versions "
+                "WHERE tenant_id = $1 AND skill_id = $2 AND version = $3",
+                tenant_id,
+                skill_id,
+                version,
+            )
+        return None if row is None else _version(row)
+
     async def get_files(
         self, tenant_id: TenantId, skill_id: SkillId, version: int
     ) -> dict[str, bytes] | None:
@@ -463,7 +477,7 @@ class PostgresStore:
                 "AND ($2::timestamptz IS NULL OR occurred_at < $2) "
                 "AND ($3::text IS NULL OR skill_name = $3) "
                 "AND ($4::uuid IS NULL OR device_id = $4) "
-                "ORDER BY occurred_at DESC LIMIT $5",
+                "ORDER BY occurred_at DESC, id DESC LIMIT $5",
                 tenant_id,
                 before,
                 skill_name,

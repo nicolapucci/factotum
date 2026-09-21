@@ -148,6 +148,44 @@ class TestInstalling:
         assert sum(r.created for r in results) == 1
 
 
+class TestOneVersion:
+    async def test_any_version_can_be_read_whichever_it_is(
+        self, store: ActionsStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        skill_id = await installed(store, tenant, owner, marker="one")
+        await store.install(tenant, owner, a_skill(marker="two"), now=NOW)
+        await store.enable(
+            tenant,
+            skill_id,
+            1,
+            granted=SkillPermissions(network=("a.example.org",)),
+            by=None,
+            now=NOW,
+        )
+
+        first = await store.get_version(tenant, skill_id, 1)
+        second = await store.get_version(tenant, skill_id, 2)
+
+        assert first is not None
+        assert second is not None
+        assert (first.instructions, second.instructions) == (
+            "Instructions one.",
+            "Instructions two.",
+        )
+        assert first.granted == SkillPermissions(network=("a.example.org",))
+        assert second.granted is None
+        assert first.manifest.name == "lamp"
+
+    async def test_a_version_that_is_not_there_or_is_not_the_tenants_is_nothing(
+        self, store: ActionsStore, tenant: TenantId, owner: Owner
+    ) -> None:
+        skill_id = await installed(store, tenant, owner)
+
+        assert await store.get_version(tenant, skill_id, 2) is None
+        assert await store.get_version(tenant, SkillId(uuid4()), 1) is None
+        assert await store.get_version(TenantId(uuid4()), skill_id, 1) is None
+
+
 class TestListing:
     async def test_skills_are_listed_by_name_for_the_owners_asked(
         self, store: ActionsStore, tenant: TenantId, owner: Owner
