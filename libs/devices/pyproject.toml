@@ -1,9 +1,9 @@
 [project]
 name = "factotum-devices"
 version = "0.0.0"
-description = "The interface for Factotum system devices: ready-made methods on top of the shared command vocabulary."
+description = "The interface for Factotum system devices (ready-made methods on top of the shared command vocabulary) and the development file that describes the devices of a home."
 requires-python = ">=3.13"
-dependencies = ["factotum-contracts"]
+dependencies = ["factotum-contracts", "pyyaml>=6.0"]
 
 [build-system]
 requires = ["hatchling"]

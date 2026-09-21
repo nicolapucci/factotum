@@ -9,20 +9,24 @@ conveniences, and a credential in it is a placeholder: the hub keeps only a hash
 
 import hmac
 from pathlib import Path
-from typing import Any, Protocol
-from uuid import NAMESPACE_URL, UUID, uuid5
-
-import yaml
-from pydantic import ValidationError
+from typing import Protocol
 
 from factotum.common.config import Environment, ServiceSettings
-from factotum.contracts.capabilities import Capability, DisplayInfo
-from factotum.contracts.devices import DevicePolicy, SystemDeviceRecord
+from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.errors import AuthError
-from factotum.contracts.identity import Owner, OwnerKind, Principal, Role, Subject
+from factotum.contracts.identity import OwnerKind, Principal, Role, Subject
 from factotum.contracts.ids import DeviceId, TenantId, UserId
+from factotum.devices.home import MIN_TOKEN_CHARS, device_id_for, parse_home
 
-MIN_TOKEN_CHARS = 8
+__all__ = [
+    "MIN_TOKEN_CHARS",
+    "DeviceRegistry",
+    "FileDeviceRegistry",
+    "device_id_for",
+    "load_devices",
+    "load_devices_file",
+    "principal_of",
+]
 
 
 class DeviceRegistry(Protocol):
@@ -48,12 +52,6 @@ def principal_of(device: SystemDeviceRecord, *, user_roles: frozenset[Role]) -> 
     return Principal(
         tenant_id=device.tenant_id, device_id=device.id, acts_as=Subject.tenant(device.tenant_id)
     )
-
-
-def device_id_for(tenant_id: TenantId, hardware_id: str) -> DeviceId:
-    """A stable id for a device of the file: the same file always gives the same devices the same
-    ids, which is what makes a conversation on a device carry on from one start to the next."""
-    return DeviceId(uuid5(NAMESPACE_URL, f"urn:factotum:device:{tenant_id}:{hardware_id}"))
 
 
 class FileDeviceRegistry:
@@ -92,19 +90,6 @@ class FileDeviceRegistry:
         return self._by_id.get((tenant_id, device_id))
 
 
-_KNOWN = {
-    "id",
-    "name",
-    "hardware_id",
-    "token",
-    "owner",
-    "capabilities",
-    "display",
-    "tags",
-    "aliases",
-}
-
-
 def load_devices(
     text: str,
     settings: ServiceSettings,
@@ -113,35 +98,11 @@ def load_devices(
     user_id: UserId,
     source: str = "devices",
 ) -> FileDeviceRegistry:
-    """The registry described by a YAML document.
-
-    ``devices`` is a list; each entry has a ``name``, a ``hardware_id``, a ``token`` (the
-    credential the device presents), an ``owner`` (``tenant``, for a shared device, or ``user``,
-    for one that is the development user's own) and the ``capabilities`` it is registered for,
-    and optionally a ``display``, ``tags``, ``aliases`` and an ``id``.
-    """
-    document = yaml.safe_load(text)
-    if not isinstance(document, dict) or not isinstance(document.get("devices"), list):
-        raise ValueError(f"{source}: expected a mapping with a 'devices' list")
-    unknown = set(document) - {"devices"}
-    if unknown:
-        raise ValueError(f"{source}: unknown top-level keys: {sorted(unknown)}")
-
-    loaded: list[tuple[SystemDeviceRecord, str]] = []
-    for index, entry in enumerate(document["devices"], start=1):
-        where = f"{source}: device #{index}"
-        if not isinstance(entry, dict):
-            raise ValueError(f"{where}: expected a mapping")
-        loaded.append(_device_from(entry, tenant_id, user_id, where))
-
-    for seen, label in (
-        ({record.hardware_id for record, _ in loaded}, "hardware id"),
-        ({token for _, token in loaded}, "token"),
-        ({record.id for record, _ in loaded}, "id"),
-    ):
-        if len(seen) != len(loaded):
-            raise ValueError(f"{source}: two devices have the same {label}")
-    return FileDeviceRegistry(settings, loaded)
+    """The registry described by a YAML document: the system devices of the file of a home (see
+    ``factotum.devices.home``). Its external devices and bindings are for the actions service, and
+    the edge has nothing to do with them."""
+    home = parse_home(text, tenant_id=tenant_id, user_id=user_id, source=source)
+    return FileDeviceRegistry(settings, list(home.system))
 
 
 def load_devices_file(
@@ -154,60 +115,3 @@ def load_devices_file(
         user_id=user_id,
         source=path.name,
     )
-
-
-def _device_from(
-    entry: dict[str, Any], tenant_id: TenantId, user_id: UserId, where: str
-) -> tuple[SystemDeviceRecord, str]:
-    extra = set(entry) - _KNOWN
-    if extra:
-        raise ValueError(f"{where}: unknown keys: {sorted(extra)}")
-    token = entry.get("token")
-    if not isinstance(token, str) or len(token) < MIN_TOKEN_CHARS:
-        raise ValueError(
-            f"{where}: 'token' must be a string of at least {MIN_TOKEN_CHARS} characters"
-        )
-    owner_kind = entry.get("owner", "tenant")
-    if owner_kind not in {"tenant", "user"}:
-        raise ValueError(f"{where}: 'owner' must be 'tenant' or 'user'")
-    subject = Subject.user(user_id) if owner_kind == "user" else Subject.tenant(tenant_id)
-    hardware_id = entry.get("hardware_id")
-    if not isinstance(hardware_id, str):
-        raise ValueError(f"{where}: 'hardware_id' is required")
-    try:
-        identity = entry.get("id")
-        device_id = (
-            DeviceId(UUID(str(identity))) if identity else device_id_for(tenant_id, hardware_id)
-        )
-        display = entry.get("display")
-        record = SystemDeviceRecord.model_validate(
-            {
-                "id": device_id,
-                "tenant_id": tenant_id,
-                "name": entry.get("name"),
-                "hardware_id": hardware_id,
-                "owner": Owner.of_subject(subject),
-                "policy": DevicePolicy.default_for(subject.kind),
-                "capabilities": frozenset(
-                    Capability(name) for name in entry.get("capabilities", [])
-                ),
-                "display": DisplayInfo.model_validate(display) if display else None,
-                "tags": frozenset(entry.get("tags", [])),
-                "aliases": tuple(entry.get("aliases", [])),
-            }
-        )
-    except (ValidationError, ValueError, TypeError) as error:
-        raise ValueError(f"{where}: {_why(error)}") from None
-    return record, token
-
-
-def _why(error: Exception) -> str:
-    """What is wrong, never what was written: it may be a credential in the wrong place."""
-    if isinstance(error, ValidationError):
-        return "; ".join(
-            f"{'.'.join(str(part) for part in problem['loc']) or '(entry)'}: {problem['msg']}"
-            for problem in error.errors(
-                include_input=False, include_context=False, include_url=False
-            )
-        )
-    return "a value is not valid"

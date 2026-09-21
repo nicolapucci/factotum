@@ -557,10 +557,14 @@ version = "0.0.0"
 source = { editable = "libs/devices" }
 dependencies = [
     { name = "factotum-contracts" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "factotum-contracts", editable = "libs/contracts" }]
+requires-dist = [
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
 
 [[package]]
 name = "factotum-edge"
@@ -574,7 +578,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pydantic" },
-    { name = "pyyaml" },
     { name = "uvicorn" },
     { name = "websockets" },
 ]
@@ -588,7 +591,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.11" },
-    { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", specifier = ">=0.32" },
     { name = "websockets", specifier = ">=15" },
 ]

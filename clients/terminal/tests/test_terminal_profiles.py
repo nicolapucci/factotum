@@ -14,7 +14,11 @@ EXAMPLE = Path(__file__).resolve().parents[3] / "config" / "devices.example.yaml
 
 def example_devices() -> dict[str, dict[str, Any]]:
     document = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
-    return {device["hardware_id"]: device for device in document["devices"]}
+    return {
+        device["hardware_id"]: device
+        for device in document["devices"]
+        if device.get("kind", "system") == "system"
+    }
 
 
 class TestTheProfiles:

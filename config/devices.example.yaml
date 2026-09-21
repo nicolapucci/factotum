@@ -1,7 +1,11 @@
-# The devices that may connect to the edge, for development, until the hub pairs and registers them.
+# The devices of a home, for development, until the hub pairs and registers them.
 #
-# Copy this file to config/devices.dev.yaml (git ignores it), adjust it, and point the edge at it with
-# FACTOTUM_EDGE_DEVICES_FILE=config/devices.dev.yaml. Each entry says what a device is registered for:
+# Copy this file to config/devices.dev.yaml (git ignores it), adjust it, and point the edge and the
+# actions service at it with FACTOTUM_EDGE_DEVICES_FILE and FACTOTUM_ACTIONS_DEVICES_FILE. The edge
+# reads the system devices from it (who may connect); the actions service reads all of it (what may be
+# acted on). Neither runs outside development.
+#
+# A system device (the default kind) is Factotum hardware that connects to the edge:
 #
 #   name          what people call it
 #   hardware_id   a stable label for the physical unit
@@ -14,8 +18,22 @@
 #                 audio_out, display, media_player, buttons, led, sensors. A device may declare less
 #                 than this when it connects, never more.
 #   display       its screen, for a device that has one
+#   policy        what may be done from it: `max_effect` (read_only, reversible or irreversible: what
+#                 the most severe action it can start does) and `requires_approval`. By default a
+#                 shared device may start reversible actions, a personal one anything.
 #
-# The terminal client (`factotum-terminal --profile <name>`) has a profile for each of these.
+# An external device (`kind: external`) is a lamp, a garage door, a TV: nothing of Factotum is
+# installed on it and it has no credential. What it can do is what a skill bound to it says.
+#
+#   name, aliases, tags   how people call it
+#   owner                 `tenant` (shared) or `user` (the development user's own)
+#   sensitivity           how severe an action on it is at least, whatever the skill says: a lamp is
+#                         read_only (it adds nothing), a garage door irreversible
+#
+# A binding says which skill drives which external device, and the parameters of that device that the
+# skill declares (`device_parameters`): the same skill serves two lamps and differs only in these.
+#
+# The terminal client (`factotum-terminal --profile <name>`) has a profile for each system device.
 
 devices:
   # A speaker that anybody may speak to: answers are spoken, and it can start a conversation.
@@ -26,12 +44,14 @@ devices:
     capabilities: [audio_in, audio_out, led]
 
   # A display with a speaker and a microphone: answers are spoken and shown, with their sources.
+  # Its admin allowed it to start irreversible actions, which are then asked to be confirmed.
   - name: Living room display
     hardware_id: living-room-01
     token: living-room-dev-token
     owner: tenant
     capabilities: [audio_in, audio_out, display, led]
     display: {width: 800, height: 480, touch: true}
+    policy: {max_effect: irreversible}
 
   # A wall screen with no microphone and no speaker: it cannot start a conversation, and it shows
   # what it is sent.
@@ -56,3 +76,38 @@ devices:
     owner: user
     capabilities: [audio_in, audio_out, display]
     display: {width: 390, height: 844, touch: true}
+
+  # A lamp that everybody in the home may switch. Turning it on and off can be undone.
+  - kind: external
+    name: Living room lamp
+    owner: tenant
+    aliases: [lamp, the lamp, living room light]
+    tags: [light]
+
+  # A garage door: opening it is not something to do by mistake, so every action on it counts as
+  # irreversible, whatever the skill declares. A shared speaker may not start one; the living room
+  # display may, once it is confirmed; the phone may, once it is confirmed.
+  - kind: external
+    name: Garage door
+    owner: tenant
+    aliases: [garage, the garage]
+    tags: [door]
+    sensitivity: irreversible
+
+  # A lamp that is the development user's own: nobody else in the home sees it.
+  - kind: external
+    name: Bedroom lamp
+    owner: user
+    aliases: [my lamp, bedroom light]
+    tags: [light]
+
+bindings:
+  - skill: lamp
+    device: Living room lamp
+    params: {entity_id: light.living_room, host: homeassistant.local}
+  - skill: lamp
+    device: Bedroom lamp
+    params: {entity_id: light.bedroom, host: homeassistant.local}
+  - skill: garage-door
+    device: Garage door
+    params: {entity_id: cover.garage, host: homeassistant.local}
