@@ -9,10 +9,17 @@ from factotum.common.devauth import (
     DEVICE_HEADER,
     SUBJECT_HEADER,
     DevAuthenticator,
+    dev_headers,
 )
 from factotum.contracts.errors import AuthError
 from factotum.contracts.identity import Role, SubjectKind
-from factotum.contracts.testing import make_tenant_id, make_user_id
+from factotum.contracts.ids import DeviceId
+from factotum.contracts.testing import (
+    make_tenant_id,
+    make_tenant_principal,
+    make_user_id,
+    make_user_principal,
+)
 
 
 def settings(environment: Environment) -> ServiceSettings:
@@ -102,3 +109,32 @@ def test_the_shared_development_identities_work_with_the_authenticator() -> None
 
     assert principal.tenant_id == DEV_TENANT_ID
     assert principal.acts_as.id == DEV_USER_ID
+
+
+class TestActingForAPrincipalInDevelopment:
+    @pytest.mark.parametrize("acts_for", ["a person", "the tenant"])
+    @pytest.mark.parametrize("on_a_device", [True, False])
+    def test_what_a_service_sends_is_read_back_as_the_same_principal(
+        self, acts_for: str, on_a_device: bool
+    ) -> None:
+        tenant_id, user_id = make_tenant_id(), make_user_id()
+        device = DeviceId(uuid4()) if on_a_device else None
+        principal = (
+            make_user_principal(tenant_id=tenant_id, user_id=user_id, device_id=device)
+            if acts_for == "a person"
+            else make_tenant_principal(tenant_id=tenant_id, device_id=device)
+        )
+        dev = DevAuthenticator(settings(Environment.TEST), tenant_id=tenant_id, user_id=user_id)
+
+        read = dev.authenticate(dev_headers(principal))
+
+        assert (read.tenant_id, read.device_id, read.acts_as) == (
+            principal.tenant_id,
+            principal.device_id,
+            principal.acts_as,
+        )
+
+    def test_a_device_is_named_only_when_there_is_one(self) -> None:
+        tenant = make_tenant_principal(tenant_id=make_tenant_id())
+
+        assert dev_headers(tenant) == {SUBJECT_HEADER: "tenant"}

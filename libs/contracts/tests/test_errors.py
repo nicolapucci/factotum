@@ -3,6 +3,7 @@ import pytest
 from factotum.contracts.errors import (
     AuthError,
     CapabilityNotSupportedError,
+    ChatNotConfiguredError,
     ContentFilteredError,
     ContextTooLongError,
     FactotumError,
@@ -14,6 +15,7 @@ from factotum.contracts.errors import (
     ProviderUnavailableError,
     RateLimitedError,
     UrlNotAllowedError,
+    error_class_for,
 )
 
 
@@ -91,3 +93,19 @@ def test_specific_errors_are_caught_as_the_base_class() -> None:
         raise AuthError("who are you")
 
     assert caught.value.code == "auth_error"
+
+
+def test_the_error_that_a_code_stands_for_can_be_found_again() -> None:
+    assert error_class_for("chat_not_configured") is ChatNotConfiguredError
+    assert error_class_for("rate_limited") is RateLimitedError
+    assert error_class_for("factotum_error") is FactotumError
+
+
+def test_a_code_nobody_knows_stands_for_nothing() -> None:
+    assert error_class_for("no_such_error") is None
+    assert error_class_for("") is None
+
+
+def test_every_error_is_found_by_its_own_code() -> None:
+    for error in all_errors(FactotumError):
+        assert error_class_for(error.code) is error

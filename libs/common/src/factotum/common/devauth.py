@@ -25,6 +25,16 @@ DEVICE_HEADER = "x-factotum-dev-device"
 """Optional id of the simulated device."""
 
 
+def dev_headers(principal: Principal) -> dict[str, str]:
+    """The headers with which a service acts, in development, for whom a principal is: what
+    ``DevAuthenticator`` reads on the other side. The edge uses them to speak to the conversation
+    service as the device it holds a connection to."""
+    headers = {SUBJECT_HEADER: principal.acts_as.kind.value}
+    if principal.device_id is not None:
+        headers[DEVICE_HEADER] = str(principal.device_id)
+    return headers
+
+
 class DevAuthenticator:
     """Builds a ``Principal`` for a fixed development tenant and user from request headers."""
 

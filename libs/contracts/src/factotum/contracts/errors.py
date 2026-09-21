@@ -204,3 +204,47 @@ class GatewayUnavailableError(GatewayError):
 
     code = "gateway_unavailable"
     retryable = True
+
+
+def error_class_for(code: str) -> type[FactotumError] | None:
+    """The typed error with this stable ``code``, if there is one: what lets a service raise, as
+    what it was, an error that another service answered with."""
+    pending: list[type[FactotumError]] = [FactotumError]
+    while pending:
+        kind = pending.pop()
+        if kind.code == code:
+            return kind
+        pending.extend(kind.__subclasses__())
+    return None
+
+
+class ConversationUnavailableError(FactotumError):
+    """The conversation service could not be reached, or did not answer with a turn."""
+
+    code = "conversation_unavailable"
+    retryable: ClassVar[bool] = True
+
+
+class DeviceNotFoundError(NotFoundError):
+    """A device that is not registered, or that the caller may not see."""
+
+    code = "device_not_found"
+
+
+class ProtocolError(FactotumError):
+    """A device sent something the protocol between devices and the edge does not allow."""
+
+    code = "protocol_error"
+
+
+class InvalidFrameError(ProtocolError):
+    """A frame that is not one of the protocol: not JSON, an unknown type, a field that is wrong,
+    or too big."""
+
+    code = "invalid_frame"
+
+
+class UnsupportedProtocolError(ProtocolError):
+    """A device speaks a version of the protocol the edge does not."""
+
+    code = "unsupported_protocol"
