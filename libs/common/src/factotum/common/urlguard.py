@@ -56,16 +56,24 @@ class IpClass(StrEnum):
     FORBIDDEN = "forbidden"
 
 
-def classify_ip(address: str) -> IpClass:
-    """Classify an IP address. Raises ``ValueError`` when it is not one."""
+def unwrap_ip(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """The address that a packet to ``address`` reaches in the end: an IPv6 address that wraps an
+    IPv4 one (mapped, 6to4, NAT64) is the IPv4 one, so that it is not a way round a rule about it.
+    Raises ``ValueError`` when it is not an address."""
     ip = ipaddress.ip_address(address)
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
-            ip = ip.ipv4_mapped
-        elif ip.sixtofour is not None:
-            ip = ip.sixtofour
-        elif ip in _NAT64:
-            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+            return ip.ipv4_mapped
+        if ip.sixtofour is not None:
+            return ip.sixtofour
+        if ip in _NAT64:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
+def classify_ip(address: str) -> IpClass:
+    """Classify an IP address. Raises ``ValueError`` when it is not one."""
+    ip = unwrap_ip(address)
     if ip.is_loopback:
         # Checked first: Python also calls ::1 "reserved" because it sits in ::/8.
         return IpClass.PRIVATE

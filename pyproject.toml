@@ -28,6 +28,8 @@ src = [
   "services/conversation/src",
   "services/actions/src",
   "services/edge/src",
+  "services/egress/src",
+  "services/runner/src",
   "clients/terminal/src",
 ]
 
@@ -74,6 +76,8 @@ mypy_path = [
   "services/conversation/src",
   "services/actions/src",
   "services/edge/src",
+  "services/egress/src",
+  "services/runner/src",
   "clients/terminal/src",
 ]
 explicit_package_bases = true
@@ -116,6 +120,8 @@ source = [
   "services/conversation/src",
   "services/actions/src",
   "services/edge/src",
+  "services/egress/src",
+  "services/runner/src",
   "clients/terminal/src",
 ]
 

@@ -16,9 +16,11 @@ members = [
     "factotum-db",
     "factotum-devices",
     "factotum-edge",
+    "factotum-egress",
     "factotum-knowledge",
     "factotum-model-client",
     "factotum-model-gateway",
+    "factotum-runner",
     "factotum-terminal",
     "factotum-web",
 ]
@@ -630,6 +632,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "factotum-egress"
+version = "0.0.0"
+source = { editable = "services/egress" }
+dependencies = [
+    { name = "factotum-common" },
+    { name = "factotum-contracts" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-common", editable = "libs/common" },
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "pydantic", specifier = ">=2.11" },
+]
+
+[[package]]
 name = "factotum-knowledge"
 version = "0.0.0"
 source = { editable = "services/knowledge" }
@@ -715,6 +734,31 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "uvicorn", specifier = ">=0.32" },
+]
+
+[[package]]
+name = "factotum-runner"
+version = "0.0.0"
+source = { editable = "services/runner" }
+dependencies = [
+    { name = "factotum-common" },
+    { name = "factotum-contracts" },
+    { name = "factotum-web" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-common", editable = "libs/common" },
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "factotum-web", editable = "libs/web" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.11" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
 
