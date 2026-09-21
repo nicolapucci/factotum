@@ -13,9 +13,14 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
+from factotum.common.devauth import (
+    DEV_TENANT_ID,
+    DEV_USER_ID,
+    DevAuthenticator,
+    DevPrincipalDelegation,
+)
 from factotum.edge.api import create_app
-from factotum.edge.conversation import ConversationClient, DevPrincipalDelegation
+from factotum.edge.conversation import ConversationClient
 from factotum.edge.registry import DeviceRegistry, FileDeviceRegistry, load_devices_file
 from factotum.edge.router import Sessions
 from factotum.edge.session import SessionSettings

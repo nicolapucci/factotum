@@ -8,14 +8,13 @@ what a device can be sent (``parts``).
 """
 
 import json
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator
 from typing import Any, Protocol
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from factotum.common.config import Environment, ServiceSettings
-from factotum.common.devauth import dev_headers
+from factotum.common.devauth import PrincipalDelegation
 from factotum.contracts.conversation import (
     Failed,
     Finished,
@@ -24,7 +23,6 @@ from factotum.contracts.conversation import (
     TurnRequest,
 )
 from factotum.contracts.errors import (
-    AuthError,
     ConversationUnavailableError,
     FactotumError,
     error_class_for,
@@ -44,27 +42,6 @@ class TurnSource(Protocol):
     async def ready(self) -> bool:
         """Whether the service that answers is there to be asked."""
         ...
-
-
-class PrincipalDelegation(Protocol):
-    def headers(self, principal: Principal) -> Mapping[str, str]:
-        """What proves to the conversation service that the edge acts for this principal."""
-        ...
-
-
-class DevPrincipalDelegation:
-    """The development delegation: the conversation service's development authentication takes
-    whom to act for from headers. It refuses to exist outside development and tests."""
-
-    def __init__(self, settings: ServiceSettings) -> None:
-        if settings.environment not in {Environment.DEVELOPMENT, Environment.TEST}:
-            raise AuthError(
-                "the development delegation is disabled outside the development and test "
-                f"environments (environment is {settings.environment.value!r})"
-            )
-
-    def headers(self, principal: Principal) -> Mapping[str, str]:
-        return dev_headers(principal)
 
 
 class ConversationClient:

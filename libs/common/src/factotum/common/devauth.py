@@ -6,6 +6,7 @@ environment means production, forgetting to configure one leaves it disabled.
 """
 
 from collections.abc import Mapping
+from typing import Protocol
 from uuid import UUID
 
 from factotum.common.config import Environment, ServiceSettings
@@ -33,6 +34,27 @@ def dev_headers(principal: Principal) -> dict[str, str]:
     if principal.device_id is not None:
         headers[DEVICE_HEADER] = str(principal.device_id)
     return headers
+
+
+class PrincipalDelegation(Protocol):
+    def headers(self, principal: Principal) -> Mapping[str, str]:
+        """What proves to another service that this one acts for this principal."""
+        ...
+
+
+class DevPrincipalDelegation:
+    """The development delegation: the development authentication of the service that is called
+    takes whom to act for from headers. It refuses to exist outside development and tests."""
+
+    def __init__(self, settings: ServiceSettings) -> None:
+        if settings.environment not in {Environment.DEVELOPMENT, Environment.TEST}:
+            raise AuthError(
+                "the development delegation is disabled outside the development and test "
+                f"environments (environment is {settings.environment.value!r})"
+            )
+
+    def headers(self, principal: Principal) -> Mapping[str, str]:
+        return dev_headers(principal)
 
 
 class DevAuthenticator:

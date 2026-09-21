@@ -8,12 +8,18 @@ connections to them are kept between turns.
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
 
-from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
+from factotum.common.devauth import (
+    DEV_TENANT_ID,
+    DEV_USER_ID,
+    DevAuthenticator,
+    DevPrincipalDelegation,
+)
+from factotum.conversation.actions import Actions, ActionsClient
 from factotum.conversation.api import create_app
 from factotum.conversation.context import PromptBuilder
 from factotum.conversation.documents import KnowledgeClient
@@ -38,6 +44,7 @@ def build_app(settings: ConversationSettings) -> FastAPI:
     """
     authenticator = DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     delegation = DevDelegation(settings)
+    principals = DevPrincipalDelegation(settings)
     holder: dict[str, Database] = {}
     model_timeout = httpx.Timeout(
         connect=5.0, read=settings.conversation_answer_timeout_s, write=30.0, pool=5.0
@@ -51,6 +58,7 @@ def build_app(settings: ConversationSettings) -> FastAPI:
             await prepare(database)
             store = PostgresStore(database)
             async with (
+                AsyncExitStack() as optional,
                 httpx.AsyncClient(
                     base_url=str(settings.conversation_gateway_url), timeout=model_timeout
                 ) as gateway,
@@ -58,6 +66,22 @@ def build_app(settings: ConversationSettings) -> FastAPI:
                     base_url=str(settings.conversation_knowledge_url), timeout=_KNOWLEDGE_TIMEOUT
                 ) as knowledge,
             ):
+                actions: Actions | None = None
+                if settings.conversation_actions_url is not None:
+                    actions = ActionsClient(
+                        await optional.enter_async_context(
+                            httpx.AsyncClient(
+                                base_url=str(settings.conversation_actions_url),
+                                timeout=httpx.Timeout(
+                                    connect=3.0,
+                                    read=settings.conversation_actions_timeout_s + 5.0,
+                                    write=10.0,
+                                    pool=5.0,
+                                ),
+                            )
+                        ),
+                        principals,
+                    )
                 chat = GatewayChat(gateway, delegation)
                 embedder = GatewayEmbedder(
                     gateway, delegation, batch=settings.conversation_embed_batch
@@ -75,6 +99,7 @@ def build_app(settings: ConversationSettings) -> FastAPI:
                     history,
                     ReferenceGate(chat, timeout_s=settings.conversation_gate_timeout_s),
                     PromptBuilder(zone=settings.zone),
+                    actions=actions,
                     settings=settings.turn,
                 )
                 app.state.service = ConversationService(store, engine, history)

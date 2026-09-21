@@ -1,6 +1,7 @@
 """Stand-ins for what a turn depends on (a chat model, the documents, an embedding model, the
 clock), so that the tests of everything above them need no network and no model."""
 
+import asyncio
 import json
 import re
 import zlib
@@ -9,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from math import sqrt
 from uuid import uuid4
 
+from factotum.contracts.actions import ActOutcome
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -157,6 +159,29 @@ class FakeDocuments:
         return SearchResult(passages=tuple(self.passages[:limit]), warnings=tuple(self.warnings))
 
 
+class FakeActions:
+    """The actions service, as far as a turn can tell: it says whether a message asks for something
+    to be done, and what came of it. ``outcomes`` are what it says to the next messages, in order
+    (an outcome, or an error to raise); without one it says that the message is a question."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[Principal, str]] = []
+        self.outcomes: list[ActOutcome | Exception] = []
+        self.delay_s = 0.0
+        """How long it takes to answer: for a test of what is done when it takes too long."""
+
+    async def act(self, principal: Principal, message: str) -> ActOutcome:
+        self.asked.append((principal, message))
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        if not self.outcomes:
+            return ActOutcome.no_action()
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 _FILLER = frozenset(
     [
         "a",
@@ -217,11 +242,12 @@ class WordEmbedder:
 class Harness:
     """A turn engine put together from the stand-ins, and what is needed to look at what it did."""
 
-    def __init__(self, *, settings: TurnSettings | None = None) -> None:
+    def __init__(self, *, settings: TurnSettings | None = None, actions: bool = False) -> None:
         self.store = InMemoryStore()
         self.clock = Clock()
         self.chat = FakeChat()
         self.documents = FakeDocuments()
+        self.actions = FakeActions()
         self.embedder = WordEmbedder()
         self.history = History(self.store, self.embedder, now=self.clock, min_similarity=0.3)
         self.engine = TurnEngine(
@@ -231,6 +257,7 @@ class Harness:
             self.history,
             ReferenceGate(self.chat),
             PromptBuilder(nonce=lambda: "nonce123"),
+            actions=self.actions if actions else None,
             settings=settings,
             now=self.clock,
         )

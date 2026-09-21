@@ -28,6 +28,15 @@ class ConversationSettings(DatabaseSettings):
     conversation_knowledge_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8082")
     """Where the knowledge service is: it is asked for the passages that answer a message."""
 
+    conversation_actions_url: AnyHttpUrl | None = None
+    """Where the actions service is: it is asked, before the documents, whether a message asks for
+    something to be done. Without one no message is taken to ask for anything, and every message is
+    a question."""
+
+    conversation_actions_timeout_s: float = Field(default=120.0, gt=0, le=600)
+    """How long the actions service is waited for. It is the whole of an action (reading the
+    message, asking for an approval, running the skill), so it is as long as the model's."""
+
     conversation_timezone: str = "UTC"
     """The time zone of the household (``Europe/Rome``): "yesterday" and "last week" are counted in
     it, and the date the model is told is the one there."""
@@ -103,6 +112,7 @@ class ConversationSettings(DatabaseSettings):
             history_hits=self.conversation_history_hits,
             document_passages=self.conversation_document_passages,
             knowledge_timeout_s=self.conversation_knowledge_timeout_s,
+            actions_timeout_s=self.conversation_actions_timeout_s,
             session_gap=timedelta(minutes=self.conversation_session_minutes),
             shared_window=timedelta(seconds=self.conversation_shared_window_seconds),
         )

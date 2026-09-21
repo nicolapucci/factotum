@@ -11,6 +11,7 @@ import respx
 from pydantic import AnyHttpUrl
 
 from factotum.common.config import Environment
+from factotum.contracts.actions import ActOutcome, ActStatus
 from factotum.contracts.chat import (
     ChatMessage,
     EventUnion,
@@ -29,6 +30,7 @@ from factotum.db.settings import DatabaseSettings
 
 GATEWAY = "http://gateway.test"
 KNOWLEDGE = "http://knowledge.test"
+ACTIONS = "http://actions.test"
 
 
 def settings_for(database: DatabaseSettings, **values: object) -> ConversationSettings:
@@ -218,3 +220,78 @@ class TestAgainstARealDatabase:
             # And it can all be forgotten.
             assert (await http.delete("/v1/history")).json() == {"conversations": 1}
             assert (await http.get("/v1/conversations")).json() == {"conversations": []}
+
+    @respx.mock
+    async def test_a_message_that_asks_for_something_is_answered_by_the_actions_service_and_kept(
+        self, database_settings: DatabaseSettings
+    ) -> None:
+        model = Model()
+        respx.get(f"{GATEWAY}/v1/profiles/chat.main").respond(
+            200,
+            json={
+                "role": "chat.main",
+                "max_input_tokens": 8192,
+                "max_output_tokens": 512,
+                "streaming": True,
+                "structured_output": "native",
+            },
+        )
+        respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
+        respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
+        respx.post(f"{KNOWLEDGE}/v1/search").respond(200, json={"passages": []})
+        done = ActOutcome(status=ActStatus.DONE, reply="The lamp is on.", skill="lamp")
+        acts = respx.post(f"{ACTIONS}/v1/act").mock(
+            side_effect=[
+                httpx.Response(200, json=done.model_dump(mode="json")),
+                httpx.Response(200, json=ActOutcome.no_action().model_dump(mode="json")),
+                httpx.ConnectError("refused"),
+            ]
+        )
+        app = build_app(
+            settings_for(database_settings, conversation_actions_url=AnyHttpUrl(ACTIONS))
+        )
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://conversation"
+            ) as http,
+        ):
+            # An action: the actions service answers, and nothing else is asked of anybody.
+            first = await http.post("/v1/turns", json={"message": "turn on the lamp"})
+            events = frames(first)
+            assert [e["type"] for e in events] == [
+                "started",
+                "status",
+                "status",
+                "delta",
+                "finished",
+            ]
+            assert [e["phase"] for e in events if e["type"] == "status"] == [
+                "understanding",
+                "acting",
+            ]
+            assert "".join(e["text"] for e in events if e["type"] == "delta") == "The lamp is on."
+            assert model.streams == []
+            sent = acts.calls[0].request
+            assert json.loads(sent.content)["message"] == "turn on the lamp"
+            assert sent.headers["x-factotum-dev-subject"] == "user"
+
+            # A question: the actions service says so, and it is answered as ever.
+            model.answers.append(["It is a device that routes traffic."])
+            second = await http.post("/v1/turns", json={"message": "what is a router?"})
+            assert [e["type"] for e in frames(second)][-1] == "finished"
+            assert len(model.streams) == 1
+
+            # The actions service is away: the message is a question, and the turn says so.
+            model.answers.append(["I do not know."])
+            third = await http.post("/v1/turns", json={"message": "turn off the lamp"})
+            events = frames(third)
+            assert [e["code"] for e in events if e["type"] == "warning"] == ["actions_unavailable"]
+            assert [e["type"] for e in events][-1] == "finished"
+
+            # What was done is in the log like anything said.
+            [conversation] = (await http.get("/v1/conversations")).json()["conversations"]
+            assert conversation["exchanges"] == 3
+            found = (await http.post("/v1/history/search", json={"query": "lamp"})).json()
+            assert "turn on the lamp" in [h["exchange"]["question"] for h in found["hits"]]

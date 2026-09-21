@@ -9,6 +9,7 @@ from factotum.common.devauth import (
     DEVICE_HEADER,
     SUBJECT_HEADER,
     DevAuthenticator,
+    DevPrincipalDelegation,
     dev_headers,
 )
 from factotum.contracts.errors import AuthError
@@ -138,3 +139,29 @@ class TestActingForAPrincipalInDevelopment:
         tenant = make_tenant_principal(tenant_id=make_tenant_id())
 
         assert dev_headers(tenant) == {SUBJECT_HEADER: "tenant"}
+
+
+class TestTheDelegationOfAServiceThatCallsAnother:
+    @pytest.mark.parametrize("environment", [Environment.DEVELOPMENT, Environment.TEST])
+    def test_it_says_whom_the_caller_acts_for_as_the_headers_the_other_side_reads(
+        self, environment: Environment
+    ) -> None:
+        principal = make_user_principal(
+            tenant_id=make_tenant_id(), user_id=make_user_id(), device_id=DeviceId(uuid4())
+        )
+
+        headers = DevPrincipalDelegation(settings(environment)).headers(principal)
+
+        assert dict(headers) == dev_headers(principal)
+
+    def test_it_refuses_to_exist_in_production(self) -> None:
+        with pytest.raises(AuthError, match="disabled outside"):
+            DevPrincipalDelegation(settings(Environment.PRODUCTION))
+
+    def test_an_unconfigured_environment_leaves_it_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("FACTOTUM_ENVIRONMENT", raising=False)
+
+        with pytest.raises(AuthError, match="disabled outside"):
+            DevPrincipalDelegation(ServiceSettings(_env_file=None))

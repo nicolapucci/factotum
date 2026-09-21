@@ -1,17 +1,23 @@
 """One turn: a message in, an answer streamed out, and the exchange saved (ADR 0012).
 
-A turn carries no history. It searches the user's documents for what answers the message, and asks
-the model. Only when a small model, reading the message alone, says that it refers to an earlier
-exchange does the turn look at what was said before: the last exchanges for a continuation, a search
-of the log for something said earlier. The search of the documents starts at once, beside that
-question, and is thrown away when the answer to it says the message was to be read together with an
-earlier exchange.
+A turn starts by asking the actions service, when there is one, whether the message asks for
+something to be done. If it does, what that service says is the answer: what was done, or what is
+asked before it is (a yes or a no, a missing value), or why not. Nothing else is asked of anybody:
+the message is not a question for the documents.
 
-What goes wrong is met without giving up: a model that cannot say whether the message refers to the
-past, documents that do not answer, an embedding model that is away. The turn goes on with what it
-has and says so in a warning. What cannot be got over (no chat model, a message the model cannot
-take) is raised before the first event, so that the caller can answer with the right status; what
-fails after that ends the stream with a ``Failed`` event, and saves nothing.
+Otherwise a turn carries no history. It searches the user's documents for what answers the message,
+and asks the model. Only when a small model, reading the message alone, says that it refers to an
+earlier exchange does the turn look at what was said before: the last exchanges for a continuation,
+a search of the log for something said earlier. The search of the documents starts at once, beside
+that question, and is thrown away when the answer to it says the message was to be read together
+with an earlier exchange.
+
+What goes wrong is met without giving up: actions that cannot be asked, a model that cannot say
+whether the message refers to the past, documents that do not answer, an embedding model that is
+away. The turn goes on with what it has and says so in a warning. What cannot be got over (no chat
+model, a message the model cannot take) is raised before the first event, so that the caller can
+answer with the right status; what fails after that ends the stream with a ``Failed`` event, and
+saves nothing.
 """
 
 import asyncio
@@ -50,9 +56,10 @@ from factotum.contracts.conversation import (
 )
 from factotum.contracts.errors import FactotumError
 from factotum.contracts.identity import Owner, OwnerKind, Principal
-from factotum.contracts.ids import ConversationId, ExchangeId
+from factotum.contracts.ids import ConversationId, ExchangeId, TenantId
 from factotum.contracts.knowledge import Passage
 from factotum.contracts.models import ModelRole, Profile
+from factotum.conversation.actions import Actions
 from factotum.conversation.context import PromptBuilder, citations_of
 from factotum.conversation.documents import DocumentSearch
 from factotum.conversation.gate import ReferenceGate
@@ -80,6 +87,11 @@ class TurnSettings:
     knowledge_timeout_s: float = 4.0
     """How long the documents are waited for before the answer goes on without them."""
 
+    actions_timeout_s: float = 120.0
+    """How long the actions service is waited for. It is the whole of an action: reading the
+    message, asking for an approval, running the skill. One that is not answered in time leaves the
+    message to be answered as a question, and says so."""
+
     session_gap: timedelta = field(default_factory=lambda: timedelta(minutes=30))
     """How long a conversation stays the one a message without a name belongs to."""
 
@@ -106,6 +118,7 @@ class TurnEngine:
         gate: ReferenceGate,
         builder: PromptBuilder,
         *,
+        actions: Actions | None = None,
         settings: TurnSettings | None = None,
         now: Callable[[], datetime] = _utc_now,
         new_id: Callable[[], UUID] = uuid4,
@@ -116,6 +129,7 @@ class TurnEngine:
         self._history = history
         self._gate = gate
         self._builder = builder
+        self._actions = actions
         self._settings = settings or TurnSettings()
         self._now = now
         self._new_id = new_id
@@ -180,8 +194,23 @@ class TurnEngine:
     ) -> AsyncGenerator[TurnEvent]:
         tenant = principal.tenant_id
         settings = self._settings
-        searching: asyncio.Task[Found] | None = asyncio.create_task(self._passages(owner, message))
+        searching: asyncio.Task[Found] | None = None
         try:
+            understanding = False
+            if self._actions is not None:
+                yield Status(phase=Phase.UNDERSTANDING)
+                understanding = True
+                reply, unavailable = await self._act(self._actions, principal, message)
+                if unavailable is not None:
+                    yield unavailable
+                if reply is not None:
+                    async for acted in self._acted(
+                        tenant, owner, conversation_id, message, exchange_id, reply
+                    ):
+                        yield acted
+                    return
+
+            searching = asyncio.create_task(self._passages(owner, message))
             reference = Reference(kind=ReferenceKind.NONE)
             # On a shared device there is only what was said there in the last minute, and there may
             # be nothing: then there is nothing to refer to, and nobody asks.
@@ -198,7 +227,8 @@ class TurnEngine:
             else:
                 said_before = await self._store.has_exchanges(tenant, owner)
             if said_before:
-                yield Status(phase=Phase.UNDERSTANDING)
+                if not understanding:
+                    yield Status(phase=Phase.UNDERSTANDING)
                 try:
                     reference = await self._gate.decide(owner, message)
                 except FactotumError as error:
@@ -330,6 +360,65 @@ class TurnEngine:
             )
         finally:
             await _stop(searching)
+
+    async def _act(
+        self, actions: Actions, principal: Principal, message: str
+    ) -> tuple[str | None, TurnWarning | None]:
+        """What to say, when the message asks for something to be done; nothing when it does not,
+        or when that could not be told (then a warning says so, and the message is answered as a
+        question)."""
+        try:
+            async with asyncio.timeout(self._settings.actions_timeout_s):
+                outcome = await actions.act(principal, message)
+        except (FactotumError, TimeoutError) as error:
+            logger.warning("the actions could not be asked", extra={"reason": type(error).__name__})
+            return None, TurnWarning(
+                code=WarningCode.ACTIONS_UNAVAILABLE,
+                message="it could not be told whether the message asks for something to be done: "
+                "it is answered as a question",
+            )
+        if not outcome.handled:
+            return None, None
+        logger.info(
+            "a message was acted on",
+            extra={"status": outcome.status.value, "skill": outcome.skill},
+        )
+        return outcome.reply, None
+
+    async def _acted(
+        self,
+        tenant: TenantId,
+        owner: Owner,
+        conversation_id: ConversationId,
+        message: str,
+        exchange_id: ExchangeId,
+        reply: str,
+    ) -> AsyncGenerator[TurnEvent]:
+        """The rest of a turn whose answer is what the actions service said. It is remembered like
+        any other answer; what it says was written there, from the person's own words alone, so
+        none of it is somebody else's."""
+        yield Status(phase=Phase.ACTING)
+        yield Delta(text=reply)
+        try:
+            await self._store.add_exchange(
+                tenant,
+                owner,
+                conversation_id=conversation_id,
+                exchange_id=exchange_id,
+                question=message,
+                answer=reply,
+                citations=(),
+                untrusted=False,
+                now=self._now(),
+            )
+        except Exception:  # the answer is given; not being able to keep it is worth a line
+            logger.exception("an exchange could not be saved")
+        yield Finished(
+            reference=ReferenceKind.NONE,
+            exchanges_used=0,
+            passages_used=0,
+            untrusted_content=False,
+        )
 
     async def _passages(self, owner: Owner, query: str) -> Found:
         try:

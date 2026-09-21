@@ -29,6 +29,12 @@ class TestDefaults:
         assert str(settings.conversation_gateway_url) == "http://127.0.0.1:8081/"
         assert str(settings.conversation_knowledge_url) == "http://127.0.0.1:8082/"
 
+    def test_it_asks_no_actions_service_unless_one_is_named(self) -> None:
+        settings = load()
+
+        assert settings.conversation_actions_url is None
+        assert settings.turn.actions_timeout_s == 120.0
+
     def test_left_alone_it_is_production_and_so_it_does_not_start(self) -> None:
         assert load().environment is Environment.PRODUCTION
 
@@ -59,6 +65,8 @@ class TestReadingTheEnvironment:
     ) -> None:
         monkeypatch.setenv("FACTOTUM_CONVERSATION_GATEWAY_URL", "http://model-gateway:8081")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_KNOWLEDGE_URL", "http://knowledge:8082")
+        monkeypatch.setenv("FACTOTUM_CONVERSATION_ACTIONS_URL", "http://actions:8085")
+        monkeypatch.setenv("FACTOTUM_CONVERSATION_ACTIONS_TIMEOUT_S", "30")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_TIMEZONE", "Europe/Rome")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_SESSION_MINUTES", "10")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_RETENTION_DAYS", "90")
@@ -69,6 +77,8 @@ class TestReadingTheEnvironment:
 
         assert str(settings.conversation_gateway_url) == "http://model-gateway:8081/"
         assert str(settings.conversation_knowledge_url) == "http://knowledge:8082/"
+        assert str(settings.conversation_actions_url) == "http://actions:8085/"
+        assert settings.turn.actions_timeout_s == 30.0
         assert settings.zone == ZoneInfo("Europe/Rome")
         assert settings.retention == timedelta(days=90)
         assert settings.turn.session_gap == timedelta(minutes=10)
@@ -103,6 +113,8 @@ class TestWhatIsRefused:
             {"conversation_history_hits": 11},
             {"conversation_document_passages": 0},
             {"conversation_knowledge_timeout_s": 0},
+            {"conversation_actions_timeout_s": 0},
+            {"conversation_actions_timeout_s": 601},
             {"conversation_gate_timeout_s": 61},
             {"conversation_history_min_similarity": 1.5},
             {"conversation_retention_days": -1},

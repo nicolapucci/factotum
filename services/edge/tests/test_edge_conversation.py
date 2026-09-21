@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from factotum.common.config import Environment, ServiceSettings
-from factotum.common.devauth import DEVICE_HEADER, SUBJECT_HEADER
+from factotum.common.devauth import DEVICE_HEADER, SUBJECT_HEADER, DevPrincipalDelegation
 from factotum.contracts.conversation import (
     Delta,
     Failed,
@@ -27,7 +27,7 @@ from factotum.contracts.errors import (
 )
 from factotum.contracts.ids import ConversationId, DeviceId, ExchangeId
 from factotum.contracts.testing import make_tenant_id, make_tenant_principal, make_user_principal
-from factotum.edge.conversation import ConversationClient, DevPrincipalDelegation
+from factotum.edge.conversation import ConversationClient
 
 TENANT = make_tenant_id()
 KITCHEN = DeviceId(uuid4())
