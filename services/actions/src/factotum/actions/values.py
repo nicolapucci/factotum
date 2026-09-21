@@ -9,7 +9,7 @@ Either way the person is asked again, and nothing runs on a guess.
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,9 +46,16 @@ class Checked:
 def check_values(manifest: SkillManifest, given: Mapping[str, Any]) -> Checked:
     """Check what a model found against the parameters of the skill. Names the skill did not
     declare are dropped: they are not the person's."""
+    return check_specs(manifest.parameters, manifest.required, given)
+
+
+def check_specs(
+    specs: Mapping[str, ParameterSpec], required: Sequence[str], given: Mapping[str, Any]
+) -> Checked:
+    """The same for any set of declared parameters (the ones of a device, for instance)."""
     values: dict[str, ParamValue] = {}
     invalid: list[str] = []
-    for name, spec in manifest.parameters.items():
+    for name, spec in specs.items():
         raw = given.get(name)
         if raw is None:
             continue
@@ -57,7 +64,7 @@ def check_values(manifest: SkillManifest, given: Mapping[str, Any]) -> Checked:
             invalid.append(name)
         else:
             values[name] = accepted
-    missing = [name for name in manifest.required if name not in values and name not in invalid]
+    missing = [name for name in required if name not in values and name not in invalid]
     return Checked(values=values, missing=tuple(missing), invalid=tuple(invalid))
 
 
