@@ -10,7 +10,9 @@ answer says is the conversation service's business; what a device is sent of it 
 commands with an acknowledgement, a registry of devices read from a file (development only), an HTTP
 API, a container image, and a terminal client that is a device (`factotum-terminal`). *Not yet*:
 audio (voice is slice 8: the protocol carries text today), devices registered and paired by the hub
-(slice 7), and who may command a device (`authorize()` and the device policy are slice 5a).
+(slice 7), and the `actions` service giving a device the commands a skill answers with (slice 5b:
+the service decides whether a device may have something done, [`actions.md`](actions.md), but until
+then it dispatches nothing).
 
 The reasons behind the design are in
 [ADR 0013](decisions/0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md).
@@ -116,7 +118,8 @@ idle, 4003 protocol version not supported.
 
 ## Commands
 
-Something wants a device to do something (the `actions` service will; today a person with `curl`):
+Something wants a device to do something (the `actions` service will, from slice 5b; today a person
+with `curl`):
 
 ```bash
 curl -s localhost:8084/v1/devices                    # who is connected
@@ -167,6 +170,9 @@ it.
   something it is not registered for, says so in `ready.unregistered` and in a log line.
 - **Its id** is derived from the tenant and the hardware id, so a conversation on a personal device
   carries on from one start of the edge to the next.
+- **What may be done from it** is in the same file: a `policy` (`max_effect`, `requires_approval`) on
+  a device, the external devices (a lamp, a garage door) and which skill drives each. The edge reads
+  only the system devices; the actions service reads all of it ([`actions.md`](actions.md)).
 - **The credential** is compared in constant time, and the answer to a device that does not exist
   takes as long as the answer to one whose credential is wrong. It is never in a log or in an error
   frame; a refusal is logged with the hardware id that was claimed and the code, so that whoever
@@ -308,7 +314,13 @@ the conversation service drops from the citations but a screen shows as written 
   `FACTOTUM_ENVIRONMENT=development`.
 - **Who may command a device is not decided here.** The command endpoint asks for an authenticated
   caller of the device's tenant and no more: grants, the device's policy (`max_effect`,
-  `requires_approval`) and `authorize()` belong to the `actions` service (slice 5a).
+  `requires_approval`) and `authorize()` belong to the `actions` service, which decides whether the
+  device that was spoken to may have an action done ([`actions.md`](actions.md)). What the actions
+  service will send through this endpoint (slice 5b) has been through that decision.
+- **Warnings of a turn are not passed on.** The conversation service says in a `warning` when it went
+  on without something (the documents, the past, the actions service); the edge drops them, so a
+  device answers as if nothing had been missing. What a device should say about it is a decision
+  about the voice, not about the protocol.
 - **Text, not audio.** The protocol carries what was said and what is to be said as text; the
   speech-to-text and text-to-speech pipeline and the audio frames come with the Raspberry Pi client
   (slice 8) and will be a new part of the protocol, not a change to this one.

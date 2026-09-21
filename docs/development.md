@@ -29,11 +29,12 @@ pre-push` (ruff and mypy on commit, the unit tests on push).
 ```
 libs/contracts/   pydantic contracts shared by every service: the single source of truth
 libs/common/      authorization, redaction and logging, settings, the SSRF guard, development auth
-libs/devices/     the SystemDevice interface and a fake for tests
+libs/devices/     the SystemDevice interface, a fake for tests, and the file of devices of a home (development)
+skills/           example skills (folders with a SKILL.md and their scripts)
 libs/web/         what the HTTP interfaces share: errors, authentication, body limits
 libs/db/          the Postgres pool, migrations and the harness for tests against a real database
 libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
-services/         one folder per service (so far: model_gateway, knowledge, conversation, edge)
+services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions)
 clients/          the devices that talk to the edge (so far: terminal, a device in a terminal)
 config/           example configuration, such as the model bindings
 docs/             design.md, the decision records, one document per service
@@ -79,6 +80,14 @@ FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_LIVE_TESTS=1 \
     uv run pytest -m live services/conversation/tests/live -s
 ```
 
+To measure the actions service with real models (a small model telling commands from questions in
+English and Italian, how a yes or a no is read, and how near commands are to their skills by
+meaning), opt-in as well; [`actions.md`](actions.md#tests) says how to change the models:
+
+```bash
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s
+```
+
 Services run in containers with `docker compose --profile services up -d --build --wait`; a plain
 `docker compose up` starts only the database.
 
@@ -97,6 +106,18 @@ uv run factotum-terminal --profile smart-display      # or speaker, screen, play
 
 The tests of the terminal run against a real edge served by uvicorn on a loopback port, so they need
 no Docker.
+
+## Trying the actions
+
+The actions service reads the same `config/devices.dev.yaml` as the edge (the devices, and which
+skill drives which lamp or door), and `skills/examples` are the skills to try. In development the
+folder of skills can be enabled as it is read; [`actions.md`](actions.md#trying-it) has the commands.
+
+```bash
+FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR=true FACTOTUM_POSTGRES_PASSWORD=dev     FACTOTUM_ENVIRONMENT=development docker compose --profile services up -d --build --wait
+curl -s -X POST http://127.0.0.1:8085/v1/skills/reload      # installs and enables the examples
+uv run factotum-terminal --profile smart-display            # say: turn on the lamp
+```
 
 ## Database
 

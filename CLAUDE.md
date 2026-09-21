@@ -29,6 +29,8 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama and hosted providers
 FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_BOOK=/path/to.pdf uv run pytest -m live services/knowledge/tests/live -s
 # the conversation service against real models (see docs/conversation.md):
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/conversation/tests/live -s
+# the actions service against real models (see docs/actions.md):
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s
 # the edge, and a device in a terminal (docs/edge.md; needs config/devices.dev.yaml and the services):
 uv run factotum-terminal --profile smart-display
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
@@ -64,9 +66,23 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   cannot render is never sent to it (ADR 0013). A connection answers one utterance at a time and a
   new one interrupts the answer to the last; the last connection of a device wins. What a device is
   and whom it acts for come from the registry, never from what it says.
-- The development file of devices, the development authentication and the development delegation of
-  the edge to the conversation service refuse to be built outside development and tests, and the
-  environment defaults to production. The hub replaces them (slice 7).
+- The development file of devices, the development authentication, the development delegation of
+  one service to another (`DevDelegation`, `DevPrincipalDelegation`) and the enabling of a folder of
+  skills by reading it refuse to be built outside development and tests, and the environment
+  defaults to production. The hub replaces them (slice 7).
+- **The model proposes, the code decides** (ADR 0014). What plans an action reads the message alone:
+  never a document, a page of the web or the conversation. What a model says (the skill, the device,
+  the values, the questions) is checked in code before anything with an effect is decided, and what
+  fails is *nothing to do* or *needs more*, never a guess. A version of a skill never changes; only
+  an enabled one runs, and enabling it grants exactly what it declares. A spoken yes is a
+  confirmation, not an approval and not authentication: whatever is not clearly a yes is not one, it
+  is taken once, and the action is decided again when it comes. Every step of an action is audited,
+  and a record never says that something ran without the confirmation or the approval its decision
+  required.
+- The conversation service asks the actions service about every message and does not depend on it:
+  with no URL nothing is asked, and when it cannot be reached the message is a question and the turn
+  says so in a warning. Skills, the audit trail and everything that manages them are never served
+  through a device.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
@@ -97,6 +113,9 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - Starlette's `TestClient` is unusable here (its deprecation warning is an error): what needs a
   WebSocket runs on a real one, with uvicorn (`ws="websockets-sansio"`, the implementation that is
   not deprecated) and the `websockets` client, as `factotum.edge.testing.serving` does.
+- A test that measures a real model against `ActionsRig` gives it `patience_s`: the defaults give up
+  on a model after a few seconds, which on a graphics card that something else is using is not a
+  wrong answer but a slow one.
 - The keys of `extra=` in a log call must not be attributes of a `LogRecord` (`name`, `message`,
   `args`...): the standard library raises `KeyError`, and only when the level is enabled, which is
   how a session died the first time the log was at INFO.

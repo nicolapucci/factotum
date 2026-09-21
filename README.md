@@ -4,14 +4,18 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 **actions** on your devices, and runs on **the models you choose**.
 
 > Status: foundations (Slice 0), the model gateway (Slice 1), the knowledge service (Slice 2), the
-> conversation service (Slice 3) and the edge with a terminal client (Slice 4) are done. The gateway
-> talks to OpenAI, Anthropic, Gemini, Ollama and any OpenAI-compatible server behind one API; the
-> knowledge service reads your documents (text, Markdown, HTML, PDF, Word) and answers with the
-> passages that answer a question, by meaning and by words; the conversation service answers a
-> message from them, streamed, without carrying the conversation along: what was said is looked up
-> only when a message refers to it; the edge is where devices connect over a WebSocket, and hands
-> each the answer in the pieces it can render, a sentence at a time. The other services are not
-> built yet. See the roadmap in [`docs/design.md`](docs/design.md).
+> conversation service (Slice 3), the edge with a terminal client (Slice 4) and the decision side of
+> actions (Slice 5a) are done. The gateway talks to OpenAI, Anthropic, Gemini, Ollama and any
+> OpenAI-compatible server behind one API; the knowledge service reads your documents (text,
+> Markdown, HTML, PDF, Word) and answers with the passages that answer a question, by meaning and by
+> words; the conversation service answers a message from them, streamed, without carrying the
+> conversation along: what was said is looked up only when a message refers to it; the edge is where
+> devices connect over a WebSocket, and hands each the answer in the pieces it can render, a
+> sentence at a time; the actions service works out whether a message asks for something to be done,
+> which skill does it and whether this device may have it done, asks for a yes when it must, and
+> keeps a trail of it (it does not run a skill yet: that is Slice 5b, and until then it says what it
+> would have done). The other services are not built yet. See the roadmap in
+> [`docs/design.md`](docs/design.md).
 
 ## Principles
 
@@ -37,6 +41,7 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 | [`docs/knowledge.md`](docs/knowledge.md) | The knowledge service: from a file to a passage, hybrid search, ownership, API, what was measured |
 | [`docs/conversation.md`](docs/conversation.md) | The conversation service: a turn with no history, the log searched when a message refers to it, API, what was measured |
 | [`docs/edge.md`](docs/edge.md) | The edge: the protocol of the devices, what each is sent, commands, the terminal client, API, what was measured |
+| [`docs/actions.md`](docs/actions.md) | The actions service: skills, choosing one, deciding, confirmations and approvals, the audit trail, API, what was measured |
 | [`docs/decisions/`](docs/decisions/README.md) | Why the big decisions were taken |
 | [`docs/development.md`](docs/development.md) | Setup, the checks, layout, conventions |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreements for AI-assisted sessions |

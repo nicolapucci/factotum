@@ -9,8 +9,9 @@ message (ADR 0008).
 *Implemented* (text): streamed answers with citations, conversations saved and searched when a
 message refers to them, an HTTP API with server-sent events, and a container image. Devices reach it
 through [the edge](edge.md), which asks it for a turn on behalf of the device and cuts what it
-streams into what each device can render; the service itself knows no device. *Not yet*: the web,
-actions and the choice between answering and acting (slices 5a and 6), voice (slice 8).
+streams into what each device can render; the service itself knows no device. A turn begins by
+asking [the actions service](actions.md) whether the message asks for something to be done. *Not
+yet*: the web, the choice between answering and other things than acting (slice 6), voice (slice 8).
 
 The reasons behind the design are in
 [ADR 0012](decisions/0012-conversation-no-history-in-a-turn-a-log-to-search-when-referred-to.md).
@@ -19,8 +20,10 @@ The reasons behind the design are in
 
 ```mermaid
 flowchart TD
-    msg[message] --> docs[search the documents<br/>starts at once]
-    msg --> said{has the owner<br/>said anything before?}
+    msg[message] --> act{does it ask for<br/>something to be done?<br/>the actions service}
+    act -- yes --> acted[what the actions service says<br/>is the answer, and it is saved]
+    act -- no, or not asked --> docs[search the documents<br/>starts at once]
+    act -- no, or not asked --> said{has the owner<br/>said anything before?}
     said -- no --> build
     said -- yes --> gate[a small model reads<br/>the message alone]
     gate -- none --> build
@@ -34,7 +37,16 @@ flowchart TD
     answer --> save[the exchange is saved,<br/>if the answer is complete]
 ```
 
-Most messages are the first branch: they can be understood alone, so the prompt has the
+**Asking whether it is an action comes first**, when an actions service is named
+(`FACTOTUM_CONVERSATION_ACTIONS_URL`; without one every message is a question). The message goes
+alone, as the person's own words, for whom the turn is for and from the device it came from. If it
+asks for something to be done, what that service says (what was done, or a question to answer with a
+yes or a no, or why not) is the answer: it is one `delta`, preceded by `status` `acting`, saved like
+any answer, and nothing is searched. Otherwise the turn goes on as below. That service decides
+whether a message is an action at all ([`actions.md`](actions.md)): most messages are not, and cost
+it one embedding.
+
+Most messages are the second branch: they can be understood alone, so the prompt has the
 instructions, the passages of the documents that answer, and the message, and nothing else. Chatting
 with an assistant is mostly that (a question, a command), and carrying the last turns of every
 conversation along costs tokens and time on every one of them, to serve the few messages that need
@@ -46,7 +58,7 @@ them.
 | Event | |
 | --- | --- |
 | `started` | always the first: the conversation and the exchange it will be saved as |
-| `status` | which phase it is in: `understanding`, `recalling`, `searching`, `answering` |
+| `status` | which phase it is in: `understanding`, `recalling`, `searching`, `acting`, `answering` |
 | `warning` | something made the answer less good than it could be, without failing it (below) |
 | `delta` | a piece of the answer: `text` is not trimmed, the space at its edge is a word break |
 | `citations` | the passages the answer cites as `[2]` or `[1, 3]`, with their document, page and headings |
@@ -187,9 +199,11 @@ What a passage says was written by somebody else, and what an earlier answer quo
 carry it. A turn is **`untrusted`** when any of the passages that made it into the prompt, or any of
 the earlier exchanges that did, was: that is `untrusted_content` in `finished`, and it is saved with
 the exchange, so that a later turn that recalls it is untrusted too. It is what
-`authorize()` (`factotum.common.authorization`) needs of an action requested from such a turn
-(slice 5a): whatever it says is data, and it asks for a confirmation before something that has an
-effect. A turn that had only the user's own words is trusted.
+`authorize()` (`factotum.common.authorization`) needs of an action requested from such a turn:
+whatever it says is data, and it asks for a confirmation before something that has an effect. A turn
+that had only the user's own words is trusted. The actions service is asked about the message
+before any document is searched or any past is brought back, and it gets the message alone, so what
+it is asked about is always the user's own words.
 
 ## Conversations, owners and who may do what
 
@@ -238,6 +252,7 @@ headers a person with `curl` would use, and the hub will replace them with what 
 | --- | --- |
 | There is no chat model bound, or the message does not fit it | an HTTP error before the first event (`409`, `413`), and nothing is saved |
 | The conversation named is not the caller's | `404` |
+| The actions service is away, or does not answer in time | the message is a question; `warning` `actions_unavailable` |
 | The small model cannot tell whether the message refers to the past | goes on with no history; `warning` `reference_unavailable` |
 | The documents cannot be searched (timeout of 4 s, or the service is away) | the answer is given without them; `warning` `documents_unavailable` |
 | The embedding model is away or not set up | the log is searched by words only; `warning` `history_words_only` |
@@ -287,6 +302,8 @@ Read from the environment (`FACTOTUM_*`) and, in development, from `.env`; every
 | `FACTOTUM_CONVERSATION_HOST`, `..._PORT` | `127.0.0.1`, `8083` | loopback unless told otherwise |
 | `FACTOTUM_CONVERSATION_GATEWAY_URL` | `http://127.0.0.1:8081` | where the model gateway is |
 | `FACTOTUM_CONVERSATION_KNOWLEDGE_URL` | `http://127.0.0.1:8082` | where the knowledge service is |
+| `FACTOTUM_CONVERSATION_ACTIONS_URL` | none | where the actions service is; without one no message is taken to ask for anything |
+| `FACTOTUM_CONVERSATION_ACTIONS_TIMEOUT_S` | `120` | how long it is waited for: it is the whole of an action |
 | `FACTOTUM_CONVERSATION_TIMEZONE` | `UTC` | the household's: "yesterday" and "last week" are counted in it |
 | `FACTOTUM_CONVERSATION_SESSION_MINUTES` | `30` | how long a conversation stays the current one of a caller and device |
 | `FACTOTUM_CONVERSATION_SHARED_WINDOW_SECONDS` | `60` | how far back a shared device sees what was said on it, and how long its conversation lasts; what is said on it is forgotten after twice as long |
@@ -473,4 +490,4 @@ first word.
   owner has no embedding model: by words only.
 * **The answering model is not told a temperature.** It answers with what its binding says, or the
   provider's default, and the same follow-up is not answered the same way twice.
-* Nothing yet handles the web, actions or voice; the turn only answers.
+* Nothing yet handles the web or voice; a turn answers, or has an action decided.

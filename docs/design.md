@@ -1,11 +1,12 @@
 # Factotum: design (v1)
 
-Status: **Slices 0 to 4 are implemented**: the foundations and shared contracts, the
-`model-gateway`, `knowledge`, `conversation` and `edge` services, and a terminal client that is a
-device. The other services are not started yet. Sections say whether something is *implemented* or
-*planned*. The reasons behind the biggest decisions live in [`decisions/`](decisions/README.md); the
-services have their own documents, [`model-gateway.md`](model-gateway.md),
-[`knowledge.md`](knowledge.md), [`conversation.md`](conversation.md) and [`edge.md`](edge.md).
+Status: **Slices 0 to 5a are implemented**: the foundations and shared contracts, the
+`model-gateway`, `knowledge`, `conversation`, `edge` and `actions` services, and a terminal client
+that is a device. The other services are not started yet, and the actions service does not run a
+skill yet (slice 5b). Sections say whether something is *implemented* or *planned*. The reasons
+behind the biggest decisions live in [`decisions/`](decisions/README.md); the services have their
+own documents, [`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
+[`conversation.md`](conversation.md), [`edge.md`](edge.md) and [`actions.md`](actions.md).
 
 ## 1. What Factotum is
 
@@ -61,7 +62,7 @@ flowchart TD
 | `conversation` (*implemented* for text) | One conversation turn: retrieval from `knowledge` (and later the web) with timeouts and partial degradation, context budgeting, streamed answers with citations, and no history unless the message refers to it, when what was said is looked up in a log; later routing with structured output and the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
 | `knowledge` (*implemented*) | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
 | `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
-| `actions` | Skills (validation, versions, matching), permissions and grants, the policy decision, approvals, audit, dispatch of device commands | how a model was chosen |
+| `actions` (*implemented* except running: slice 5b) | Skills (validation, versions, matching by meaning), the catalog and its review, the planner and the checks on what it says, permissions and grants, the policy decision, confirmations, approvals, audit; later the dispatch of device commands | how a model was chosen |
 | `runner` | Runs skill scripts in isolation | everything else |
 | `hub` | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
 
@@ -172,7 +173,10 @@ device defaults to `max_effect = reversible`; the tenant admin can raise it.
 
 ## 6. Skills
 
-*Implemented*: the manifest (`factotum.contracts.skills`). *Planned*: loading, matching, running.
+*Implemented* (slice 5a, [`actions.md`](actions.md)): the manifest (`factotum.contracts.skills`),
+loading and versioning, the catalog with review and enabling, matching by meaning, the planner and
+the checks on it, the decision and the confirmation. *Planned*: running (slice 5b) and instructions
+mode (slice 6).
 
 A skill teaches Factotum to do something. It is a folder with a `SKILL.md` (YAML frontmatter plus
 markdown) and, optionally, scripts. The frontmatter is validated as a `SkillManifest`.
@@ -209,11 +213,13 @@ Markdown instructions for the model, or notes for humans.
 - **Instructions mode** (no entrypoint): the model follows the markdown using only the platform's
   primitives (`http.request`, `mqtt.publish`, `device.command`) within the declared permissions. The
   model writes the plan; `actions` executes it and resolves secrets server-side.
-- **Selection**: skill descriptions and examples are embedded and matched by similarity; a model of
-  the `chat.fast` role picks the skill and extracts parameters with structured output, validated
-  against the skill's schema. Native tool calling is not used, because it varies too much between
+- **Selection** (*implemented*): skill descriptions and examples are embedded and matched by
+  similarity; a model of the `chat.fast` role picks the skill and extracts parameters with structured
+  output, validated against the skill's schema, and then checked in code (the model proposes, the
+  code decides: [ADR 0014](decisions/0014-actions-the-model-proposes-the-code-decides.md)). Native tool calling is not used, because it varies too much between
   providers; it may come later as an optimization behind a capability flag.
-- **Permissions** are deny-by-default and reviewed by the user at installation and at every change.
+- **Permissions** (*implemented*) are deny-by-default and reviewed by the user at installation and at
+  every change: a version runs only once it has been enabled, which grants what it declares.
   Permissions that depend on a device are resolved and approved when the skill is bound to it.
 - **Sandbox**: a separate container, non-root, read-only filesystem, CPU / memory / time limits, an
   internal network whose only exit is a proxy with a per-skill allowlist, no access to the container
@@ -284,16 +290,21 @@ shown examples as turns of its own conversation and says why before it says whic
 made three different small models read the messages alike (measured in `conversation.md`). The
 answer is streamed with its citations, and a turn that had somebody else's words in it (a passage of
 a document, or an earlier exchange that had) says so, which is what `authorize()` needs of the
-actions of slice 5a. A shared device is stateless: it sees only the last minute of what was said on
-it. Not there yet: the web, actions and routing between an answer and an action, voice.
+actions. A shared device is stateless: it sees only the last minute of what was said on it.
+
+A turn begins by asking the `actions` service whether the message asks for something to be done;
+if it does, what that service says is the answer, and if it cannot be asked the message is a
+question and the turn says so. Not there yet: the web, routing with structured output between an
+answer and other things than actions, voice.
 
 ## 10. Deployment
 
-- **Compose** (*implemented for Postgres and the four services*): pinned
+- **Compose** (*implemented for Postgres and the five services*): pinned
   images, no default database password, ports published on loopback only. The service images are
   built from the repository root, run as a non-root user, and start only with `--profile services`;
   the knowledge service waits for the database and finds the gateway by its name, the edge waits for
-  the conversation service and has no database, and only the gateway gets provider keys. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set
+  the conversation service and has no database, the conversation service asks the actions service
+  but does not need it, and only the gateway gets provider keys. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set
   it disables developer conveniences instead of enabling them.
 - `FACTOTUM_TENANT_MODE`: `single_tenant` (on-premise: one tenant and its admin created at first
   start) or `multi_tenant` (cloud). The code paths are the same: `tenant_id` always comes from the
@@ -325,7 +336,7 @@ it. Not there yet: the web, actions and routing between an answer and an action,
 | 2 | `knowledge`: five formats, hybrid search, re-indexing, HTTP API, container image | done |
 | 3 | `conversation` (text): a turn with no history, a log searched when a message refers to it, streamed answers with citations, container image | done |
 | 4 | `edge` and a terminal client with device profiles: protocol v1 over a WebSocket, answers by sentences and by what a device can render, interruption, commands with an acknowledgement, container image | done |
-| 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner) | |
+| 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner), asked first by the conversation service | done |
 | 5b | `runner` and device command dispatch | |
 | 6 | Instructions-mode skills | |
 | 7 | `hub` | |
