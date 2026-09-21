@@ -347,6 +347,11 @@ it. Not there yet: the web, actions and routing between an answer and an action,
 - Passages come back by nearness, near or not: the conversation service does not yet leave out the
   ones that are plainly unrelated to the message, and a small model may answer a follow-up from them.
   It needs the knowledge service to say how near each passage is.
+- A citation marker that points to no passage (`[3]` when the prompt had one) is dropped from the
+  citations by the conversation service but stays in the text that was already streamed, so a
+  screen shows it. The service knows how many passages the prompt has before it streams, so it
+  could drop the markers beyond them from the stream itself (a marker arrives in pieces, so this
+  wants a small lookahead, as the edge's sentence chunker has). Not done.
 - Token counting: the gateway leaves it to the provider (`context_too_long`) and to the caller, who
   budgets with the profile. A tokenizer per model family is possible if that proves too coarse.
 

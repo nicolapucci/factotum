@@ -318,6 +318,7 @@ the conversation service drops from the citations but a screen shows as written 
   that holds it; running several needs a bus between them (the `DeviceRouter` of the design).
 - **A dangling marker on a screen.** When the model writes a citation marker that points to no
   passage, the conversation service drops the citation but the text has already been streamed: a
-  screen shows `[3]` beside a sentence with no source card. A speaker never says a marker.
+  screen shows `[3]` beside a sentence with no source card. A speaker never says a marker. The fix
+  belongs to the conversation service (an open question in [`design.md`](design.md#13-open-questions)).
 - **One turn at a time per connection**, and a very long answer with no end to a sentence in it is
   cut at 280 characters to be spoken.
