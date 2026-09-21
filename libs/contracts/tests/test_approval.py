@@ -9,6 +9,7 @@ from factotum.contracts.approval import (
     ActionSummary,
     ApprovalOutcome,
     ApprovalRequest,
+    ApprovalResult,
     Approver,
     ApproverKind,
     ApproverSelector,
@@ -90,18 +91,44 @@ class TestApprovalRequest:
 class RecordingApprover:
     """The smallest possible mechanism: anything with the right method is an Approver."""
 
-    def __init__(self, outcome: ApprovalOutcome) -> None:
-        self.outcome = outcome
+    def __init__(self, result: ApprovalResult) -> None:
+        self.result = result
         self.seen: list[ApprovalRequest] = []
 
-    async def request_approval(self, request: ApprovalRequest) -> ApprovalOutcome:
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalResult:
         self.seen.append(request)
-        return self.outcome
+        return self.result
 
 
 @pytest.mark.parametrize("outcome", list(ApprovalOutcome))
 async def test_an_approver_answers_with_one_of_the_outcomes(outcome: ApprovalOutcome) -> None:
-    approver: Approver = RecordingApprover(outcome)
+    result = (
+        ApprovalResult.approved(make_user_id())
+        if outcome is ApprovalOutcome.APPROVED
+        else ApprovalResult(outcome=outcome)
+    )
+    approver: Approver = RecordingApprover(result)
     request = make_request()
 
-    assert await approver.request_approval(request) is outcome
+    assert await approver.request_approval(request) == result
+
+
+class TestApprovalResult:
+    def test_an_approval_says_who_approved(self) -> None:
+        person = make_user_id()
+
+        assert ApprovalResult.approved(person).approved_by == person
+        with pytest.raises(ValidationError, match="must say who approved"):
+            ApprovalResult(outcome=ApprovalOutcome.APPROVED)
+
+    @pytest.mark.parametrize(
+        "outcome",
+        [ApprovalOutcome.DENIED, ApprovalOutcome.EXPIRED, ApprovalOutcome.UNAVAILABLE],
+    )
+    def test_nothing_else_has_an_approver(self, outcome: ApprovalOutcome) -> None:
+        assert ApprovalResult(outcome=outcome).approved_by is None
+        with pytest.raises(ValidationError, match="only an approval has an approver"):
+            ApprovalResult(outcome=outcome, approved_by=make_user_id())
+
+    def test_the_answer_of_a_mechanism_that_is_not_there_is_unavailable(self) -> None:
+        assert ApprovalResult.unavailable().outcome is ApprovalOutcome.UNAVAILABLE

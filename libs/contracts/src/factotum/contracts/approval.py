@@ -28,6 +28,31 @@ class ApprovalOutcome(StrEnum):
     """No mechanism is configured, or it could not be reached. Treated as a refusal."""
 
 
+class ApprovalResult(Contract):
+    """How an approval request came out and, when it was approved, who approved it: the audit trail
+    says who did (ADR 0004), and only a mechanism that authenticated somebody can tell."""
+
+    outcome: ApprovalOutcome
+    approved_by: UserId | None = None
+
+    @model_validator(mode="after")
+    def _only_an_approval_has_an_approver(self) -> Self:
+        approved = self.outcome is ApprovalOutcome.APPROVED
+        if approved and self.approved_by is None:
+            raise ValueError("an approval must say who approved")
+        if not approved and self.approved_by is not None:
+            raise ValueError("only an approval has an approver")
+        return self
+
+    @classmethod
+    def approved(cls, by: UserId) -> Self:
+        return cls(outcome=ApprovalOutcome.APPROVED, approved_by=by)
+
+    @classmethod
+    def unavailable(cls) -> Self:
+        return cls(outcome=ApprovalOutcome.UNAVAILABLE)
+
+
 class ApproverKind(StrEnum):
     USER = "user"
     TENANT_ADMINS = "tenant_admins"
@@ -94,9 +119,9 @@ class ApprovalRequest(Contract):
 class Approver(Protocol):
     """A mechanism that asks an authorized person and reports the answer.
 
-    The call returns when the request is approved, denied or expired, or right away with
-    ``UNAVAILABLE`` when the mechanism cannot be used. The signature may grow once a mechanism is
-    chosen (a spoken one-time code needs a channel back to the conversation).
+    The call returns when the request is approved (and by whom), denied or expired, or right away
+    with ``UNAVAILABLE`` when the mechanism cannot be used. The signature may still grow once a
+    mechanism is chosen (a spoken one-time code needs a channel back to the conversation).
     """
 
-    async def request_approval(self, request: ApprovalRequest) -> ApprovalOutcome: ...
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalResult: ...
