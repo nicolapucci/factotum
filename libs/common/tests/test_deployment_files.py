@@ -45,6 +45,7 @@ def test_the_database_starts_by_default_and_the_services_only_on_request() -> No
     assert SERVICES["knowledge"]["profiles"] == ["services"]
     assert SERVICES["conversation"]["profiles"] == ["services"]
     assert SERVICES["edge"]["profiles"] == ["services"]
+    assert SERVICES["actions"]["profiles"] == ["services"]
 
 
 def test_the_database_has_the_shared_memory_a_large_collection_needs() -> None:
@@ -89,6 +90,50 @@ def test_the_edge_reads_its_devices_from_where_the_config_folder_is_mounted() ->
     assert f"./config:{folder}:ro" in edge["volumes"]
 
 
+def test_the_actions_service_waits_for_its_database_and_finds_the_gateway_by_name() -> None:
+    actions = SERVICES["actions"]
+    environment = actions["environment"]
+
+    assert actions["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert environment["FACTOTUM_POSTGRES_HOST"] == "postgres"
+    assert environment["FACTOTUM_ACTIONS_GATEWAY_URL"] == "http://model-gateway:8081"
+
+
+def test_the_actions_service_reads_its_devices_and_its_skills_from_read_only_mounts() -> None:
+    actions = SERVICES["actions"]
+    environment = actions["environment"]
+    devices = environment["FACTOTUM_ACTIONS_DEVICES_FILE"].rsplit("/", 1)[0]
+    skills = environment["FACTOTUM_ACTIONS_SKILLS_DIR"]
+
+    assert f"./config:{devices}:ro" in actions["volumes"]
+    assert f"./skills:{skills}:ro" in actions["volumes"]
+
+
+def test_a_skill_is_not_enabled_by_being_read_unless_the_operator_says_so() -> None:
+    environment = SERVICES["actions"]["environment"]
+
+    assert (
+        environment["FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR"]
+        == "${FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR:-false}"
+    )
+
+
+def test_the_conversation_service_finds_the_actions_service_by_name_and_does_not_need_it() -> None:
+    conversation = SERVICES["conversation"]
+    dependency = conversation["depends_on"]["actions"]
+
+    assert conversation["environment"]["FACTOTUM_CONVERSATION_ACTIONS_URL"] == "http://actions:8085"
+    assert dependency["condition"] == "service_healthy"
+    assert dependency["required"] is False
+
+
+def test_the_edge_and_the_actions_service_read_the_same_file_of_devices() -> None:
+    edge = SERVICES["edge"]["environment"]["FACTOTUM_EDGE_DEVICES_FILE"]
+    actions = SERVICES["actions"]["environment"]["FACTOTUM_ACTIONS_DEVICES_FILE"]
+
+    assert edge == actions
+
+
 def test_no_service_is_given_a_provider_key_but_the_gateway() -> None:
     for name, service in SERVICES.items():
         keys = [key for key in service.get("environment", {}) if key.endswith("_API_KEY")]
@@ -118,7 +163,9 @@ def test_the_provider_keys_compose_passes_on_are_documented_in_the_env_example()
     assert passed <= documented, f"missing from .env.example: {sorted(passed - documented)}"
 
 
-@pytest.mark.parametrize("service", ["model_gateway", "knowledge", "conversation", "edge"])
+@pytest.mark.parametrize(
+    "service", ["model_gateway", "knowledge", "conversation", "edge", "actions"]
+)
 def test_the_image_does_not_run_as_root(service: str) -> None:
     dockerfile = (REPO_ROOT / "services" / service / "Dockerfile").read_text("utf-8")
     users = re.findall(r"^USER\s+(\S+)", dockerfile, re.M)

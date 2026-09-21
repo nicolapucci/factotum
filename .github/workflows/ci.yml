@@ -64,6 +64,9 @@ jobs:
       - name: Build the edge image
         run: docker build -f services/edge/Dockerfile -t factotum-edge:ci .
 
+      - name: Build the actions image
+        run: docker build -f services/actions/Dockerfile -t factotum-actions:ci .
+
   integration:
     name: Integration tests against Postgres with pgvector
     runs-on: ubuntu-latest

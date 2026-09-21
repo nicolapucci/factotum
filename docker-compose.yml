@@ -104,6 +104,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # It asks the actions service, before the documents, whether a message asks for something
+      # to be done. It does not need it: without it every message is a question, and it says so.
+      actions:
+        condition: service_healthy
+        required: false
     environment:
       FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
@@ -126,6 +131,7 @@ services:
       FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES: ${FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES:-6}
       FACTOTUM_CONVERSATION_HISTORY_MIN_SIMILARITY: ${FACTOTUM_CONVERSATION_HISTORY_MIN_SIMILARITY:-0.5}
       FACTOTUM_CONVERSATION_RETENTION_DAYS: ${FACTOTUM_CONVERSATION_RETENTION_DAYS:-0}
+      FACTOTUM_CONVERSATION_ACTIONS_URL: http://actions:8085
     ports:
       # Loopback only, for development. Services reach it by name on the compose network.
       - "127.0.0.1:${FACTOTUM_CONVERSATION_PORT:-8083}:8083"
@@ -164,6 +170,54 @@ services:
       # Loopback only, for development. Services reach it by name on the compose network; devices
       # elsewhere on the network will reach it through what the deployment puts in front of it.
       - "127.0.0.1:${FACTOTUM_EDGE_PORT:-8084}:8084"
+
+  actions:
+    # What a message asks to be done: it chooses the skill, decides whether it may run, asks for a
+    # yes when it must, and audits it. Like the others it is not started by a plain
+    # `docker compose up`: it needs the "services" profile, and until the hub registers devices it
+    # reads them from config/devices.dev.yaml (copy config/devices.example.yaml) and only runs with
+    # FACTOTUM_ENVIRONMENT=development. Until slice 5b a skill is not run: it says what it would do.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/actions/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      # The database of this deployment, by its name on the compose network.
+      FACTOTUM_POSTGRES_HOST: postgres
+      FACTOTUM_POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
+      FACTOTUM_POSTGRES_PASSWORD: ${FACTOTUM_POSTGRES_PASSWORD:?set FACTOTUM_POSTGRES_PASSWORD in .env}
+      FACTOTUM_POSTGRES_DB: ${FACTOTUM_POSTGRES_DB:-factotum}
+      # It never knows a model or a key: the gateway is asked to read every message and to embed
+      # every skill. The secrets a skill needs are the runner's, and it has none of them.
+      FACTOTUM_ACTIONS_GATEWAY_URL: http://model-gateway:8081
+      FACTOTUM_ACTIONS_DEVICES_FILE: /etc/factotum/devices.dev.yaml
+      FACTOTUM_ACTIONS_SKILLS_DIR: /skills
+      FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR: ${FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR:-false}
+      FACTOTUM_ACTIONS_MATCH_THRESHOLD: ${FACTOTUM_ACTIONS_MATCH_THRESHOLD:-0.45}
+      FACTOTUM_ACTIONS_MATCH_CANDIDATES: ${FACTOTUM_ACTIONS_MATCH_CANDIDATES:-6}
+      FACTOTUM_ACTIONS_MATCH_TIMEOUT_S: ${FACTOTUM_ACTIONS_MATCH_TIMEOUT_S:-4}
+      FACTOTUM_ACTIONS_INDEX_TIMEOUT_S: ${FACTOTUM_ACTIONS_INDEX_TIMEOUT_S:-8}
+      FACTOTUM_ACTIONS_PLANNER_TIMEOUT_S: ${FACTOTUM_ACTIONS_PLANNER_TIMEOUT_S:-10}
+      FACTOTUM_ACTIONS_READER_TIMEOUT_S: ${FACTOTUM_ACTIONS_READER_TIMEOUT_S:-6}
+      FACTOTUM_ACTIONS_CONFIRMATION_SECONDS: ${FACTOTUM_ACTIONS_CONFIRMATION_SECONDS:-60}
+      FACTOTUM_ACTIONS_APPROVAL_WAIT_S: ${FACTOTUM_ACTIONS_APPROVAL_WAIT_S:-20}
+      FACTOTUM_ACTIONS_APPROVAL_MINUTES: ${FACTOTUM_ACTIONS_APPROVAL_MINUTES:-10}
+      FACTOTUM_ACTIONS_RUN_MARGIN_S: ${FACTOTUM_ACTIONS_RUN_MARGIN_S:-5}
+      FACTOTUM_ACTIONS_MAX_DEVICES_SHOWN: ${FACTOTUM_ACTIONS_MAX_DEVICES_SHOWN:-10}
+    volumes:
+      - ./config:/etc/factotum:ro
+      - ./skills:/skills:ro
+    ports:
+      # Loopback only, for development. Services reach it by name on the compose network.
+      - "127.0.0.1:${FACTOTUM_ACTIONS_PORT:-8085}:8085"
 
 volumes:
   postgres_data:
