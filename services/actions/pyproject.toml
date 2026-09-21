@@ -1,0 +1,33 @@
+[project]
+name = "factotum-actions"
+version = "0.0.0"
+description = "The Factotum actions service: skills (validated, versioned, reviewed before they run), the choice of one for a message, the decision whether it may run (authorization, confirmation, approval), its execution and its audit trail."
+requires-python = ">=3.13"
+dependencies = [
+  "factotum-contracts",
+  "factotum-common",
+  "factotum-db",
+  "factotum-devices",
+  "factotum-web",
+  "factotum-model-client",
+  "fastapi>=0.115",
+  "httpx>=0.28",
+  "pydantic>=2.11",
+  "pyyaml>=6.0",
+  "uvicorn>=0.32",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/factotum"]
+
+[tool.uv.sources]
+factotum-contracts = { workspace = true }
+factotum-common = { workspace = true }
+factotum-db = { workspace = true }
+factotum-devices = { workspace = true }
+factotum-web = { workspace = true }
+factotum-model-client = { workspace = true }
