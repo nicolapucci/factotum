@@ -26,6 +26,7 @@ from factotum.contracts.runner import RunRequest, RunResult
 from factotum.contracts.skills import SkillManifest
 from factotum.contracts.testing import make_tenant_id, make_user_id
 from factotum.devices.home import Home, parse_home
+from factotum.model_client import Chat, Embedder
 
 
 class FakeRunner:
@@ -167,7 +168,14 @@ class ActionsRig:
         settings: ActionSettings | None = None,
         runner: SkillRunner | None = None,
         store: ActionsStore | None = None,
+        chat: Chat | None = None,
+        embedder: Embedder | None = None,
+        patience_s: float | None = None,
     ) -> None:
+        """``chat`` and ``embedder`` are real models for a test that measures them; without them
+        the doubles are used, and ``plans`` and ``embedder`` are how they are told what to do.
+        ``patience_s`` is how long each model is waited for, where the defaults would give up on a
+        model that is only slow, which is not what such a test measures."""
         self.tenant = make_tenant_id()
         self.user = make_user_id()
         self.home: Home = parse_home(home_text, tenant_id=self.tenant, user_id=self.user)
@@ -175,8 +183,13 @@ class ActionsRig:
         self.store: ActionsStore = store or InMemoryStore()
         self.chat = ScriptedChat()
         self.embedder = FakeEmbedder()
-        self.index = SkillIndex(self.store, self.embedder)
-        self.matcher = SkillMatcher(self.store, self.embedder, self.index)
+        self._chat: Chat = chat or self.chat
+        self._embedder: Embedder = embedder or self.embedder
+        self._patience_s = patience_s
+        self.index = SkillIndex(self.store, self._embedder, timeout_s=self._wait(8.0))
+        self.matcher = SkillMatcher(
+            self.store, self._embedder, self.index, timeout_s=self._wait(4.0)
+        )
         self.runner = FakeRunner()
         self._runner: SkillRunner = runner or self.runner
         self.dispatcher = FakeDispatcher()
@@ -185,13 +198,16 @@ class ActionsRig:
         self._settings = settings
         self.service = self._service()
 
+    def _wait(self, default_s: float) -> float:
+        return default_s if self._patience_s is None else self._patience_s
+
     def _service(self) -> ActionService:
         return ActionService(
             store=self.store,
             directory=self.directory,
             matcher=self.matcher,
-            planner=Planner(self.chat),
-            reader=ConfirmationReader(self.chat),
+            planner=Planner(self._chat, timeout_s=self._wait(10.0)),
+            reader=ConfirmationReader(self._chat, timeout_s=self._wait(6.0)),
             runner=self._runner,
             dispatcher=self.dispatcher,
             approver=self.approver,

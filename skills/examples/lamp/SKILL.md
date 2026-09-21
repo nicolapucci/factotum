@@ -9,7 +9,7 @@ examples:
   - spegni la lampada
 target: external
 parameters:
-  state: {type: string, enum: ["on", "off"], description: whether the lamp is to be on or off}
+  state: {type: string, enum: ["on", "off"], description: "whether the lamp is to be on or off (on, when only a brightness is asked for)"}
   brightness: {type: integer, minimum: 0, maximum: 100, description: "how bright it is to be, in percent"}
 required: [state]
 device_parameters:
