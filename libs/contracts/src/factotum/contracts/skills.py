@@ -26,6 +26,35 @@ HOST_PATTERN = re.compile(
 )
 _DEVICE_TEMPLATE = re.compile(r"^\$\{device\.([a-z][a-z0-9_]{0,63})\}$")
 _SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_SKILL_PATH = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
+
+RESERVED_ENV_PREFIXES = ("PYTHON", "LD_", "FACTOTUM_")
+RESERVED_ENV_NAMES = frozenset(
+    {"PATH", "HOME", "USER", "HOSTNAME", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}
+    | {"ALL_PROXY", "SHELL", "PWD", "LANG"}
+)
+"""What the runner sets for a job itself, and what would change how a program is started: a secret
+cannot be called any of these."""
+
+
+def is_reserved_env_name(name: str) -> bool:
+    return name in RESERVED_ENV_NAMES or name.startswith(RESERVED_ENV_PREFIXES)
+
+
+def is_skill_path(path: str) -> bool:
+    """Whether ``path`` says where a file is inside the folder of a skill: names of letters, digits,
+    dots, dashes and underscores, separated by ``/``, that never go up. Whatever is not one cannot
+    be carried to a container, so a folder with such a file is not a skill."""
+    return bool(_SKILL_PATH.fullmatch(path)) and not any(
+        part in {".", ".."} for part in path.split("/")
+    )
+
+
+def device_template_name(entry: str) -> str | None:
+    """The device parameter that a network entry refers to (``${device.host}`` is ``host``), or
+    nothing when it is a host."""
+    match = _DEVICE_TEMPLATE.fullmatch(entry)
+    return match.group(1) if match else None
 
 
 class SkillTarget(StrEnum):
@@ -176,12 +205,18 @@ class SkillPermissions(Contract):
         invalid = [name for name in names if not _SECRET_NAME.fullmatch(name)]
         if invalid:
             raise ValueError(f"invalid secret names {invalid}: use UPPER_SNAKE_CASE")
+        reserved = [name for name in names if is_reserved_env_name(name)]
+        if reserved:
+            raise ValueError(
+                f"secret names {reserved} are ones that the runner sets itself or that change how "
+                "a program starts: use another"
+            )
         return names
 
     def device_templates(self) -> frozenset[str]:
         """Names of the device parameters referenced by the network entries."""
-        matches = (_DEVICE_TEMPLATE.fullmatch(entry) for entry in self.network)
-        return frozenset(match.group(1) for match in matches if match)
+        names = (device_template_name(entry) for entry in self.network)
+        return frozenset(name for name in names if name is not None)
 
 
 class SkillManifest(Contract):
@@ -232,15 +267,13 @@ class SkillManifest(Contract):
     def _entrypoint_stays_inside_the_skill(cls, entrypoint: str | None) -> str | None:
         if entrypoint is None:
             return None
-        parts = entrypoint.replace("\\", "/").split("/")
-        if (
-            not entrypoint
-            or entrypoint.startswith(("/", "\\"))
-            or ":" in entrypoint
-            or ".." in parts
-            or "" in parts
-        ):
-            raise ValueError("entrypoint must be a relative path inside the skill folder")
+        if not is_skill_path(entrypoint):
+            raise ValueError(
+                "entrypoint must be a relative path inside the skill folder, of names made of "
+                "letters, digits, dots, dashes and underscores"
+            )
+        if not entrypoint.endswith(".py"):
+            raise ValueError("only Python scripts are run: entrypoint is a .py file")
         return entrypoint
 
     @model_validator(mode="after")

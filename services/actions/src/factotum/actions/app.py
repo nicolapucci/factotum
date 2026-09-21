@@ -1,16 +1,19 @@
-"""Putting the service together from its settings: the database, the gateway, the devices.
+"""Putting the service together from its settings: the database, the gateway, the devices, and
+what runs a skill and gives a device its commands.
 
-Everything that needs a running event loop (the connection pool, the client of the gateway, the work
-in the background) is made when the application starts and closed when it stops, in its lifespan.
+Everything that needs a running event loop (the connection pool, the clients of the other services,
+the work in the background) is made when the application starts and closed when it stops, in its
+lifespan.
 
-Until slice 5b nothing here runs a skill for real: the runner is the one that says what it would
-have run (``DryRunRunner``), commands do not reach a device (``NullDispatcher``) and there is nobody
-to ask for an approval (``NullApprover``). Everything else is real.
+What is not set is not there, and it is said when the service starts. Without a runner nothing is
+run: a skill answers with what it would have run (``DryRunRunner``). Without an edge commands do not
+reach a device (``NullDispatcher``). Without a file of secrets a skill that needs one does not run
+(``NoSecrets``). There is nobody to ask for an approval until the hub (``NullApprover``).
 """
 
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
@@ -20,18 +23,35 @@ from factotum.actions.audit import AuditReader
 from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import ConfirmationReader
 from factotum.actions.directory import DeviceDirectory, FileDeviceDirectory, load_directory
-from factotum.actions.execution import DryRunRunner
+from factotum.actions.edge_client import EdgeDispatcher
+from factotum.actions.execution import (
+    CommandDispatcher,
+    DryRunRunner,
+    NullDispatcher,
+    SkillRunner,
+)
 from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
+from factotum.actions.runner_client import RemoteRunner
+from factotum.actions.secrets import NoSecrets, SecretResolver, load_secrets
 from factotum.actions.service import ActionService
 from factotum.actions.settings import ActionsSettings
 from factotum.actions.store.postgres import PostgresStore, prepare
-from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
+from factotum.common.devauth import (
+    DEV_TENANT_ID,
+    DEV_USER_ID,
+    DevAuthenticator,
+    DevPrincipalDelegation,
+)
 from factotum.db.pool import Database
 from factotum.devices.home import Home
 from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder
 
 logger = logging.getLogger("factotum.actions")
+
+RUNNER_MARGIN_S = 5.0
+"""What the runner is waited for beyond the time the service gives a run in all: the
+service is the one that says a skill was too slow."""
 
 
 def _directory(settings: ActionsSettings) -> DeviceDirectory:
@@ -40,6 +60,15 @@ def _directory(settings: ActionsSettings) -> DeviceDirectory:
         return FileDeviceDirectory(settings, Home())
     return load_directory(
         settings.actions_devices_file, settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID
+    )
+
+
+def _secrets(settings: ActionsSettings) -> SecretResolver:
+    if settings.actions_secrets_file is None:
+        logger.warning("no file of secrets is set: a skill that needs a secret will not run")
+        return NoSecrets()
+    return load_secrets(
+        settings.actions_secrets_file, settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID
     )
 
 
@@ -52,7 +81,13 @@ def build_app(settings: ActionsSettings) -> FastAPI:
     """
     authenticator = DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     delegation = DevDelegation(settings)
+    principals = DevPrincipalDelegation(settings)
     directory = _directory(settings)
+    secrets = _secrets(settings)
+    if settings.actions_runner_url is None:
+        logger.warning("no runner is set: skills are not run, they answer with what they would run")
+    if settings.actions_edge_url is None:
+        logger.warning("no edge is set: the commands of skills do not reach a device")
     holder: dict[str, Database] = {}
     waits = (
         settings.actions_planner_timeout_s,
@@ -69,9 +104,39 @@ def build_app(settings: ActionsSettings) -> FastAPI:
         try:
             await prepare(database)
             store = PostgresStore(database)
-            async with httpx.AsyncClient(
-                base_url=str(settings.actions_gateway_url), timeout=model_timeout
-            ) as gateway:
+            async with AsyncExitStack() as clients:
+                gateway = await clients.enter_async_context(
+                    httpx.AsyncClient(
+                        base_url=str(settings.actions_gateway_url), timeout=model_timeout
+                    )
+                )
+                runner: SkillRunner = DryRunRunner()
+                if settings.actions_runner_url is not None:
+                    runner = RemoteRunner(
+                        await clients.enter_async_context(
+                            httpx.AsyncClient(base_url=str(settings.actions_runner_url))
+                        ),
+                        store=store,
+                        secrets=secrets,
+                        delegation=principals,
+                        margin_s=settings.actions_run_margin_s + RUNNER_MARGIN_S,
+                    )
+                dispatcher: CommandDispatcher = NullDispatcher()
+                if settings.actions_edge_url is not None:
+                    dispatcher = EdgeDispatcher(
+                        await clients.enter_async_context(
+                            httpx.AsyncClient(
+                                base_url=str(settings.actions_edge_url),
+                                timeout=httpx.Timeout(
+                                    connect=3.0,
+                                    read=settings.actions_edge_timeout_s,
+                                    write=10.0,
+                                    pool=5.0,
+                                ),
+                            )
+                        ),
+                        principals,
+                    )
                 chat = GatewayChat(gateway, delegation)
                 embedder = GatewayEmbedder(gateway, delegation)
                 index = SkillIndex(store, embedder, timeout_s=settings.actions_index_timeout_s)
@@ -92,7 +157,8 @@ def build_app(settings: ActionsSettings) -> FastAPI:
                         reader=ConfirmationReader(
                             chat, timeout_s=settings.actions_reader_timeout_s
                         ),
-                        runner=DryRunRunner(),
+                        runner=runner,
+                        dispatcher=dispatcher,
                         settings=settings.action,
                     ),
                     catalog=Catalog(

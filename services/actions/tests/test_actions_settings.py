@@ -37,6 +37,16 @@ class TestDefaults:
         assert settings.actions_skills_dir is None
         assert settings.actions_enable_skills_dir is False
 
+    def test_it_knows_no_runner_no_edge_and_no_secrets_and_so_runs_nothing(self) -> None:
+        settings = load()
+
+        assert settings.actions_runner_url is None
+        assert settings.actions_edge_url is None
+        assert settings.actions_secrets_file is None
+
+    def test_the_edge_is_waited_for_longer_than_it_waits_for_a_device(self) -> None:
+        assert load().actions_edge_timeout_s == 15.0
+
     def test_the_action_settings_are_the_ones_the_service_is_written_with(self) -> None:
         assert load().action == ActionSettings()
 
@@ -54,6 +64,10 @@ class TestReadingTheEnvironment:
         monkeypatch.setenv("FACTOTUM_ACTIONS_GATEWAY_URL", "http://model-gateway:8081")
         monkeypatch.setenv("FACTOTUM_ACTIONS_DEVICES_FILE", "/etc/factotum/devices.dev.yaml")
         monkeypatch.setenv("FACTOTUM_ACTIONS_SKILLS_DIR", "/skills")
+        monkeypatch.setenv("FACTOTUM_ACTIONS_RUNNER_URL", "http://runner:8086")
+        monkeypatch.setenv("FACTOTUM_ACTIONS_EDGE_URL", "http://edge:8084")
+        monkeypatch.setenv("FACTOTUM_ACTIONS_EDGE_TIMEOUT_S", "30")
+        monkeypatch.setenv("FACTOTUM_ACTIONS_SECRETS_FILE", "/etc/factotum/secrets.dev.yaml")
         monkeypatch.setenv("FACTOTUM_ACTIONS_MATCH_THRESHOLD", "0.6")
         monkeypatch.setenv("FACTOTUM_ACTIONS_CONFIRMATION_SECONDS", "30")
         monkeypatch.setenv("FACTOTUM_ACTIONS_APPROVAL_MINUTES", "5")
@@ -64,6 +78,10 @@ class TestReadingTheEnvironment:
         assert str(settings.actions_gateway_url) == "http://model-gateway:8081/"
         assert settings.actions_devices_file == Path("/etc/factotum/devices.dev.yaml")
         assert settings.actions_skills_dir == Path("/skills")
+        assert str(settings.actions_runner_url) == "http://runner:8086/"
+        assert str(settings.actions_edge_url) == "http://edge:8084/"
+        assert settings.actions_edge_timeout_s == 30.0
+        assert settings.actions_secrets_file == Path("/etc/factotum/secrets.dev.yaml")
         assert settings.actions_match_threshold == 0.6
         assert settings.action.confirmation_ttl == timedelta(seconds=30)
         assert settings.action.approval_ttl == timedelta(minutes=5)
@@ -109,6 +127,10 @@ class TestWhatIsRefused:
             {"actions_approval_wait_s": -1},
             {"actions_approval_minutes": 0},
             {"actions_run_margin_s": 61},
+            {"actions_edge_timeout_s": 0},
+            {"actions_edge_timeout_s": 601},
+            {"actions_runner_url": "not a url"},
+            {"actions_edge_url": "ftp://edge"},
             {"actions_max_devices_shown": 0},
         ],
     )

@@ -230,6 +230,25 @@ class TestAFolder:
         with pytest.raises(SkillInvalidError, match=f"at most {MAX_FILES} files"):
             read_skill_folder(folder, where="lamp")
 
+    @pytest.mark.parametrize("name", ["my run.py", "données.json", "a;b.txt", "$x.py"])
+    def test_a_file_with_a_name_a_container_cannot_be_given_is_refused(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        folder = write(tmp_path / "lamp", PLAIN)
+        (folder / name).write_text("x", encoding="utf-8")
+
+        with pytest.raises(SkillInvalidError, match="a script cannot be run with it"):
+            read_skill_folder(folder, where="lamp")
+
+    def test_a_file_in_a_folder_of_the_skill_may_have_any_of_the_allowed_characters(
+        self, tmp_path: Path
+    ) -> None:
+        folder = write(tmp_path / "lamp", PLAIN)
+        (folder / "lib-1").mkdir()
+        (folder / "lib-1" / "helper_2.v3.py").write_text("x", encoding="utf-8")
+
+        assert set(read_skill_folder(folder, where="lamp").files) == {"lib-1/helper_2.v3.py"}
+
     def test_a_skill_file_that_is_not_text_is_refused(self, tmp_path: Path) -> None:
         folder = tmp_path / "lamp"
         folder.mkdir()

@@ -124,7 +124,7 @@ class BindingNotFoundError(FactotumError):
 
 
 class SecretNotFoundError(FactotumError):
-    """A binding refers to a secret that is not available. The message names the reference, never
+    """A binding or a skill refers to a secret that is not available. The message names it, never
     a value."""
 
     code = "secret_not_found"

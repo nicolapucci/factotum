@@ -14,8 +14,10 @@ from factotum.contracts.runner import (
     Job,
     JobFile,
     JobResult,
-    is_reserved_env_name,
+    RunResult,
+    SkillOutput,
 )
+from factotum.contracts.skills import is_reserved_env_name
 
 
 def job(**changes: Any) -> Job:
@@ -230,3 +232,42 @@ class TestWhatItDid:
     def test_it_cannot_take_no_time_at_all_backwards(self) -> None:
         with pytest.raises(ValidationError):
             JobResult(duration_ms=-1)
+
+
+class TestWhatAScriptPrints:
+    def test_a_message_data_and_commands_are_what_it_says(self) -> None:
+        output = SkillOutput.model_validate(
+            {
+                "message": "Volume is 40.",
+                "data": {"level": 40},
+                "commands": [{"name": "set_volume", "level": 40}],
+            }
+        )
+
+        assert output.message == "Volume is 40."
+        assert output.data == {"level": 40}
+        assert [command.name for command in output.commands] == ["set_volume"]
+
+    def test_it_may_say_nothing_at_all(self) -> None:
+        output = SkillOutput.model_validate({})
+
+        assert (output.message, output.data, output.commands) == (None, {}, ())
+
+    @pytest.mark.parametrize(
+        "printed",
+        [
+            {"messsage": "typo"},
+            {"dry_run": True},
+            {"message": ""},
+            {"commands": [{"name": "open_the_pod_bay_doors"}]},
+            {"commands": [{"name": "stop"}] * 21},
+        ],
+        ids=["unknown", "dry-run", "empty", "no-such-command", "too-many"],
+    )
+    def test_what_the_platform_does_not_hear_is_refused(self, printed: dict[str, Any]) -> None:
+        with pytest.raises(ValidationError):
+            SkillOutput.model_validate(printed)
+
+    def test_a_result_is_an_output_that_can_also_say_nothing_was_run(self) -> None:
+        assert RunResult.model_validate({"dry_run": True}).dry_run
+        assert not RunResult.model_validate({}).dry_run

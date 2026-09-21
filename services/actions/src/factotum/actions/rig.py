@@ -7,7 +7,7 @@ from typing import Any
 
 from factotum.actions.confirmations import ConfirmationReader
 from factotum.actions.directory import DeviceDirectory, FileDeviceDirectory
-from factotum.actions.execution import SkillRunner
+from factotum.actions.execution import CommandDispatcher, SkillRunner
 from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
 from factotum.actions.service import ActionService, ActionSettings
@@ -193,6 +193,7 @@ class ActionsRig:
         self.runner = FakeRunner()
         self._runner: SkillRunner = runner or self.runner
         self.dispatcher = FakeDispatcher()
+        self._dispatcher: CommandDispatcher = self.dispatcher
         self.approver = FakeApprover()
         self.clock = Clock(tick=timedelta(milliseconds=1))
         self._settings = settings
@@ -209,7 +210,7 @@ class ActionsRig:
             planner=Planner(self._chat, timeout_s=self._wait(10.0)),
             reader=ConfirmationReader(self._chat, timeout_s=self._wait(6.0)),
             runner=self._runner,
-            dispatcher=self.dispatcher,
+            dispatcher=self._dispatcher,
             approver=self.approver,
             settings=self._settings,
             now=self.clock,
@@ -219,6 +220,15 @@ class ActionsRig:
         """Go on with the same store, models and clock but another knowledge of the devices: the
         home has changed since something was asked."""
         self.directory = directory
+        self.service = self._service()
+
+    def use_runner(self, runner: SkillRunner, dispatcher: CommandDispatcher | None = None) -> None:
+        """Go on with the same store, models and clock but another runner (and, when one is given,
+        another way to reach the devices): the ones that run skills for real, in place of the
+        doubles."""
+        self._runner = runner
+        if dispatcher is not None:
+            self._dispatcher = dispatcher
         self.service = self._service()
 
     def device(self, name: str) -> SystemDeviceRecord:

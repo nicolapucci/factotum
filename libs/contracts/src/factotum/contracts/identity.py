@@ -75,6 +75,12 @@ class Principal(Contract):
             raise ValueError("a user subject needs at least one role")
         return self
 
+    @classmethod
+    def of_tenant(cls, tenant_id: TenantId) -> Self:
+        """The tenant acting as itself: a service that acts for the household, not for a person or
+        for the device that spoke (the actions service, when it has a device do something)."""
+        return cls(tenant_id=tenant_id, acts_as=Subject.tenant(tenant_id))
+
 
 class OwnerKind(StrEnum):
     USER = "user"

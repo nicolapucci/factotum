@@ -2,8 +2,8 @@
 
 The database is the one of ``DatabaseSettings`` (``FACTOTUM_POSTGRES_*``, the names compose uses to
 create it). Nothing here names a model, a provider or a key: the small model that reads a message is
-asked for through the gateway, in the role it has there (``chat.fast``), and whatever a skill needs
-in order to run is the runner's (slice 5b).
+asked for through the gateway, in the role it has there (``chat.fast``), and what runs a script is
+the runner, which is told where the script may go and given the secrets it was granted.
 """
 
 from datetime import timedelta
@@ -26,6 +26,23 @@ class ActionsSettings(DatabaseSettings):
 
     actions_gateway_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8081")
     """Where the model gateway is: it is asked to read every message and to embed every skill."""
+
+    actions_runner_url: AnyHttpUrl | None = None
+    """Where the runner is, which runs the scripts of skills in a container each. Without one
+    nothing is run: a skill that is asked for answers with what it would have run (a dry run)."""
+
+    actions_edge_url: AnyHttpUrl | None = None
+    """Where the edge is, through which what a skill answers with reaches a device. Without one
+    commands do not reach a device: they are not done, and the person is told so."""
+
+    actions_edge_timeout_s: float = Field(default=15.0, gt=0, le=600)
+    """How long the edge is waited for to say what became of a command. It waits for the device
+    itself, for a time of its own (``FACTOTUM_EDGE_COMMAND_TIMEOUT_S``): this is longer."""
+
+    actions_secrets_file: Path | None = None
+    """The secrets that skills are given (development only, until the hub keeps them): a file of
+    ``tenant`` and ``user`` secrets, by name. A file that is named and is not there stops the
+    service; without one a skill that needs a secret does not run."""
 
     actions_devices_file: Path | None = None
     """The devices, and which of them each skill drives (development only, until the hub registers

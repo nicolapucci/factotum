@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from factotum.contracts.actions import MAX_SKILL_SOURCE_CHARS, SkillLoadProblem
 from factotum.contracts.errors import SkillInvalidError
-from factotum.contracts.skills import SkillManifest
+from factotum.contracts.skills import SkillManifest, is_skill_path
 
 SKILL_FILE = "SKILL.md"
 
@@ -158,6 +158,11 @@ def _files_of(folder: Path, where: str) -> dict[str, bytes]:
             continue
         if path.is_symlink() or not path.is_file() or relative.as_posix() == SKILL_FILE:
             continue  # a link could point out of the folder
+        if not is_skill_path(relative.as_posix()):
+            raise SkillInvalidError(
+                f"{where}: the name of {relative.as_posix()!r} has more than letters, digits, "
+                "dots, dashes and underscores: a script cannot be run with it"
+            )
         size = path.stat().st_size
         if size > MAX_FILE_BYTES:
             raise SkillInvalidError(

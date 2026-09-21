@@ -24,7 +24,14 @@ from factotum.contracts.base import Contract
 from factotum.contracts.commands import DeviceCommand
 from factotum.contracts.identity import Owner
 from factotum.contracts.ids import SkillId, TenantId
-from factotum.contracts.skills import HOST_PATTERN, ParamValue, SkillMode, SkillPermissions
+from factotum.contracts.skills import (
+    HOST_PATTERN,
+    ParamValue,
+    SkillMode,
+    SkillPermissions,
+    is_reserved_env_name,
+    is_skill_path,
+)
 
 MAX_COMMANDS_PER_RUN = 20
 
@@ -39,19 +46,7 @@ MAX_JOB_HOSTS = 20
 MAX_OUTPUT_CHARS = 65_536
 """The most a job may write to each of its two outputs."""
 
-_PATH = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
-RESERVED_ENV_PREFIXES = ("PYTHON", "LD_", "FACTOTUM_")
-RESERVED_ENV_NAMES = frozenset(
-    {"PATH", "HOME", "USER", "HOSTNAME", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}
-    | {"ALL_PROXY", "SHELL", "PWD", "LANG"}
-)
-"""What the runner sets for a job itself, and what would change how a program is started: a secret
-cannot be called any of these."""
-
-
-def is_reserved_env_name(name: str) -> bool:
-    return name in RESERVED_ENV_NAMES or name.startswith(RESERVED_ENV_PREFIXES)
 
 
 class RunRequest(Contract):
@@ -76,7 +71,11 @@ class RunRequest(Contract):
     timeout_s: int = Field(ge=1, le=120)
 
 
-class RunResult(Contract):
+class SkillOutput(Contract):
+    """What a script prints, as one JSON document, when it is done. Nothing else is read from it:
+    a field that is not one of these is a script that says something the platform does not hear,
+    and it is told so."""
+
     message: str | None = Field(default=None, min_length=1, max_length=2000)
     """What to say about it. It is spoken as it is: it is not read by a model."""
 
@@ -86,8 +85,10 @@ class RunResult(Contract):
     commands: tuple[DeviceCommand, ...] = Field(default=(), max_length=MAX_COMMANDS_PER_RUN)
     """What the platform is to have a device do, once the checks are made."""
 
+
+class RunResult(SkillOutput):
     dry_run: bool = False
-    """Nothing was run: this says what would have been."""
+    """Nothing was run: this says what would have been. A script cannot say it."""
 
 
 # ---- what crosses to the runner service ---------------------------------------------------------
@@ -103,7 +104,7 @@ class JobFile(Contract):
     @field_validator("path")
     @classmethod
     def _is_a_path_inside_the_folder(cls, path: str) -> str:
-        if not _PATH.fullmatch(path) or any(part in {".", ".."} for part in path.split("/")):
+        if not is_skill_path(path):
             raise ValueError("a file is in the folder of the skill, and its path says where")
         return path
 

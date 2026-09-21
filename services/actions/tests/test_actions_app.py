@@ -3,6 +3,7 @@ real database and a gateway that answers, that it comes up, installs and enables
 message, asks for a confirmation that a later message answers, and keeps the trail of it."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +19,18 @@ from factotum.actions.testing import DIMENSIONS, embed_words
 from factotum.common.config import Environment
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, dev_headers
 from factotum.contracts.errors import AuthError
+from factotum.contracts.runner import JobResult
 from factotum.db.settings import DatabaseSettings
 from factotum.devices.home import parse_home
 
 GATEWAY = "http://gateway.test"
+RUNNER = "http://runner.test"
+EDGE = "http://edge.test"
+EXAMPLES = Path(__file__).resolve().parents[3] / "skills" / "examples"
+SECRETS = """\
+tenant:
+  HA_TOKEN: the-token-of-the-home
+"""
 
 WEATHER = """\
 ---
@@ -110,6 +119,67 @@ class TestStartingUp:
                     _env_file=None, environment=Environment.TEST, actions_devices_file=wrong
                 )
             )
+
+    def test_a_file_of_secrets_that_is_named_and_is_not_there_stops_it(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(FileNotFoundError):
+            build_app(
+                ActionsSettings(
+                    _env_file=None,
+                    environment=Environment.TEST,
+                    actions_secrets_file=tmp_path / "nowhere.yaml",
+                )
+            )
+
+    def test_a_file_that_is_not_one_of_secrets_stops_it_and_says_which_and_not_what(
+        self, tmp_path: Path
+    ) -> None:
+        wrong = tmp_path / "secrets.dev.yaml"
+        wrong.write_text("tenant:\n  HA_TOKEN: 424242\n", encoding="utf-8", newline="\n")
+
+        with pytest.raises(ValueError, match=r"secrets\.dev\.yaml") as raised:
+            build_app(
+                ActionsSettings(
+                    _env_file=None, environment=Environment.TEST, actions_secrets_file=wrong
+                )
+            )
+
+        assert "424242" not in str(raised.value)
+
+    def test_it_says_when_it_starts_what_is_not_there(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="factotum.actions")
+
+        build_app(ActionsSettings(_env_file=None, environment=Environment.TEST))
+
+        said = caplog.text
+        assert "no runner is set" in said
+        assert "no edge is set" in said
+        assert "no file of secrets is set" in said
+
+    def test_it_does_not_complain_of_what_is_there(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        secrets = tmp_path / "secrets.dev.yaml"
+        secrets.write_text(SECRETS, encoding="utf-8", newline="\n")
+        caplog.set_level(logging.WARNING, logger="factotum.actions")
+
+        build_app(
+            ActionsSettings(
+                _env_file=None,
+                environment=Environment.TEST,
+                actions_runner_url=AnyHttpUrl(RUNNER),
+                actions_edge_url=AnyHttpUrl(EDGE),
+                actions_secrets_file=secrets,
+            )
+        )
+
+        assert "no runner" not in caplog.text
+        assert "no edge" not in caplog.text
+        assert "no file of secrets" not in caplog.text
+        assert "the-token-of-the-home" not in caplog.text
 
     async def test_without_a_database_it_does_not_come_up(self) -> None:
         app = build_app(
@@ -239,3 +309,68 @@ class TestAgainstARealDatabase:
             assert (await http.delete(f"/v1/skills/{weather['id']}")).status_code == 204
             assert (await http.get(f"/v1/skills/{weather['id']}")).status_code == 404
             assert len((await http.get("/v1/audit")).json()["records"]) == len(trail)
+
+    @respx.mock
+    async def test_a_skill_with_a_script_is_run_by_the_runner_and_its_command_reaches_a_device(
+        self, database_settings: DatabaseSettings, tmp_path: Path
+    ) -> None:
+        model = Model()
+        respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
+        respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
+        printed = {
+            "message": "Volume set to 30.",
+            "commands": [{"name": "set_volume", "level": 30}],
+        }
+        job = JobResult(exit_code=0, stdout=json.dumps(printed))
+        runner = respx.post(f"{RUNNER}/v1/jobs").mock(
+            return_value=httpx.Response(200, json=json.loads(job.model_dump_json()))
+        )
+        edge = respx.post(url__regex=rf"{EDGE}/v1/devices/.+/commands").mock(
+            return_value=httpx.Response(200, json={"status": "ok"})
+        )
+        home = tmp_path / "devices.yaml"
+        home.write_text(HOME_TEXT, encoding="utf-8", newline="\n")
+        secrets = tmp_path / "secrets.dev.yaml"
+        secrets.write_text(SECRETS, encoding="utf-8", newline="\n")
+        parsed = parse_home(HOME_TEXT, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+        speaker = next(r for r, _ in parsed.system if r.name == "Kitchen speaker")
+        app = build_app(
+            settings_for(
+                database_settings,
+                actions_devices_file=home,
+                actions_secrets_file=secrets,
+                actions_skills_dir=EXAMPLES,
+                actions_enable_skills_dir=True,
+                actions_runner_url=AnyHttpUrl(RUNNER),
+                actions_edge_url=AnyHttpUrl(EDGE),
+            )
+        )
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://actions"
+            ) as http,
+        ):
+            reloaded = await http.post("/v1/skills/reload")
+            assert "volume@1" in reloaded.json()["enabled"]
+            model.plans.append(plan_of("volume", parameters={"level": 30}))
+
+            done = await http.post(
+                "/v1/act",
+                json={"message": "set the volume to 30"},
+                headers=dev_headers(principal_of_device(speaker)),
+            )
+
+        assert done.json()["status"] == "done"
+        assert done.json()["reply"] == "Volume set to 30."
+        assert runner.call_count == 1
+        sent = json.loads(runner.calls[0].request.content)
+        assert sent["label"] == "volume"
+        assert sent["entrypoint"] == "scripts/run.py"
+        assert [file["path"] for file in sent["files"]] == ["scripts/run.py"]
+        assert (sent["env"], sent["hosts"]) == ({}, [])
+        assert edge.call_count == 1
+        command = json.loads(edge.calls[0].request.content)
+        assert command == {"command": {"name": "set_volume", "level": 30}}
+        assert edge.calls[0].request.url.path == f"/v1/devices/{speaker.id}/commands"

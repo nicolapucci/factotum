@@ -15,6 +15,8 @@ from factotum.contracts.skills import (
     SkillMode,
     SkillPermissions,
     SkillTarget,
+    device_template_name,
+    is_skill_path,
 )
 
 LIGHTS: dict[str, Any] = {
@@ -108,9 +110,52 @@ class TestEntrypoint:
         with pytest.raises(ValidationError, match="entrypoint"):
             manifest(entrypoint=path)
 
-    @pytest.mark.parametrize("path", ["run.py", "scripts/run.py", "a/b/c.py"])
+    @pytest.mark.parametrize("path", ["run.py", "scripts/run.py", "a/b/c.py", "my-run_2.py"])
     def test_a_relative_path_is_accepted(self, path: str) -> None:
         assert manifest(entrypoint=path).entrypoint == path
+
+    @pytest.mark.parametrize("path", ["run.sh", "run", "run.py.txt", "scripts/run.js", "run.pyc"])
+    def test_only_python_scripts_are_run(self, path: str) -> None:
+        with pytest.raises(ValidationError, match="only Python scripts"):
+            manifest(entrypoint=path)
+
+    @pytest.mark.parametrize("path", ["my run.py", "scripts/runè.py", "run;ls.py", "$x.py"])
+    def test_a_name_that_cannot_be_carried_to_a_container_is_rejected(self, path: str) -> None:
+        with pytest.raises(ValidationError, match="letters, digits"):
+            manifest(entrypoint=path)
+
+
+class TestPathsInsideTheFolder:
+    @pytest.mark.parametrize("path", ["run.py", "a/b.txt", "data-1.json", "_x", "a.b.c", ".hidden"])
+    def test_names_of_letters_digits_dots_dashes_and_underscores_are_paths(self, path: str) -> None:
+        assert is_skill_path(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        ["", "/a", "a/", "a//b", "../a", "a/../b", "./a", "a/./b", "a b", "a\b", "a:b", "è"],
+    )
+    def test_anything_else_is_not(self, path: str) -> None:
+        assert not is_skill_path(path)
+
+
+class TestDeviceTemplates:
+    @pytest.mark.parametrize(
+        ("entry", "name"),
+        [("${device.host}", "host"), ("${device.entity_id}", "entity_id"), ("${device.a1}", "a1")],
+    )
+    def test_a_reference_says_which_device_parameter_it_means(self, entry: str, name: str) -> None:
+        assert device_template_name(entry) == name
+
+    @pytest.mark.parametrize(
+        "entry", ["example.org", "*.example.org", "192.168.1.5", "${host}", "${device.Host}", ""]
+    )
+    def test_a_host_is_no_reference(self, entry: str) -> None:
+        assert device_template_name(entry) is None
+
+    def test_the_permissions_list_the_ones_they_refer_to(self) -> None:
+        permissions = SkillPermissions(network=("${device.host}", "api.example.org", "${device.b}"))
+
+        assert permissions.device_templates() == {"host", "b"}
 
 
 class TestParameters:
@@ -206,6 +251,19 @@ class TestPermissions:
     def test_secret_names_are_upper_snake_case(self, name: str) -> None:
         with pytest.raises(ValidationError, match="invalid secret names"):
             SkillPermissions(secrets=(name,))
+
+    @pytest.mark.parametrize(
+        "name", ["PATH", "HTTPS_PROXY", "PYTHONPATH", "LD_PRELOAD", "FACTOTUM_RUNNER_KEY", "HOME"]
+    )
+    def test_a_secret_cannot_be_called_what_the_runner_sets_or_what_changes_how_it_starts(
+        self, name: str
+    ) -> None:
+        with pytest.raises(ValidationError, match="the runner sets itself"):
+            SkillPermissions(secrets=(name,))
+
+    @pytest.mark.parametrize("name", ["HA_TOKEN", "PYTH", "MY_PATH", "API_KEY_2", "LDAP_PASSWORD"])
+    def test_a_name_that_only_looks_like_a_reserved_one_is_fine(self, name: str) -> None:
+        assert SkillPermissions(secrets=(name,)).secrets == (name,)
 
     def test_device_templates_are_collected(self) -> None:
         permissions = SkillPermissions(network=("${device.host}", "api.example.org"))

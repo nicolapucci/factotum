@@ -78,6 +78,18 @@ class TestPrincipal:
         assert communal.acts_as.kind is SubjectKind.TENANT
         assert communal.acts_as.id == communal.tenant_id
 
+    def test_the_tenant_can_act_as_itself_without_a_device(self) -> None:
+        tenant_id = make_tenant_id()
+
+        principal = Principal.of_tenant(tenant_id)
+
+        assert principal.acts_as == Subject.tenant(tenant_id)
+        assert (principal.tenant_id, principal.device_id, principal.roles) == (
+            tenant_id,
+            None,
+            frozenset(),
+        )
+
     def test_a_principal_is_immutable(self) -> None:
         principal = make_user_principal()
 
