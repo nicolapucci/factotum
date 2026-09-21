@@ -113,6 +113,10 @@ class ActOutcome(Contract):
     audit_id: AuditId | None = None
     """The record this left in the audit trail, if it left one."""
 
+    degraded: bool = False
+    """Only for ``NO_ACTION``: the message could not be read (a model was away, or too slow), so it
+    is a question only because nothing could say that it was not a request. The turn says so."""
+
     @model_validator(mode="after")
     def _says_something_unless_there_was_nothing_to_do(self) -> Self:
         if self.status is ActStatus.NO_ACTION:
@@ -120,11 +124,18 @@ class ActOutcome(Contract):
                 raise ValueError("a message that is no action has no reply, code or skill")
         elif self.reply is None:
             raise ValueError("an action has something to say")
+        elif self.degraded:
+            raise ValueError("only a message that is no action can be one that was not read")
         return self
 
     @classmethod
     def no_action(cls) -> Self:
         return cls(status=ActStatus.NO_ACTION)
+
+    @classmethod
+    def not_read(cls) -> Self:
+        """No action, because the message could not be read."""
+        return cls(status=ActStatus.NO_ACTION, degraded=True)
 
     @property
     def handled(self) -> bool:

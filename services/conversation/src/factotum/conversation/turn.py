@@ -367,16 +367,19 @@ class TurnEngine:
         """What to say, when the message asks for something to be done; nothing when it does not,
         or when that could not be told (then a warning says so, and the message is answered as a
         question)."""
+        unavailable = TurnWarning(
+            code=WarningCode.ACTIONS_UNAVAILABLE,
+            message="it could not be told whether the message asks for something to be done: "
+            "it is answered as a question",
+        )
         try:
             async with asyncio.timeout(self._settings.actions_timeout_s):
                 outcome = await actions.act(principal, message)
         except (FactotumError, TimeoutError) as error:
             logger.warning("the actions could not be asked", extra={"reason": type(error).__name__})
-            return None, TurnWarning(
-                code=WarningCode.ACTIONS_UNAVAILABLE,
-                message="it could not be told whether the message asks for something to be done: "
-                "it is answered as a question",
-            )
+            return None, unavailable
+        if outcome.degraded:
+            return None, unavailable
         if not outcome.handled:
             return None, None
         logger.info(

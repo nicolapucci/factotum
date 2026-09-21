@@ -23,6 +23,7 @@ from factotum.contracts.devices import DevicePolicy, SystemDeviceRecord
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import (
     GatewayUnavailableError,
+    ProviderTimeoutError,
     RunnerUnavailableError,
     SkillRunError,
 )
@@ -92,8 +93,37 @@ class TestWhatIsNotAnAction:
 
         outcome = await rig.hear(KITCHEN, "turn on the living room lamp")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.not_read()
+        assert outcome.degraded
         assert rig.runner.requests == []
+
+    @pytest.mark.parametrize(
+        "what_the_model_does",
+        [ProviderTimeoutError("the model did not decide in time"), {"skill": 42, "nonsense": True}],
+        ids=["too-slow", "not-a-plan"],
+    )
+    async def test_so_is_one_that_took_too_long_or_was_answered_with_something_else(
+        self, what_the_model_does: dict[str, Any] | Exception
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(LAMP)
+        rig.plans(what_the_model_does)
+
+        outcome = await rig.hear(KITCHEN, "turn on the living room lamp")
+
+        assert outcome == ActOutcome.not_read()
+        assert rig.runner.requests == []
+
+    async def test_a_model_that_read_it_and_found_nothing_to_do_is_not_a_model_that_failed(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(LAMP)
+        rig.plans(plan_of(None, reason="a question"))
+
+        outcome = await rig.hear(KITCHEN, "turn on the living room lamp")
+
+        assert not outcome.degraded
 
     async def test_a_skill_the_model_made_up_is_not_run(self) -> None:
         rig = ActionsRig()

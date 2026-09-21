@@ -293,7 +293,7 @@ class ActionService:
             # A message that cannot be read as an action is answered as anything else is: nothing
             # runs on a guess, and a question is never held up by a model that is away.
             logger.warning("a message could not be planned", extra={"code": error.code})
-            return ActOutcome.no_action()
+            return ActOutcome.not_read()
 
         understanding = understand(plan, candidates.found, here=here, systems=systems, bound=bound)
         if isinstance(understanding, NothingToDo):

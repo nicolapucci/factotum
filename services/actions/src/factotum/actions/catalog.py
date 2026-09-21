@@ -12,7 +12,6 @@ managed by the tenant's administrators.
 """
 
 import asyncio
-import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,8 +33,6 @@ from factotum.contracts.actions import (
 from factotum.contracts.errors import ConflictError, PolicyViolationError, SkillNotFoundError
 from factotum.contracts.identity import Owner, OwnerKind, Principal, Role, Subject, SubjectKind
 from factotum.contracts.ids import SkillId, UserId
-
-logger = logging.getLogger("factotum.actions")
 
 NOT_THERE = "there is no such skill"
 

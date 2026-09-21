@@ -141,6 +141,7 @@ class TestActing:
             "skill": None,
             "reasons": [],
             "audit_id": None,
+            "degraded": False,
         }
 
     async def test_a_message_that_untrusted_content_is_in_is_carried_to_the_decision(self) -> None:

@@ -64,6 +64,25 @@ class TestWhatAMessageCameTo:
             False,
         )
 
+    def test_a_message_that_could_not_be_read_is_no_action_and_says_so(self) -> None:
+        outcome = ActOutcome.not_read()
+
+        assert (outcome.status, outcome.handled, outcome.degraded) == (
+            ActStatus.NO_ACTION,
+            False,
+            True,
+        )
+        assert ActOutcome.no_action().degraded is False
+
+    @pytest.mark.parametrize(
+        "status", [status for status in ActStatus if status is not ActStatus.NO_ACTION]
+    )
+    def test_only_a_message_that_is_no_action_can_be_one_that_was_not_read(
+        self, status: ActStatus
+    ) -> None:
+        with pytest.raises(ValidationError, match="only a message that is no action"):
+            ActOutcome(status=status, reply="Okay.", degraded=True)
+
     @pytest.mark.parametrize(
         "status", [status for status in ActStatus if status is not ActStatus.NO_ACTION]
     )

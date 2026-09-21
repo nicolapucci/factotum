@@ -284,6 +284,25 @@ class TestWhenTheActionsServiceCannotBeAsked:
         assert phases(events) == [Phase.UNDERSTANDING, Phase.SEARCHING, Phase.ANSWERING]
         assert isinstance(events[-1], Finished)
 
+    async def test_a_message_that_the_service_could_not_read_is_the_same(self) -> None:
+        harness = Harness(actions=True)
+        harness.actions.outcomes.append(ActOutcome.not_read())
+        harness.documents.passages = [passage("Hold the button.")]
+        harness.chat.answers.append(["Hold it [1]."])
+
+        events = await harness.turn(alice(), LAMP)
+
+        assert warnings(events) == [WarningCode.ACTIONS_UNAVAILABLE]
+        assert said(events) == "Hold it [1]."
+        assert phases(events) == [Phase.UNDERSTANDING, Phase.SEARCHING, Phase.ANSWERING]
+
+    async def test_a_message_that_was_read_and_is_a_question_has_no_warning(self) -> None:
+        harness = Harness(actions=True)
+
+        events = await harness.turn(alice(), "how do I reset the router?")
+
+        assert warnings(events) == []
+
     async def test_a_warning_comes_before_what_the_answer_goes_on_with(self) -> None:
         harness = Harness(actions=True)
         harness.actions.outcomes.append(ActionsUnavailableError("gone"))

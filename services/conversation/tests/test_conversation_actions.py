@@ -50,6 +50,16 @@ class TestAsking:
         assert not result.handled
 
     @respx.mock
+    async def test_a_message_that_could_not_be_read_comes_back_as_one(
+        self, actions: ActionsClient
+    ) -> None:
+        respx.post(f"{URL}/v1/act").respond(200, json=ActOutcome.not_read().model_dump(mode="json"))
+
+        result = await actions.act(make_user_principal(tenant_id=TENANT), "turn on the lamp")
+
+        assert (result.handled, result.degraded) == (False, True)
+
+    @respx.mock
     async def test_what_is_refused_comes_back_with_why(self, actions: ActionsClient) -> None:
         outcome = ActOutcome(status=ActStatus.REFUSED, reply="Not from here.", code=ActCode.DENIED)
         respx.post(f"{URL}/v1/act").respond(200, json=outcome.model_dump(mode="json"))
