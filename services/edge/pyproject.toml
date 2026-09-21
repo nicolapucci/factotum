@@ -1,0 +1,30 @@
+[project]
+name = "factotum-edge"
+version = "0.0.0"
+description = "The Factotum edge: the WebSocket API of system devices. Authentication, sessions, a versioned protocol, answers adapted to what a device can do, and commands with an acknowledgement."
+requires-python = ">=3.13"
+dependencies = [
+  "factotum-contracts",
+  "factotum-common",
+  "factotum-devices",
+  "factotum-web",
+  "fastapi>=0.115",
+  "httpx>=0.28",
+  "pydantic>=2.11",
+  "pyyaml>=6.0",
+  "uvicorn>=0.32",
+  "websockets>=15",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/factotum"]
+
+[tool.uv.sources]
+factotum-contracts = { workspace = true }
+factotum-common = { workspace = true }
+factotum-devices = { workspace = true }
+factotum-web = { workspace = true }

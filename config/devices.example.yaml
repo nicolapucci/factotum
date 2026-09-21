@@ -1,0 +1,58 @@
+# The devices that may connect to the edge, for development, until the hub pairs and registers them.
+#
+# Copy this file to config/devices.dev.yaml (git ignores it), adjust it, and point the edge at it with
+# FACTOTUM_EDGE_DEVICES_FILE=config/devices.dev.yaml. Each entry says what a device is registered for:
+#
+#   name          what people call it
+#   hardware_id   a stable label for the physical unit
+#   token         the credential the device presents (a placeholder here: the hub issues real ones,
+#                 and keeps only a hash of them)
+#   owner         `tenant`: a shared device, which anybody may speak to. It acts for the tenant, has no
+#                 chat of its own and sees only the last minute of what was said on it (ADR 0012).
+#                 `user`: a personal device of the development user, which acts for them.
+#   capabilities  what it is registered to do: audio_in (a microphone: it can start a conversation),
+#                 audio_out, display, media_player, buttons, led, sensors. A device may declare less
+#                 than this when it connects, never more.
+#   display       its screen, for a device that has one
+#
+# The terminal client (`factotum-terminal --profile <name>`) has a profile for each of these.
+
+devices:
+  # A speaker that anybody may speak to: answers are spoken, and it can start a conversation.
+  - name: Kitchen speaker
+    hardware_id: kitchen-01
+    token: kitchen-dev-token
+    owner: tenant
+    capabilities: [audio_in, audio_out, led]
+
+  # A display with a speaker and a microphone: answers are spoken and shown, with their sources.
+  - name: Living room display
+    hardware_id: living-room-01
+    token: living-room-dev-token
+    owner: tenant
+    capabilities: [audio_in, audio_out, display, led]
+    display: {width: 800, height: 480, touch: true}
+
+  # A wall screen with no microphone and no speaker: it cannot start a conversation, and it shows
+  # what it is sent.
+  - name: Hallway screen
+    hardware_id: hallway-01
+    token: hallway-dev-token
+    owner: tenant
+    capabilities: [display]
+    display: {width: 1024, height: 600}
+
+  # A streamer with no microphone: it plays what it is told to, and can be spoken through.
+  - name: Study player
+    hardware_id: study-01
+    token: study-dev-token
+    owner: tenant
+    capabilities: [audio_out, media_player]
+
+  # A personal device: it acts for the development user, with the whole of their history.
+  - name: My phone
+    hardware_id: phone-01
+    token: phone-dev-token
+    owner: user
+    capabilities: [audio_in, audio_out, display]
+    display: {width: 390, height: 844, touch: true}

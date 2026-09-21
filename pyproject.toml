@@ -11,7 +11,7 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["libs/*", "services/*"]
+members = ["libs/*", "services/*", "clients/*"]
 
 [tool.ruff]
 line-length = 100
@@ -26,6 +26,8 @@ src = [
   "services/model_gateway/src",
   "services/knowledge/src",
   "services/conversation/src",
+  "services/edge/src",
+  "clients/terminal/src",
 ]
 
 [tool.ruff.lint]
@@ -67,10 +69,12 @@ mypy_path = [
   "services/model_gateway/src",
   "services/knowledge/src",
   "services/conversation/src",
+  "services/edge/src",
+  "clients/terminal/src",
 ]
 explicit_package_bases = true
 namespace_packages = true
-files = ["libs", "services"]
+files = ["libs", "services", "clients"]
 
 [[tool.mypy.overrides]]
 module = ["langdetect", "langdetect.*", "reportlab", "reportlab.*"]
@@ -83,7 +87,7 @@ warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-testpaths = ["libs", "services"]
+testpaths = ["libs", "services", "clients"]
 # Unit tests must never reach the network: only loopback connections are allowed.
 addopts = "-ra --strict-markers --strict-config --import-mode=importlib --allow-hosts=127.0.0.1,::1"
 asyncio_mode = "auto"
@@ -106,6 +110,8 @@ source = [
   "services/model_gateway/src",
   "services/knowledge/src",
   "services/conversation/src",
+  "services/edge/src",
+  "clients/terminal/src",
 ]
 
 [tool.coverage.report]
