@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Lifespan, Message, Receive, Scope, Send
 
 from factotum.contracts.errors import (
+    ActionsUnavailableError,
     AuthError,
     BindingNotFoundError,
     ChatNotConfiguredError,
@@ -45,7 +46,11 @@ from factotum.contracts.errors import (
     ProviderTimeoutError,
     RateLimitedError,
     RoleNotSupportedError,
+    RunnerUnavailableError,
     SecretNotFoundError,
+    SkillInvalidError,
+    SkillNotFoundError,
+    SkillRunError,
     UnsupportedDocumentError,
     UrlNotAllowedError,
 )
@@ -63,6 +68,7 @@ _STATUS: dict[type, int] = {
     CollectionNotFoundError: 404,
     DocumentNotFoundError: 404,
     ConversationNotFoundError: 404,
+    SkillNotFoundError: 404,
     ConflictError: 409,
     EmbeddingNotConfiguredError: 409,
     ChatNotConfiguredError: 409,
@@ -72,6 +78,10 @@ _STATUS: dict[type, int] = {
     GatewayUnavailableError: 503,
     KnowledgeUnavailableError: 503,
     ConversationUnavailableError: 503,
+    ActionsUnavailableError: 503,
+    RunnerUnavailableError: 503,
+    SkillRunError: 502,
+    SkillInvalidError: 422,
     ContextTooLongError: 413,
     InvalidSchemaError: 422,
     InvalidRequestError: 422,

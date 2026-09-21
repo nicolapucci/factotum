@@ -137,6 +137,7 @@ _STATES = {
     Phase.UNDERSTANDING: StatusState.THINKING,
     Phase.RECALLING: StatusState.THINKING,
     Phase.SEARCHING: StatusState.SEARCHING,
+    Phase.ACTING: StatusState.ACTING,
 }
 
 _APOLOGIES = {

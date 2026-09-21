@@ -231,6 +231,38 @@ class DeviceNotFoundError(NotFoundError):
     code = "device_not_found"
 
 
+class SkillInvalidError(FactotumError):
+    """A skill that cannot be installed: its ``SKILL.md`` is not one, or what it declares is not
+    valid. The message says where and why, never what was written."""
+
+    code = "skill_invalid"
+
+
+class SkillNotFoundError(NotFoundError):
+    """A skill that is not installed, or that the caller may not see."""
+
+    code = "skill_not_found"
+
+
+class ActionsUnavailableError(FactotumError):
+    """The actions service could not be reached, or did not answer with an outcome."""
+
+    code = "actions_unavailable"
+    retryable: ClassVar[bool] = True
+
+
+class SkillRunError(FactotumError):
+    """A skill was run and did not work: its script failed, or took too long."""
+
+    code = "skill_run_error"
+
+
+class RunnerUnavailableError(SkillRunError):
+    """Nothing can run skills right now."""
+
+    code = "runner_unavailable"
+
+
 class ProtocolError(FactotumError):
     """A device sent something the protocol between devices and the edge does not allow."""
 

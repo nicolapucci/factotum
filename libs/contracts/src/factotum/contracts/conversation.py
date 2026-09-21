@@ -71,6 +71,9 @@ class Phase(StrEnum):
     SEARCHING = "searching"
     """Searching the documents."""
 
+    ACTING = "acting"
+    """The message asks for something to be done, and it is being decided or done."""
+
     ANSWERING = "answering"
 
 
@@ -83,6 +86,10 @@ class WarningCode(StrEnum):
 
     REFERENCE_UNAVAILABLE = "reference_unavailable"
     """It could not be told whether the message refers to an earlier exchange: none is in it."""
+
+    ACTIONS_UNAVAILABLE = "actions_unavailable"
+    """It could not be told whether the message asks for something to be done: it is answered as
+    a question."""
 
 
 class Citation(Contract):

@@ -336,6 +336,20 @@ class TestAsTheAnswerIsWritten:
             StatusPart(state=StatusState.SEARCHING),
         ]
 
+    def test_acting_is_a_hint_of_its_own(self) -> None:
+        parts = parts_of(
+            BUTTON,
+            Status(phase=Phase.UNDERSTANDING),
+            Status(phase=Phase.ACTING),
+            Status(phase=Phase.ACTING),
+            Status(phase=Phase.ANSWERING),
+        )
+
+        assert parts == [
+            StatusPart(state=StatusState.THINKING),
+            StatusPart(state=StatusState.ACTING),
+        ]
+
     def test_sources_are_a_card_only_for_a_screen_and_only_when_there_are_some(self) -> None:
         assert [type(p) for p in TurnParts(SCREEN).feed(sources(1))] == [CardPart]
         assert TurnParts(SCREEN).feed(Cited(citations=())) == []
