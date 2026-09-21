@@ -1,11 +1,11 @@
 # Factotum: design (v1)
 
-Status: **Slices 0 to 3 are implemented**: the foundations and shared contracts, the
-`model-gateway`, `knowledge` and `conversation` services. The other services are not started yet.
-Sections say whether something is *implemented* or *planned*. The reasons behind the biggest
-decisions live in [`decisions/`](decisions/README.md); the services have their own documents,
-[`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md) and
-[`conversation.md`](conversation.md).
+Status: **Slices 0 to 4 are implemented**: the foundations and shared contracts, the
+`model-gateway`, `knowledge`, `conversation` and `edge` services, and a terminal client that is a
+device. The other services are not started yet. Sections say whether something is *implemented* or
+*planned*. The reasons behind the biggest decisions live in [`decisions/`](decisions/README.md); the
+services have their own documents, [`model-gateway.md`](model-gateway.md),
+[`knowledge.md`](knowledge.md), [`conversation.md`](conversation.md) and [`edge.md`](edge.md).
 
 ## 1. What Factotum is
 
@@ -57,7 +57,7 @@ flowchart TD
 
 | Service | Responsibility | What it does not know |
 | --- | --- | --- |
-| `edge` | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement; later the voice pipeline | documents, models |
+| `edge` (*implemented* for text) | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement; later the voice pipeline | documents, models |
 | `conversation` (*implemented* for text) | One conversation turn: retrieval from `knowledge` (and later the web) with timeouts and partial degradation, context budgeting, streamed answers with citations, and no history unless the message refers to it, when what was said is looked up in a log; later routing with structured output and the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
 | `knowledge` (*implemented*) | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
 | `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
@@ -147,6 +147,19 @@ never code.
 The conversation service answers with typed **response parts** (`speech`, `text`, `card`, `media`,
 `command`, `status`), each declaring the capability needed to render it, so the edge can adapt one
 answer to a voice-only speaker or a screen without a microphone.
+
+The **edge** (*implemented* for text, in `services/edge`) is where system devices connect, over a
+WebSocket with a small versioned protocol (version 1: [`edge.md`](edge.md); the reasons in
+[ADR 0013](decisions/0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md)). A device
+says who it is and what it can do, and is told whether it is known. What a person said goes to the
+conversation service, acting for whom the device acts for; the answer streams back and the edge cuts
+it into sentences as they arrive and sends each as what the device can render (spoken by a speaker,
+shown, with its sources, by a screen), so the first sound is heard after the first sentence. A
+connection answers one utterance at a time and speaking over an answer interrupts it; the last
+connection of a device wins. Commands go over the same connection and come back with a result
+(`ok`, `failed`, `unsupported`, `timeout`, `offline`); inside the platform a connected device is a
+`SystemDevice`. Until the hub exists devices are registered in a YAML file and the edge only runs in
+development. `factotum-terminal` is a device in a terminal, with a profile for each kind of device.
 
 **External devices** (lights, a TV...) are registered by hand and have no built-in methods:
 everything they can do is supplied by skills the user explicitly binds to them. A **binding**
@@ -276,11 +289,11 @@ it. Not there yet: the web, actions and routing between an answer and an action,
 
 ## 10. Deployment
 
-- **Compose** (*implemented for Postgres and the three services*): pinned
+- **Compose** (*implemented for Postgres and the four services*): pinned
   images, no default database password, ports published on loopback only. The service images are
   built from the repository root, run as a non-root user, and start only with `--profile services`;
-  the knowledge service waits for the database and finds the gateway by its name, and only the
-  gateway gets provider keys. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set
+  the knowledge service waits for the database and finds the gateway by its name, the edge waits for
+  the conversation service and has no database, and only the gateway gets provider keys. `FACTOTUM_ENVIRONMENT` defaults to `production`, so forgetting to set
   it disables developer conveniences instead of enabling them.
 - `FACTOTUM_TENANT_MODE`: `single_tenant` (on-premise: one tenant and its admin created at first
   start) or `multi_tenant` (cloud). The code paths are the same: `tenant_id` always comes from the
@@ -311,7 +324,7 @@ it. Not there yet: the web, actions and routing between an answer and an action,
 | 1 | `model-gateway`: five adapters, structured output, streaming, retries, HTTP API, container image | done |
 | 2 | `knowledge`: five formats, hybrid search, re-indexing, HTTP API, container image | done |
 | 3 | `conversation` (text): a turn with no history, a log searched when a message refers to it, streamed answers with citations, container image | done |
-| 4 | `edge` and a terminal client with device profiles | |
+| 4 | `edge` and a terminal client with device profiles: protocol v1 over a WebSocket, answers by sentences and by what a device can render, interruption, commands with an acknowledgement, container image | done |
 | 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner) | |
 | 5b | `runner` and device command dispatch | |
 | 6 | Instructions-mode skills | |

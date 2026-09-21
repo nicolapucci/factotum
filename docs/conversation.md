@@ -7,8 +7,10 @@ provider, or which key: it asks the gateway for the chat and the embeddings of t
 message (ADR 0008).
 
 *Implemented* (text): streamed answers with citations, conversations saved and searched when a
-message refers to them, an HTTP API with server-sent events, and a container image. *Not yet*: the
-web, actions and the choice between answering and acting (slices 5a and 6), voice (slice 8).
+message refers to them, an HTTP API with server-sent events, and a container image. Devices reach it
+through [the edge](edge.md), which asks it for a turn on behalf of the device and cuts what it
+streams into what each device can render; the service itself knows no device. *Not yet*: the web,
+actions and the choice between answering and acting (slices 5a and 6), voice (slice 8).
 
 The reasons behind the design are in
 [ADR 0012](decisions/0012-conversation-no-history-in-a-turn-a-log-to-search-when-referred-to.md).
@@ -224,6 +226,11 @@ So for a shared device:
 
 A shared device is never a way to read or delete what the household said: administration does not go
 through a device (ADR 0004).
+
+The edge is what makes a turn "on a device": it asks for the turn acting for whom the device is
+registered to act for (the tenant, for a shared device; a user, for a personal one) and with the id
+of the device, which is what scopes a conversation to it. In development it says so with the same
+headers a person with `curl` would use, and the hub will replace them with what it issues.
 
 ## What goes wrong
 

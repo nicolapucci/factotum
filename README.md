@@ -3,14 +3,15 @@
 A self-hosted voice assistant that answers from **your own documents** and from the **web**, performs
 **actions** on your devices, and runs on **the models you choose**.
 
-> Status: foundations (Slice 0), the model gateway (Slice 1), the knowledge service (Slice 2) and
-> the conversation service (Slice 3) are done. The gateway talks to OpenAI, Anthropic, Gemini,
-> Ollama and any OpenAI-compatible server behind one API; the knowledge service reads your
-> documents (text, Markdown, HTML, PDF, Word) and answers with the passages that answer a
-> question, by meaning and by words; the conversation service answers a message from them,
-> streamed, without carrying the conversation along: what was said is looked up only when a
-> message refers to it. The other services are not built yet. See the roadmap in
-> [`docs/design.md`](docs/design.md).
+> Status: foundations (Slice 0), the model gateway (Slice 1), the knowledge service (Slice 2), the
+> conversation service (Slice 3) and the edge with a terminal client (Slice 4) are done. The gateway
+> talks to OpenAI, Anthropic, Gemini, Ollama and any OpenAI-compatible server behind one API; the
+> knowledge service reads your documents (text, Markdown, HTML, PDF, Word) and answers with the
+> passages that answer a question, by meaning and by words; the conversation service answers a
+> message from them, streamed, without carrying the conversation along: what was said is looked up
+> only when a message refers to it; the edge is where devices connect over a WebSocket, and hands
+> each the answer in the pieces it can render, a sentence at a time. The other services are not
+> built yet. See the roadmap in [`docs/design.md`](docs/design.md).
 
 ## Principles
 
@@ -35,6 +36,7 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 | [`docs/model-gateway.md`](docs/model-gateway.md) | The model gateway: bindings, providers, structured output, streaming, API |
 | [`docs/knowledge.md`](docs/knowledge.md) | The knowledge service: from a file to a passage, hybrid search, ownership, API, what was measured |
 | [`docs/conversation.md`](docs/conversation.md) | The conversation service: a turn with no history, the log searched when a message refers to it, API, what was measured |
+| [`docs/edge.md`](docs/edge.md) | The edge: the protocol of the devices, what each is sent, commands, the terminal client, API, what was measured |
 | [`docs/decisions/`](docs/decisions/README.md) | Why the big decisions were taken |
 | [`docs/development.md`](docs/development.md) | Setup, the checks, layout, conventions |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreements for AI-assisted sessions |

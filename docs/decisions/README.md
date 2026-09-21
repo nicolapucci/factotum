@@ -18,3 +18,4 @@ the old one instead of rewriting history.
 | [0010](0010-where-data-goes-is-the-users-choice-of-deployment-and-providers.md) | Where the data goes is the user's choice of deployment and providers |
 | [0011](0011-knowledge-pieces-to-search-and-sections-to-read.md) | Knowledge: pieces to search, sections to read, and a search that degrades |
 | [0012](0012-conversation-no-history-in-a-turn-a-log-to-search-when-referred-to.md) | Conversation: no history in a turn, and a log to search when a message refers to it |
+| [0013](0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md) | The edge: typed parts, filtered by what a device can render |

@@ -29,6 +29,8 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama and hosted providers
 FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_BOOK=/path/to.pdf uv run pytest -m live services/knowledge/tests/live -s
 # the conversation service against real models (see docs/conversation.md):
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/conversation/tests/live -s
+# the edge, and a device in a terminal (docs/edge.md; needs config/devices.dev.yaml and the services):
+uv run factotum-terminal --profile smart-display
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```
@@ -57,6 +59,14 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   refers to it, and what an answer quoted from a document stays marked as somebody else's words
   (ADR 0012). A shared device has no history of its own, only the last minute of what was said on it.
   A chunk of streamed text is never trimmed: the space at its edge is a word break.
+- The conversation service knows no device: it streams text and says what it cited. What a device is
+  sent of an answer is the edge's choice, by what the device declared it can render, and a part it
+  cannot render is never sent to it (ADR 0013). A connection answers one utterance at a time and a
+  new one interrupts the answer to the last; the last connection of a device wins. What a device is
+  and whom it acts for come from the registry, never from what it says.
+- The development file of devices, the development authentication and the development delegation of
+  the edge to the conversation service refuse to be built outside development and tests, and the
+  environment defaults to production. The hub replaces them (slice 7).
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
@@ -82,3 +92,11 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   documentation and types, never from memory. An OpenAI-compatible server is not OpenAI: declare what
   differs on the binding rather than assuming.
 - `pytest.raises(match=...)` takes a regular expression: escape the dots (ruff's RUF043 enforces it).
+- Tests import `--import-mode=importlib`: one test module cannot import another, so what tests share
+  lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`).
+- Starlette's `TestClient` is unusable here (its deprecation warning is an error): what needs a
+  WebSocket runs on a real one, with uvicorn (`ws="websockets-sansio"`, the implementation that is
+  not deprecated) and the `websockets` client, as `factotum.edge.testing.serving` does.
+- The keys of `extra=` in a log call must not be attributes of a `LogRecord` (`name`, `message`,
+  `args`...): the standard library raises `KeyError`, and only when the level is enabled, which is
+  how a session died the first time the log was at INFO.
