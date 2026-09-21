@@ -553,6 +553,8 @@ class ActionService:
             )
 
         request = RunRequest(
+            tenant_id=stored.tenant_id,
+            owner=stored.owner,
             skill_id=stored.id,
             skill_name=stored.name,
             version=stored.enabled.meta.version,

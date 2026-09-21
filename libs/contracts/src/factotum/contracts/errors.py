@@ -263,6 +263,14 @@ class RunnerUnavailableError(SkillRunError):
     code = "runner_unavailable"
 
 
+class EgressGrantError(FactotumError):
+    """What a skill presented to the egress proxy to say where it may go is not a grant that the
+    runner made: it is malformed, it was altered, or it has run out. The message never says which
+    part of it is wrong."""
+
+    code = "egress_grant_invalid"
+
+
 class ProtocolError(FactotumError):
     """A device sent something the protocol between devices and the edge does not allow."""
 

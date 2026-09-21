@@ -20,7 +20,7 @@ from factotum.contracts.effects import Effect
 ParamValue = str | int | float | bool
 
 _PARAM_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_HOST = re.compile(
+HOST_PATTERN = re.compile(
     r"^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
     re.IGNORECASE,
 )
@@ -164,7 +164,7 @@ class SkillPermissions(Contract):
         invalid = [
             entry
             for entry in entries
-            if not (_HOST.fullmatch(entry) or _DEVICE_TEMPLATE.fullmatch(entry))
+            if not (HOST_PATTERN.fullmatch(entry) or _DEVICE_TEMPLATE.fullmatch(entry))
         ]
         if invalid:
             raise ValueError(f"invalid network entries {invalid}: use a host name or ${{device.x}}")

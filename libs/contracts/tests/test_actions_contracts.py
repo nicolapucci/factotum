@@ -188,6 +188,8 @@ class TestTheCatalog:
 class TestWhatIsRunWith:
     def test_a_run_is_given_the_parameters_the_device_parameters_and_what_was_granted(self) -> None:
         request = RunRequest(
+            tenant_id=TENANT,
+            owner=Owner.of_subject(Subject.tenant(TENANT)),
             skill_id=SkillId(uuid4()),
             skill_name="lamp",
             version=3,
@@ -206,6 +208,8 @@ class TestWhatIsRunWith:
     def test_a_run_has_a_time_limit_of_a_couple_of_minutes_at_most(self, timeout_s: int) -> None:
         with pytest.raises(ValidationError):
             RunRequest(
+                tenant_id=TENANT,
+                owner=Owner.of_subject(Subject.tenant(TENANT)),
                 skill_id=SkillId(uuid4()),
                 skill_name="lamp",
                 version=1,
