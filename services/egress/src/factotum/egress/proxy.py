@@ -381,8 +381,8 @@ class EgressProxy:
             async with asyncio.timeout(self._limits.max_duration_s), asyncio.TaskGroup() as group:
                 group.create_task(self._copy(client[0], upstream[1], meter))
                 group.create_task(self._copy(upstream[0], client[1], meter))
-        except* Cut:
-            pass
+        except* (Cut, OSError):
+            pass  # too much, too long, or a side that went away (with a reset, most often)
         finally:
             await self._close(upstream[1])
 

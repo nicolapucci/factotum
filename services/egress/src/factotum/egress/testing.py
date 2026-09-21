@@ -6,6 +6,7 @@ import asyncio
 import base64
 import contextlib
 import socket
+import struct
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
@@ -30,6 +31,10 @@ class Upstream:
         """How many bytes to send after the answer, for a test of what is too much."""
 
         self.silent = False
+        self.reset = False
+        """Break the connection off (with a reset, as a host that is done with it may) when
+        something comes."""
+
         self._server: asyncio.Server | None = None
         self._release = asyncio.Event()
         self.port = 0
@@ -48,6 +53,9 @@ class Upstream:
         try:
             if self.echo:
                 while chunk := await reader.read(65536):
+                    if self.reset:
+                        self._break_off(writer)
+                        return
                     writer.write(chunk)
                     await writer.drain()
                 return
@@ -69,6 +77,13 @@ class Upstream:
         finally:
             with contextlib.suppress(ConnectionError, OSError):
                 writer.close()
+
+    @staticmethod
+    def _break_off(writer: asyncio.StreamWriter) -> None:
+        """Close a connection so that the other end is told with a reset, not with an end."""
+        sock = writer.get_extra_info("socket")
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        writer.close()
 
 
 class Names:

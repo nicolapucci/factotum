@@ -4,6 +4,8 @@ host: what it lets through, what it refuses, and what it does not let go on for 
 import asyncio
 import base64
 import logging
+import socket
+import struct
 import urllib.request
 
 import pytest
@@ -154,6 +156,72 @@ class TestARequestInTheClear:
         assert (status, body) == (200, b"ok")
 
 
+class Peer:
+    """One end of a connection, made of what the proxy asks of a reader and a writer. ``fate`` is
+    what reading from it does: nothing, for good (``None``), or failing with what it is given."""
+
+    def __init__(self, fate: Exception | None = None) -> None:
+        self.fate = fate
+        self.written = b""
+        self.closed = False
+
+    async def read(self, size: int) -> bytes:
+        if self.fate is not None:
+            raise self.fate
+        await asyncio.Event().wait()
+        return b""  # pragma: no cover - it never says anything
+
+    def write(self, data: bytes) -> None:
+        self.written += data
+
+    async def drain(self) -> None:
+        return None
+
+    def can_write_eof(self) -> bool:
+        return True
+
+    def write_eof(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+class TestAConnectionThatIsBrokenOff:
+    """A side that is done with a connection may break it off (a reset) and not end it. The event
+    loop of Linux says so to a read; that of Windows says it as an end, so what is asked here is the
+    same on both: whatever a side does, the tunnel ends without an error, and the run is not sent
+    what is not an answer."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ConnectionResetError(104, "Connection reset by peer"),
+            BrokenPipeError(32, "Broken pipe"),
+            ConnectionAbortedError(103, "Software caused connection abort"),
+            OSError(110, "Connection timed out"),
+        ],
+        ids=lambda error: type(error).__name__,
+    )
+    @pytest.mark.parametrize("side", ["host", "run"])
+    async def test_the_tunnel_ends_without_an_error_and_without_a_word(
+        self, error: OSError, side: str
+    ) -> None:
+        proxy = EgressProxy(b"e" * 32)
+        run, host = Peer(error if side == "run" else None), Peer(error if side == "host" else None)
+
+        await asyncio.wait_for(
+            proxy._pipe((run, run), (host, host)),  # type: ignore[arg-type]
+            5,
+        )
+
+        assert host.closed
+        assert (run.written, host.written) == (b"", b"")
+
+
 class TestATunnel:
     async def test_a_host_that_is_listed_is_reached_and_what_goes_through_is_not_read(
         self,
@@ -190,6 +258,45 @@ class TestATunnel:
             writer.close()
 
         assert rest == b"last words"
+
+    async def test_a_host_that_breaks_the_connection_off_ends_it_without_a_word(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="factotum.egress")
+        async with running(names=Names(api_example_org=[PUBLIC])) as proxy:
+            proxy.upstream.echo = True
+            proxy.upstream.reset = True
+            reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+            writer.write(connect("api.example.org:443", grant_header("api.example.org")))
+            await reader.readuntil(b"\r\n\r\n")
+            writer.write(b"the last thing that is said")
+            await writer.drain()
+
+            try:
+                rest = await asyncio.wait_for(reader.read(), 5)
+            except ConnectionError:
+                rest = b""
+            writer.close()
+
+        assert rest == b""
+        assert "the proxy failed" not in caplog.text
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+    async def test_a_run_that_breaks_the_connection_off_ends_it_without_a_word(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="factotum.egress")
+        async with running(names=Names(api_example_org=[PUBLIC])) as proxy:
+            proxy.upstream.echo = True
+            reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+            writer.write(connect("api.example.org:443", grant_header("api.example.org")))
+            await reader.readuntil(b"\r\n\r\n")
+            sock = writer.get_extra_info("socket")
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            writer.close()
+            await asyncio.sleep(0.2)
+
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
 
     async def test_a_port_that_is_not_one_for_a_tunnel_is_refused(self) -> None:
         async with running(names=Names(api_example_org=[PUBLIC])) as proxy:
