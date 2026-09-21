@@ -37,13 +37,17 @@ START = datetime(2026, 9, 21, 9, 30, tzinfo=UTC)
 
 
 class Clock:
-    """A clock that moves when it is told to."""
+    """A clock that moves when it is told to, and by a ``tick`` each time it is read when it is
+    told to do that: what is written one after another is then written in that order."""
 
-    def __init__(self, now: datetime = START) -> None:
+    def __init__(self, now: datetime = START, *, tick: timedelta = timedelta(0)) -> None:
         self.current = now
+        self._tick = tick
 
     def __call__(self) -> datetime:
-        return self.current
+        now = self.current
+        self.current += self._tick
+        return now
 
     def advance(self, **how_much: float) -> datetime:
         self.current += timedelta(**how_much)
