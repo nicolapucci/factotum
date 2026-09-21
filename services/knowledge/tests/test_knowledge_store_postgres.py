@@ -291,19 +291,16 @@ class TestTheIndex:
         async with pg.database.connection() as holder:
             await holder.execute("SELECT pg_advisory_lock(hashtext($1))", name)
             waiting = asyncio.create_task(pg.optimize(tenant, collection.id))
-            for _ in range(100):  # until it is really queued behind the lock
-                async with pg.database.connection() as watcher:
-                    queued = await watcher.fetchval(
-                        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
-                    )
-                if queued:
-                    break
-                await asyncio.sleep(0.05)
-            async with pg.database.connection() as builder:
-                await builder.execute(
-                    vector_index_sql(collection.id, 4).replace(" CONCURRENTLY", "")
-                )
-            await holder.execute("SELECT pg_advisory_unlock(hashtext($1))", name)
+            await asyncio.sleep(0.3)  # it is queued behind the lock by now
+            assert not waiting.done()
+            try:
+                # What the builder that holds the lock does, as it does it. It must not wait for
+                # the one that waits for the lock: CREATE INDEX CONCURRENTLY waits for every
+                # statement that began before it, and a builder blocked inside one is a deadlock.
+                async with asyncio.timeout(10), pg.database.connection() as builder:
+                    await builder.execute(vector_index_sql(collection.id, 4))
+            finally:
+                await holder.execute("SELECT pg_advisory_unlock(hashtext($1))", name)
 
             await waiting
 

@@ -16,6 +16,7 @@ searches. Its words are OR-ed and the pieces ranked by how many they have: a que
 list of keywords that must all be there.
 """
 
+import asyncio
 import json
 import math
 from collections.abc import Sequence
@@ -66,6 +67,9 @@ INDEX_BUILD_SETTINGS = {
     "max_parallel_maintenance_workers": "0",
 }
 """What a session that builds an index is given, and gives back afterwards."""
+
+_INDEX_LOCK_POLL_SECONDS = 0.05
+"""How often a builder that is waiting for another one to finish tries the lock again."""
 
 _ANALYZE_SQL = "ANALYZE knowledge.chunks (collection_id, tenant_id, embedding)"
 """What the planner has to know to choose the index: how the pieces are spread over collections and
@@ -450,8 +454,15 @@ class PostgresStore:
             )
             if embedded < self._index_threshold:
                 return
-            # One builder at a time for one index.
-            await connection.execute("SELECT pg_advisory_lock(hashtext($1))", name)
+            # One builder at a time for one index. A builder that has to wait tries the lock and
+            # sleeps, and does not block inside the statement that asks for it: CREATE INDEX
+            # CONCURRENTLY waits for every statement that began before it, so a builder blocked
+            # in pg_advisory_lock waits for the one that holds the lock, which waits for it, and
+            # Postgres kills one of them with "deadlock detected" (found by the full suite, about
+            # once in fifty runs). Between two tries a waiting builder holds nothing.
+            try_lock = "SELECT pg_try_advisory_lock(hashtext($1))"
+            while not await connection.fetchval(try_lock, name):  # noqa: ASYNC110 - no event
+                await asyncio.sleep(_INDEX_LOCK_POLL_SECONDS)
             try:
                 state = await self._index_is_valid(connection, name)
                 if state is True:
