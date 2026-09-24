@@ -273,6 +273,15 @@ class TestWhatIsNotRun:
 
         assert runner.sent == []
 
+    async def test_a_request_that_says_it_has_no_script_but_names_one_is_not_run(self) -> None:
+        store, runner = InMemoryStore(), Runner()
+        skill_id = await install(store, LAMP)
+
+        with pytest.raises(SkillRunError, match="no script"):
+            await a_runner(runner, store).run(request_for(skill_id, mode=SkillMode.INSTRUCTIONS))
+
+        assert runner.sent == []
+
     async def test_a_skill_that_needs_a_linked_account_says_so_and_is_not_run(self) -> None:
         store, runner = InMemoryStore(), Runner()
         skill_id = await install(store, LAMP)
@@ -444,6 +453,16 @@ class TestWhatWasPrinted:
 
         assert "s3cr3t-value" not in str(raised.value)
         assert "messsage" in str(raised.value)
+
+    def test_the_name_of_a_field_that_a_script_chose_is_quoted_short(self) -> None:
+        chosen = "a" * 500
+
+        with pytest.raises(SkillRunError) as raised:
+            self.read(**{chosen: 1})
+
+        assert chosen not in str(raised.value)
+        assert "a" * 40 in str(raised.value)
+        assert len(str(raised.value)) < 200
 
     def test_a_script_that_failed_leaves_the_end_of_what_it_wrote_in_the_log(
         self, caplog: pytest.LogCaptureFixture

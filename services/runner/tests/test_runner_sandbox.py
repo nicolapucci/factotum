@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from factotum.common import egress
+from factotum.contracts.errors import EgressGrantError
 from factotum.contracts.runner import Job, JobFile
 from factotum.runner.sandbox import (
     FIXED_ENV,
@@ -65,6 +66,7 @@ class TestWhatAContainerIsLike:
         assert body["HostConfig"]["CapDrop"] == ["ALL"]
         assert body["HostConfig"]["SecurityOpt"] == ["no-new-privileges"]
         assert body["HostConfig"]["Privileged"] is False
+        assert body["HostConfig"]["PublishAllPorts"] is False
         assert "CapAdd" not in body["HostConfig"]
 
     def test_it_is_given_a_limit_on_what_it_may_use(self) -> None:
@@ -179,6 +181,16 @@ class TestItsNetwork:
         egress.verify(KEY, token, now=NOW + 30)
         with pytest.raises(Exception, match="not a grant"):
             egress.verify(KEY, token, now=NOW + 31)
+
+    async def test_the_grant_is_good_for_the_script_and_the_clean_up_and_no_longer(self) -> None:
+        docker = FakeDocker()
+
+        await sandbox_of(docker, grace_s=2.0).run(job(hosts=["a.org"], timeout_s=5))
+
+        token = env_of(docker.one().body)["HTTP_PROXY"].split(":", 2)[2].rsplit("@", 1)[0]
+        egress.verify(KEY, token, now=NOW + 5 + 2 + 5)
+        with pytest.raises(EgressGrantError):
+            egress.verify(KEY, token, now=NOW + 5 + 2 + 5 + 1)
 
     @pytest.mark.parametrize(
         "changes",

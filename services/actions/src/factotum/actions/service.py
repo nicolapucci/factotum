@@ -58,13 +58,16 @@ from factotum.contracts.authorization import (
 )
 from factotum.contracts.commands import CommandResult, CommandStatus
 from factotum.contracts.devices import ExternalDeviceRecord, SystemDeviceRecord
-from factotum.contracts.errors import FactotumError, RunnerUnavailableError
+from factotum.contracts.errors import FactotumError, RunnerUnavailableError, SkillRunError
 from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.ids import ApprovalId, AuditId, DeviceId, SkillId
 from factotum.contracts.runner import RunRequest, RunResult
 from factotum.contracts.skills import ParamValue, SkillPermissions, SkillTarget
 
 logger = logging.getLogger("factotum.actions")
+
+MAX_FAILURE_DETAIL_CHARS = 300
+"""How much of why a skill failed goes in the trail."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -568,7 +571,11 @@ class ActionService:
         try:
             async with asyncio.timeout(manifest.timeout_s + self._settings.run_margin_s):
                 result = await self._runner.run(request)
-        except RunnerUnavailableError:
+        except RunnerUnavailableError as error:
+            logger.warning(
+                "the runner could not run a skill",
+                extra={"skill": stored.name, "reason": error.message},
+            )
             return await settle(
                 ActStatus.FAILED,
                 ActCode.RUNNER_UNAVAILABLE,
@@ -577,14 +584,19 @@ class ActionService:
                 "nothing can run skills",
             )
         except Exception as error:
-            if not isinstance(error, FactotumError | TimeoutError):
+            # What a run says of itself is ours (which secret, which code, which status) and never
+            # what a script wrote; anything else is what kind of thing it was.
+            reason = error.message if isinstance(error, SkillRunError) else type(error).__name__
+            if isinstance(error, FactotumError | TimeoutError):
+                logger.warning("a skill failed", extra={"skill": stored.name, "reason": reason})
+            else:
                 logger.exception("a runner failed", extra={"skill": stored.name})
             return await settle(
                 ActStatus.FAILED,
                 ActCode.SKILL_FAILED,
                 say(language, Say.FAILED),
                 ActionResult.FAILED,
-                f"the skill failed: {type(error).__name__}",
+                f"the skill failed: {reason}"[:MAX_FAILURE_DETAIL_CHARS],
             )
 
         if result.dry_run:

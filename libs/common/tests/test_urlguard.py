@@ -1,3 +1,4 @@
+import ipaddress
 import ssl
 from collections.abc import Sequence
 
@@ -13,6 +14,7 @@ from factotum.common.urlguard import (
     check_url,
     classify_ip,
     guarded_client,
+    unwrap_ip,
     vet_url,
 )
 from factotum.contracts.errors import UrlNotAllowedError
@@ -70,6 +72,31 @@ class TestClassifyIp:
     def test_something_that_is_not_an_address_is_an_error(self) -> None:
         with pytest.raises(ValueError, match="does not appear"):
             classify_ip("example.org")
+
+
+class TestUnwrapIp:
+    @pytest.mark.parametrize(
+        ("address", "wrapped"),
+        [
+            ("::ffff:10.0.0.1", "10.0.0.1"),
+            ("::ffff:127.0.0.1", "127.0.0.1"),
+            ("2002:a9fe:a9fe::1", "169.254.169.254"),
+            ("64:ff9b::7f00:1", "127.0.0.1"),
+        ],
+        ids=["mapped", "mapped-loopback", "6to4", "nat64"],
+    )
+    def test_an_address_that_wraps_an_ipv4_one_is_the_ipv4_one(
+        self, address: str, wrapped: str
+    ) -> None:
+        assert unwrap_ip(address) == ipaddress.IPv4Address(wrapped)
+
+    @pytest.mark.parametrize("address", ["8.8.8.8", "10.1.2.3", "2001:db8::1", "::1", "fe80::1"])
+    def test_any_other_address_is_itself(self, address: str) -> None:
+        assert unwrap_ip(address) == ipaddress.ip_address(address)
+
+    def test_something_that_is_not_an_address_is_an_error(self) -> None:
+        with pytest.raises(ValueError, match="does not appear"):
+            unwrap_ip("example.org")
 
 
 class TestRemotePolicy:

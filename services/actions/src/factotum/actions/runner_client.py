@@ -61,10 +61,15 @@ def hosts_of(
     return tuple(dict.fromkeys(host.lower() for host in hosts))
 
 
+MAX_FIELD_NAME_CHARS = 40
+"""A name of a field that a script printed is what it says, so only the start of it is quoted."""
+
+
 def _problems(error: ValidationError) -> str:
-    """What is wrong, field by field, and never what it was given: the values may be secrets."""
+    """What is wrong, field by field, and never what it was given: the values may be secrets. The
+    name of a field can be what a script chose to print, so it is quoted short."""
     return "; ".join(
-        f"{'.'.join(str(part) for part in problem['loc'])}: {problem['msg']}"
+        f"{'.'.join(str(part)[:MAX_FIELD_NAME_CHARS] for part in problem['loc'])}: {problem['msg']}"
         for problem in error.errors(include_input=False, include_context=False, include_url=False)
     )
 

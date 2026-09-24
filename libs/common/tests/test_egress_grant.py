@@ -167,6 +167,20 @@ class TestWhatIsNotAGrant:
         with pytest.raises(EgressGrantError):
             verify(KEY, token, now=NOW)
 
+    def test_one_that_is_too_big_is_refused_before_anything_is_worked_out_of_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        big = re_signed({"r": "run", "h": [], "x": NOW + 60, "pad": "x" * MAX_TOKEN_CHARS})
+        assert len(big) > MAX_TOKEN_CHARS
+
+        def looked_at(*_: object) -> str:
+            raise AssertionError("a token that is too big was looked at")
+
+        monkeypatch.setattr("factotum.common.egress._sign", looked_at)
+
+        with pytest.raises(EgressGrantError):
+            verify(KEY, big, now=NOW)
+
     def test_the_error_never_says_which_part_was_wrong(self) -> None:
         messages = set()
         for token in ["", "v1.a.b", grant_for(expires_at=NOW - 1), grant_for()[:-3] + "AAA"]:
