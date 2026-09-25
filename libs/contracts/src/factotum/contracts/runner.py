@@ -24,6 +24,7 @@ from factotum.contracts.base import Contract
 from factotum.contracts.commands import DeviceCommand
 from factotum.contracts.identity import Owner
 from factotum.contracts.ids import SkillId, TenantId
+from factotum.contracts.instructions import InstructionPlan
 from factotum.contracts.skills import (
     HOST_PATTERN,
     ParamValue,
@@ -69,6 +70,16 @@ class RunRequest(Contract):
     """What was granted when the version was enabled: the most the skill may reach."""
 
     timeout_s: int = Field(ge=1, le=120)
+
+    plan: InstructionPlan | None = None
+    """What a model wrote for a skill in instructions mode, after it was checked: the platform runs
+    it (in the sandbox, with a program of its own) in place of a script."""
+
+    @model_validator(mode="after")
+    def _a_plan_is_for_a_skill_that_has_no_script(self) -> Self:
+        if self.plan is not None and self.mode is not SkillMode.INSTRUCTIONS:
+            raise ValueError("a plan is for a skill in instructions mode")
+        return self
 
 
 class SkillOutput(Contract):

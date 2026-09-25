@@ -19,6 +19,10 @@ from factotum.contracts.effects import Effect
 
 ParamValue = str | int | float | bool
 
+MAX_INSTRUCTIONS_CHARS = 8000
+"""The most that the instructions of a skill in instructions mode are: a model reads them whole,
+every time the skill runs, so they are what a small model can be asked to follow."""
+
 _PARAM_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 HOST_PATTERN = re.compile(
     r"^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
