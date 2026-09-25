@@ -15,48 +15,8 @@ too, for every address, before anything is connected:
 An address that is wrapped in another (an IPv4 address written as IPv6) is the address it wraps.
 """
 
-import ipaddress
-from collections.abc import Sequence
-from enum import StrEnum
-
+from factotum.common.hosts import Match
 from factotum.common.urlguard import IpClass, classify_ip, unwrap_ip
-
-
-class Match(StrEnum):
-    EXACT = "exact"
-    """The grant names the host."""
-
-    WILDCARD = "wildcard"
-    """The grant lists a domain that the host is in."""
-
-
-def normalize_host(host: str) -> str:
-    """A host as it is compared: in lower case, and without the dot that ends a name."""
-    return host.strip().lower().rstrip(".")
-
-
-def is_address(host: str) -> bool:
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return True
-
-
-def match_host(listed: Sequence[str], host: str) -> Match | None:
-    """How the grant lists a host, or nothing when it does not. A name that the grant gives whole
-    is better than a domain it lists, and an address is only ever matched by itself."""
-    wanted = normalize_host(host)
-    if not wanted:
-        return None
-    if wanted in listed:
-        return Match.EXACT
-    if is_address(wanted):
-        return None
-    for entry in listed:
-        if entry.startswith("*.") and wanted.endswith(entry[1:]) and len(wanted) > len(entry) - 1:
-            return Match.WILDCARD
-    return None
 
 
 def refusal_of_address(address: str, match: Match) -> str | None:

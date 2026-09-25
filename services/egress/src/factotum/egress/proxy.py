@@ -28,9 +28,10 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from factotum.common import egress
+from factotum.common.hosts import is_address, match_host, normalize_host
 from factotum.common.urlguard import Resolver, system_resolver
 from factotum.contracts.errors import EgressGrantError
-from factotum.egress.policy import is_address, match_host, normalize_host, refusal_of_address
+from factotum.egress.policy import refusal_of_address
 
 logger = logging.getLogger("factotum.egress")
 
