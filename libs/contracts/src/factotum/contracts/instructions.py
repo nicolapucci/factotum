@@ -42,7 +42,11 @@ MAX_PLAN_CHARS = 40_000
 """The most that a plan is, written out: what goes to the sandbox to be run has to fit on one line
 of input, with what the person asked for."""
 
-_ID = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+STEP_ID_PATTERN = r"^[a-z][a-z0-9_]{0,23}$"
+"""What a step is called: a short name in lower case, which is what a placeholder refers to it by.
+The program that runs a plan has a copy of it, because it takes nothing from this package."""
+
+_ID = re.compile(STEP_ID_PATTERN)
 
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 

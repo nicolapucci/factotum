@@ -17,7 +17,7 @@ import asyncio
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import ValidationError
 
@@ -26,41 +26,88 @@ from factotum.contracts.chat import ChatMessage, ChatRequest, MessageRole
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import PlanError, ProviderTimeoutError
 from factotum.contracts.identity import Owner
-from factotum.contracts.instructions import InstructionPlan
+from factotum.contracts.instructions import STEP_ID_PATTERN, HttpMethod, InstructionPlan
 from factotum.contracts.models import ModelRole
 from factotum.contracts.skills import ParamValue
 from factotum.model_client import Chat
 
 MAX_FEEDBACK_CHARS = 400
+RETRY_TEMPERATURE = 0.3
+"""A model that is asked again with nothing changed but a sentence sometimes writes the same plan
+(at temperature 0 it is the same answer to nearly the same question), so it is asked again with a
+little room."""
 MAX_FIELD_NAME_CHARS = 40
 """The name of a field that a model wrote is what it wrote, so only the start of it is quoted."""
 
 
-def _inline(schema: Any, definitions: Mapping[str, Any]) -> Any:
-    """A JSON Schema without references and titles: what a model is asked to answer with is one
-    piece, which is what every provider handles."""
-    if isinstance(schema, dict):
-        reference = schema.get("$ref")
-        if isinstance(reference, str):
-            return _inline(definitions[reference.rsplit("/", 1)[-1]], definitions)
-        return {
-            name: _inline(item, definitions)
-            for name, item in schema.items()
-            if name not in {"$defs", "title"}
-        }
-    if isinstance(schema, list):
-        return [_inline(item, definitions) for item in schema]
-    return schema
+_STRING: dict[str, Any] = {"type": "string"}
+NO_BODY = ("GET", "DELETE")
+"""The methods of a request that has no body, and is written without the field."""
+
+_BODY: dict[str, Any] = {
+    "anyOf": [{"type": "object"}, {"type": "string"}, {"type": "array"}, {"type": "null"}]
+}
+"""What a body may be: JSON (an object or a list) or a text. It has to say so, because a schema that
+says nothing (``{}``, a value of any kind) is an *object* to the grammar that Ollama makes of it: a
+model that was asked for a text there wrote ``{"hello world": ""}``, and every plain-text body that
+a skill wanted (a notification, a line in a log) came out as JSON."""
 
 
-def _response_schema() -> dict[str, Any]:
-    schema = InstructionPlan.model_json_schema()
-    inlined: dict[str, Any] = _inline(schema, schema.get("$defs", {}))
-    return inlined
+def _step_of(kind: str, **fields: dict[str, Any]) -> dict[str, Any]:
+    properties = {
+        "id": {"type": "string", "pattern": STEP_ID_PATTERN},
+        "kind": {"type": "string", "enum": [kind]},
+        **fields,
+    }
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
 
 
-RESPONSE_SCHEMA: dict[str, Any] = _response_schema()
-"""What a model is asked to answer with: the shape of ``InstructionPlan``."""
+def _request_of(methods: tuple[str, ...], **fields: dict[str, Any]) -> dict[str, Any]:
+    return _step_of(
+        "http",
+        method={"type": "string", "enum": list(methods)},
+        url=_STRING,
+        headers={"type": "object", "additionalProperties": _STRING},
+        **fields,
+    )
+
+
+RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "reason": _STRING,
+        "steps": {
+            "type": "array",
+            "items": {
+                "anyOf": [
+                    _request_of(NO_BODY),
+                    _request_of(
+                        tuple(method for method in get_args(HttpMethod) if method not in NO_BODY),
+                        body=_BODY,
+                    ),
+                    _step_of("command", name=_STRING, args={"type": "object"}),
+                ]
+            },
+        },
+        "say": {"anyOf": [_STRING, {"type": "null"}]},
+    },
+    "required": ["reason", "steps", "say"],
+    "additionalProperties": False,
+}
+"""What a model is asked to answer with: a plan, as ``InstructionPlan`` reads it, but *written* more
+strictly than it is read. A step has the fields of its kind and no others (a model that is asked to
+fill in the ones that do not apply with ``null`` sometimes puts them where they do not belong, and
+one that may write a body for a ``GET`` does), every field is one that it writes and in this order
+(a model that may leave a field out sometimes leaves out the address of a request), a step is
+called by a name that the placeholders can refer to, and there is no limit of size in it: those are
+checked when the answer is read, because the grammar that Ollama makes of a schema fails for a
+``maxLength`` of exactly 2000 (an address is that long; 1999 and 2001 are taken), and a plan that is
+too long is a reason to write it again and not a way to make the model unable to write it."""
 
 
 SYSTEM_PROMPT = """\
@@ -71,15 +118,14 @@ it. Answer with JSON only.
 
 "reason" is a few words on what the plan does.
 
-"steps" is what is done, in this order, at most 8. Each step has "id" (a short name in lower \
-case), "kind" ("http" or "command") and only the fields of its kind:
-- "http": "method" (GET, POST, PUT, PATCH or DELETE), "url" (a full http or https address), \
-"headers" (an object, {} when there are none), "body" (a JSON value, which is sent as JSON, or a \
-string, which is sent as text, or null).
-- "command": "name" and "args" (an object). The commands are: set_volume(level 0 to 100), \
-speak(text), play_url(url, kind, title), pause, resume, stop, show_card, clear_display, \
-set_led(pattern, color).
-The fields that are not of the step's kind are null, or {} for "headers" and "args".
+"steps" is what is done, in this order, at most 8. A step is one of two kinds, and has the fields \
+of its kind and no others; its "id" is a short name in lower case.
+- "kind": "http" is a request: "method" (GET, POST, PUT, PATCH or DELETE), "url" (a full http or \
+https address), "headers" (an object, {} when there are none) and, unless the method is GET or \
+DELETE, "body" (a JSON value, which is sent as JSON, or a string, which is sent as text, or null).
+- "kind": "command" is something a device is to do: "name" and "args" (an object). The commands \
+are: set_volume(level 0 to 100), speak(text), play_url(url, kind, title), pause, resume, stop, \
+show_card, clear_display, set_led(pattern, color).
 
 "say" is what to tell the person when everything is done: a short sentence in the language of the \
 message, or null.
@@ -91,8 +137,9 @@ ${device.NAME} is a value of the device the skill is bound to.
 ${value.NAME} is a value the person asked for. A body that is exactly one placeholder gets the \
 value with its own type: a number stays a number.
 ${step.ID.json.PATH}, ${step.ID.status} and ${step.ID.text} are what an earlier request got. PATH \
-is field names and list positions separated by dots, like results.0.latitude. Put |round after a \
-number to round it, as in ${step.ID.json.PATH|round}.
+is field names and list positions separated by dots, like results.0.latitude. To round a number \
+that a request got when you say it, put |round after it, as in ${step.ID.json.PATH|round}. What \
+the person asked for is never rounded.
 Only reach the hosts you are given, and only use the placeholders you are shown. A skill that only \
 reads uses GET only. Never put a secret in "say" or in a command.
 If the instructions cannot be followed with what you are given, answer with no steps and say why \
@@ -151,18 +198,24 @@ class Example:
         return json.dumps(self.plan, ensure_ascii=False, separators=(",", ":"))
 
 
-def _step(**fields: Any) -> dict[str, Any]:
-    return {
-        "method": None,
-        "url": None,
-        "headers": {},
-        "body": None,
-        "name": None,
-        "args": {},
-        **fields,
-    }
+def _http(
+    step: str, method: str, url: str, *, headers: dict[str, str] | None = None, body: Any = None
+) -> dict[str, Any]:
+    """A request as a model writes it: every field, in the order of the schema it answers with (an
+    example that is written in another order teaches the model another order)."""
+    request = {"id": step, "kind": "http", "method": method, "url": url, "headers": headers or {}}
+    return request if method in NO_BODY else {**request, "body": body}
 
 
+def _command(step: str, name: str, **args: Any) -> dict[str, Any]:
+    return {"id": step, "kind": "command", "name": name, "args": args}
+
+
+# One example for each shape of plan that a skill comes to (a request that changes something, one
+# that only reads, a chain, a command, and nothing): a small model writes the shape of the examples
+# it is shown. With only a chain of two requests that read (the weather), a skill that is one
+# request that reads was written with steps that nobody asked for, and none of 18 plans was right;
+# with an example of one request that reads, every one of them was (docs/skills.md).
 EXAMPLES: tuple[Example, ...] = (
     Example(
         PlanInputs(
@@ -171,7 +224,7 @@ EXAMPLES: tuple[Example, ...] = (
             instructions=(
                 "Use the REST API of Home Assistant. To switch the lamp on, POST "
                 "http://HOST:8123/api/services/light/turn_on with brightness_pct when a "
-                "brightness is asked for; to switch it off, POST "
+                "brightness is asked for, and transition 2; to switch it off, POST "
                 'http://HOST:8123/api/services/light/turn_off. Send {"entity_id": ENTITY} as '
                 "JSON, with the header Authorization: Bearer TOKEN."
             ),
@@ -184,19 +237,42 @@ EXAMPLES: tuple[Example, ...] = (
         {
             "reason": "switches the lamp on at 40 percent",
             "steps": [
-                _step(
-                    id="lamp",
-                    kind="http",
-                    method="POST",
-                    url="http://${device.host}:8123/api/services/light/turn_on",
+                _http(
+                    "lamp",
+                    "POST",
+                    "http://${device.host}:8123/api/services/light/turn_on",
                     headers={"Authorization": "Bearer ${secret.HA_TOKEN}"},
                     body={
                         "entity_id": "${device.entity_id}",
                         "brightness_pct": "${value.brightness}",
+                        "transition": 2,
                     },
                 )
             ],
             "say": "The lamp is on.",
+        },
+    ),
+    Example(
+        PlanInputs(
+            name="coin-price",
+            description="Say what a coin costs now, in euros.",
+            instructions=(
+                "GET `https://api.coinbase.com/v2/prices/COIN-EUR/spot`. The answer has "
+                "`data.amount`, the price in euros.\n\nSay the price, in the language of the "
+                "message."
+            ),
+            effect=Effect.READ_ONLY,
+            values={"coin": "BTC"},
+            device_values=(),
+            hosts=("api.coinbase.com",),
+            secrets=(),
+        ),
+        {
+            "reason": "reads the price of the coin",
+            "steps": [
+                _http("price", "GET", "https://api.coinbase.com/v2/prices/${value.coin}-EUR/spot")
+            ],
+            "say": "One ${value.coin} costs ${step.price.json.data.amount} euros.",
         },
     ),
     Example(
@@ -220,19 +296,15 @@ EXAMPLES: tuple[Example, ...] = (
         {
             "reason": "finds the place, then reads its temperature",
             "steps": [
-                _step(
-                    id="place",
-                    kind="http",
-                    method="GET",
-                    url=(
-                        "https://geocoding-api.open-meteo.com/v1/search?count=1&name=${value.place}"
-                    ),
+                _http(
+                    "place",
+                    "GET",
+                    "https://geocoding-api.open-meteo.com/v1/search?count=1&name=${value.place}",
                 ),
-                _step(
-                    id="now",
-                    kind="http",
-                    method="GET",
-                    url=(
+                _http(
+                    "now",
+                    "GET",
+                    (
                         "https://api.open-meteo.com/v1/forecast?current=temperature_2m"
                         "&latitude=${step.place.json.results.0.latitude}"
                         "&longitude=${step.place.json.results.0.longitude}"
@@ -255,9 +327,7 @@ EXAMPLES: tuple[Example, ...] = (
         ),
         {
             "reason": "has the device say the message",
-            "steps": [
-                _step(id="say", kind="command", name="speak", args={"text": "${value.message}"})
-            ],
+            "steps": [_command("say", "speak", text="${value.message}")],
             "say": None,
         },
     ),
@@ -332,7 +402,7 @@ class PlanWriter:
                 role=ModelRole.CHAT_MAIN,
                 messages=tuple(messages),
                 response_schema=RESPONSE_SCHEMA,
-                temperature=0,
+                temperature=0 if attempt == 0 else RETRY_TEMPERATURE,
                 max_output_tokens=1000,
             )
             try:
@@ -360,8 +430,8 @@ class PlanWriter:
                         ),
                         ChatMessage(
                             role=MessageRole.USER,
-                            content=f"That plan was not accepted: {why} Write the plan again, "
-                            "fixing that.",
+                            content=f"That plan was not accepted: {why.rstrip('.')}. Write the "
+                            "plan again, fixing that.",
                         ),
                     ]
                 )

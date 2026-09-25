@@ -3,7 +3,9 @@ what is done when the checks refuse it."""
 
 import asyncio
 import json
-from typing import Any
+import re
+from collections.abc import Iterator
+from typing import Any, get_args
 
 import pytest
 
@@ -11,7 +13,9 @@ from factotum.actions.instructions.checks import PlanRejected, check_plan
 from factotum.actions.instructions.testing import plan_dict, step_command, step_http
 from factotum.actions.instructions.writer import (
     EXAMPLES,
+    MAX_FEEDBACK_CHARS,
     RESPONSE_SCHEMA,
+    RETRY_TEMPERATURE,
     SYSTEM_PROMPT,
     Example,
     PlanInputs,
@@ -23,12 +27,13 @@ from factotum.contracts.chat import ChatRequest, ChatResult, MessageRole
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import GatewayError, PlanError, ProviderTimeoutError
 from factotum.contracts.identity import Owner, OwnerKind
-from factotum.contracts.instructions import InstructionPlan
+from factotum.contracts.instructions import STEP_ID_PATTERN, HttpMethod, InstructionPlan
 from factotum.contracts.models import ModelRole
 from factotum.contracts.skills import ParameterSpec, ParamType, SkillManifest, SkillPermissions
 from factotum.contracts.testing import make_tenant_id
 
 OWNER = Owner(kind=OwnerKind.TENANT, id=make_tenant_id())
+STEPS = RESPONSE_SCHEMA["properties"]["steps"]["items"]
 
 
 def inputs(**changes: Any) -> PlanInputs:
@@ -177,20 +182,212 @@ class TestWhatTheModelIsShown:
         assert "$ref" not in text
         assert "$defs" not in text
         assert '"title"' not in text
-        properties = RESPONSE_SCHEMA["properties"]
-        assert set(properties) == {"reason", "steps", "say"}
-        step = properties["steps"]["items"]
-        assert set(step["properties"]) == {
-            "id",
-            "kind",
-            "method",
-            "url",
-            "headers",
-            "body",
-            "name",
-            "args",
+        assert not any(limit in text for limit in ("maxLength", "maxItems", "maxProperties"))
+        assert list(RESPONSE_SCHEMA["properties"]) == ["reason", "steps", "say"]
+        assert RESPONSE_SCHEMA["required"] == ["reason", "steps", "say"]
+        assert RESPONSE_SCHEMA["additionalProperties"] is False
+
+    def test_a_step_has_the_fields_of_its_kind_and_no_others_and_a_model_writes_all_of_them(
+        self,
+    ) -> None:
+        """A field that may be left out is one that a small model sometimes leaves out (the address
+        of a request), and one that does not apply is one that it sometimes fills in (a body for a
+        GET, or a step inside the arguments of a command)."""
+        shapes = STEPS["anyOf"]
+
+        assert [list(shape["properties"]) for shape in shapes] == [
+            ["id", "kind", "method", "url", "headers"],
+            ["id", "kind", "method", "url", "headers", "body"],
+            ["id", "kind", "name", "args"],
+        ]
+        for shape in shapes:
+            assert shape["required"] == list(shape["properties"])
+            assert shape["additionalProperties"] is False
+        assert [shape["properties"]["kind"]["enum"] for shape in shapes] == [
+            ["http"],
+            ["http"],
+            ["command"],
+        ]
+
+    def test_a_request_that_has_no_body_is_one_that_a_model_cannot_give_one(self) -> None:
+        without, with_body, _ = STEPS["anyOf"]
+
+        assert without["properties"]["method"]["enum"] == ["GET", "DELETE"]
+        assert with_body["properties"]["method"]["enum"] == ["POST", "PUT", "PATCH"]
+        assert {
+            *without["properties"]["method"]["enum"],
+            *with_body["properties"]["method"]["enum"],
+        } == set(get_args(HttpMethod))
+
+    def test_a_step_is_called_by_a_name_that_the_contract_accepts_and_a_model_cannot_write_another(
+        self,
+    ) -> None:
+        for shape in STEPS["anyOf"]:
+            assert shape["properties"]["id"] == {"type": "string", "pattern": STEP_ID_PATTERN}
+
+    def test_no_part_of_the_shape_leaves_out_what_it_is(self) -> None:
+        """To the grammar that Ollama makes of a schema, one that says nothing (``{}``, a value of
+        any kind) is an object: a model that is asked for a text in it writes
+        ``{"hello world": ""}``. That is how a plain-text body came out as JSON, for every skill
+        that wanted one."""
+        assert all("type" in part or "anyOf" in part for part in parts_of(RESPONSE_SCHEMA))
+
+    def test_a_body_is_written_as_json_or_as_text(self) -> None:
+        _, with_body, _ = STEPS["anyOf"]
+
+        kinds = [option["type"] for option in with_body["properties"]["body"]["anyOf"]]
+
+        assert kinds == ["object", "string", "array", "null"]
+
+
+def conforms(value: Any, schema: dict[str, Any]) -> bool:
+    """Whether a JSON value is what a JSON Schema says, for the part of the language that the shape
+    of a plan is written in."""
+    if "anyOf" in schema:
+        return any(conforms(value, option) for option in schema["anyOf"])
+    match schema.get("type"):
+        case "string":
+            return (
+                isinstance(value, str)
+                and re.search(schema.get("pattern", ""), value) is not None
+                and value in schema.get("enum", [value])
+            )
+        case "null":
+            return value is None
+        case "array":
+            return isinstance(value, list) and all(
+                "items" not in schema or conforms(item, schema["items"]) for item in value
+            )
+        case "object":
+            if not isinstance(value, dict) or any(
+                name not in value for name in schema.get("required", [])
+            ):
+                return False
+            properties = schema.get("properties", {})
+            others = schema.get("additionalProperties", True)
+            for name, item in value.items():
+                if name in properties:
+                    if not conforms(item, properties[name]):
+                        return False
+                elif others is False or (isinstance(others, dict) and not conforms(item, others)):
+                    return False
+            return True
+        case _:
+            raise AssertionError(
+                f"a part of the shape that says what it is, and does not: {schema}"
+            )
+
+
+def parts_of(schema: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Every schema that the shape is made of, the shape itself first."""
+    yield schema
+    for option in schema.get("anyOf", []):
+        yield from parts_of(option)
+    for part in schema.get("properties", {}).values():
+        yield from parts_of(part)
+    for key in ("items", "additionalProperties"):
+        if isinstance(schema.get(key), dict):
+            yield from parts_of(schema[key])
+
+
+def a_step(**changes: Any) -> dict[str, Any]:
+    step = {
+        "id": "lamp",
+        "kind": "http",
+        "method": "POST",
+        "url": "http://ha.example/light",
+        "headers": {},
+        "body": {"a": 1},
+    }
+    return {key: value for key, value in {**step, **changes}.items() if value is not None}
+
+
+class TestTheShapeIsChecked:
+    """The examples are what the model is asked to imitate, so they have to be what it is allowed to
+    write; and the check that says so has to be able to say no."""
+
+    @pytest.mark.parametrize(
+        "step",
+        [
+            a_step(),
+            a_step(method="GET", body=None),
+            a_step(method="DELETE", body=None),
+            a_step(
+                kind="command", method=None, url=None, headers=None, body=None, name="stop", args={}
+            ),
+        ],
+        ids=["post", "get", "delete", "command"],
+    )
+    def test_a_step_of_either_kind_is_one(self, step: dict[str, Any]) -> None:
+        assert conforms(step, STEPS)
+
+    @pytest.mark.parametrize(
+        "body",
+        [{"text": "hi"}, "the laundry is done", ["a", "b"], None],
+        ids=["an object", "a text", "a list", "nothing"],
+    )
+    def test_a_body_is_json_or_a_text_or_nothing(self, body: Any) -> None:
+        assert conforms({**a_step(), "body": body}, STEPS)
+
+    @pytest.mark.parametrize("body", [3, 2.5, True], ids=["a number", "a decimal", "a boolean"])
+    def test_a_body_is_not_a_lone_number_or_boolean(self, body: Any) -> None:
+        assert not conforms({**a_step(), "body": body}, STEPS)
+
+    @pytest.mark.parametrize(
+        "step",
+        [
+            a_step(method="GET"),
+            a_step(method="POST", body=None),
+            a_step(url=None),
+            a_step(id="set-temp"),
+            a_step(id="Lamp"),
+            a_step(id="a" * 25),
+            a_step(method="TRACE"),
+            a_step(kind="command", name="stop", args={}),
+            a_step(kind="command", method=None, url=None, headers=None, body=None, args={}),
+            a_step(extra=1),
+            a_step(headers={"a": 1}),
+        ],
+        ids=[
+            "a GET with a body",
+            "a POST with no body field",
+            "no address",
+            "a name with a dash",
+            "a name in capitals",
+            "a name too long",
+            "an unknown method",
+            "a command with the fields of a request",
+            "a command with no name",
+            "a field that is not one",
+            "a header that is not text",
+        ],
+    )
+    def test_what_is_not_a_step_of_either_kind_is_not_one(self, step: dict[str, Any]) -> None:
+        assert not conforms(step, STEPS)
+
+    @pytest.mark.parametrize("example", EXAMPLES, ids=lambda example: example.inputs.name)
+    def test_every_example_is_what_a_model_is_allowed_to_write(self, example: Example) -> None:
+        assert conforms(json.loads(example.answer()), RESPONSE_SCHEMA)
+
+    def test_the_examples_show_every_shape_of_a_step(self) -> None:
+        shown = {
+            index
+            for example in EXAMPLES
+            for step in example.plan["steps"]
+            for index, shape in enumerate(STEPS["anyOf"])
+            if conforms(step, shape)
         }
-        assert step["properties"]["kind"]["enum"] == ["http", "command"]
+
+        assert shown == {0, 1, 2}
+
+    def test_the_examples_are_written_in_the_order_of_the_shape(self) -> None:
+        shapes = [list(shape["properties"]) for shape in STEPS["anyOf"]]
+        for example in EXAMPLES:
+            written = json.loads(example.answer())
+
+            assert list(written) == list(RESPONSE_SCHEMA["properties"])
+            for step in written["steps"]:
+                assert list(step) in shapes
 
 
 def manifest_of(example: Example) -> SkillManifest:
@@ -246,29 +443,19 @@ class TestTheExamples:
                     device_params=device,
                 )
 
-    def test_the_answers_are_what_a_model_would_write_without_being_asked_for_more(self) -> None:
-        for example in EXAMPLES:
-            written = json.loads(example.answer())
+    def test_the_examples_show_every_shape_that_a_skill_comes_to(self) -> None:
+        """A small model writes the shape of the examples it is shown: with a chain of two requests
+        that read and no request that reads on its own, a skill that was one request that reads was
+        written with steps that nobody asked for (none of 18 plans was right)."""
+        shapes = [(e.inputs.effect, [step["kind"] for step in e.plan["steps"]]) for e in EXAMPLES]
 
-            assert set(written) == {"reason", "steps", "say"}
-            for step in written["steps"]:
-                assert set(step) == {
-                    "id",
-                    "kind",
-                    "method",
-                    "url",
-                    "headers",
-                    "body",
-                    "name",
-                    "args",
-                }
-
-    def test_the_examples_show_a_request_a_chain_a_command_and_a_plan_that_cannot_be_made(
-        self,
-    ) -> None:
-        kinds = [[step["kind"] for step in e.plan["steps"]] for e in EXAMPLES]
-
-        assert kinds == [["http"], ["http", "http"], ["command"], []]
+        assert shapes == [
+            (Effect.REVERSIBLE, ["http"]),  # a request that changes something
+            (Effect.READ_ONLY, ["http"]),  # a request that only reads, on its own
+            (Effect.READ_ONLY, ["http", "http"]),  # a chain
+            (Effect.REVERSIBLE, ["command"]),  # something for a device to do
+            (Effect.REVERSIBLE, []),  # a plan that cannot be made
+        ]
 
 
 class TestWhenTheModelAnswers:
@@ -309,16 +496,19 @@ class TestWhenTheModelAnswers:
         plan = await PlanWriter(chat).write(OWNER, inputs(), check)
 
         assert plan == InstructionPlan.model_validate(GOOD)
-        [_, second] = chat.asked
+        [asked_first, second] = chat.asked
+        first_temperature = asked_first.temperature
         assert [m.role for m in second.messages[-3:]] == [
             MessageRole.USER,
             MessageRole.ASSISTANT,
             MessageRole.USER,
         ]
         assert json.loads(second.messages[-2].content) == first
+        assert first_temperature == 0
+        assert second.temperature == RETRY_TEMPERATURE
         assert second.messages[-1].content == (
             "That plan was not accepted: step lamp: the host evil.example is not one the skill may "
-            "reach Write the plan again, fixing that."
+            "reach. Write the plan again, fixing that."
         )
 
     async def test_a_plan_that_is_not_the_shape_of_one_is_asked_for_again_with_what_is_wrong(
@@ -382,6 +572,23 @@ class TestWhenTheModelAnswers:
         assert "extra_" + secret[:50] not in str(raised.value)
         assert secret not in str(raised.value)
         assert len(str(raised.value)) < 500
+
+    async def test_what_is_said_of_a_plan_with_many_things_wrong_is_cut_at_the_same_length(
+        self,
+    ) -> None:
+        chat = ScriptedChat()
+        broken = {"reason": "x", "steps": [{"id": "A", "kind": "nothing"}] * 8}
+        chat.say(broken, broken)
+
+        with pytest.raises(PlanError) as raised:
+            await PlanWriter(chat).write(OWNER, inputs(), accepts)
+
+        said = str(raised.value).removeprefix("the plan was not accepted: ")
+        assert len(said) == MAX_FEEDBACK_CHARS
+        assert said.startswith("steps.0.id: ")
+        assert said.endswith("…")
+        feedback = chat.asked[1].messages[-1].content
+        assert len(feedback) < MAX_FEEDBACK_CHARS + 100
 
     async def test_a_plan_with_a_command_is_a_plan(self) -> None:
         chat = ScriptedChat()

@@ -233,8 +233,8 @@ class _Rules:
         odd = sorted(set(step.args) - allowed)
         if odd:
             raise PlanRejected(
-                f"{where}: {step.name} has no argument called {_clipped(odd[0], 30)} (it has: "
-                f"{', '.join(sorted(allowed)) or 'none'})"
+                f"{where}: {step.name} does not take an argument called {_clipped(odd[0], 30)}: "
+                f"leave it out (it takes: {', '.join(sorted(allowed)) or 'none'})"
             )
         self.check_json(step.args, where, secret_allowed=False)
         if not any("${" in text for text in strings_of(step.args)):
