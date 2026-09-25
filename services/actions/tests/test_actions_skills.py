@@ -14,7 +14,7 @@ from factotum.actions.skills import (
 from factotum.contracts.actions import MAX_SKILL_SOURCE_CHARS
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import SkillInvalidError
-from factotum.contracts.skills import SkillMode, SkillTarget
+from factotum.contracts.skills import MAX_INSTRUCTIONS_CHARS, SkillMode, SkillTarget
 
 LAMP = """\
 ---
@@ -73,6 +73,28 @@ class TestReadingASkill:
 
     def test_a_skill_that_has_no_entrypoint_is_in_instructions_mode(self) -> None:
         assert parse_skill(PLAIN).manifest.mode is SkillMode.INSTRUCTIONS
+
+    def test_the_instructions_of_a_skill_that_has_no_script_are_what_a_model_can_follow(
+        self,
+    ) -> None:
+        parse_skill(PLAIN + "x" * MAX_INSTRUCTIONS_CHARS)
+        with pytest.raises(SkillInvalidError, match=f"at most {MAX_INSTRUCTIONS_CHARS} characters"):
+            parse_skill(PLAIN + "x" * (MAX_INSTRUCTIONS_CHARS + 1))
+
+    def test_the_notes_of_a_skill_that_has_a_script_are_not_limited_so(self) -> None:
+        skill = parse_skill(
+            LAMP + "x" * (MAX_INSTRUCTIONS_CHARS + 1), files={"scripts/run.py": b"x"}
+        )
+
+        assert skill.manifest.mode is SkillMode.SCRIPT
+        assert len(skill.instructions) > MAX_INSTRUCTIONS_CHARS
+
+    def test_the_message_says_how_long_they_are_and_never_what_they_say(self) -> None:
+        with pytest.raises(SkillInvalidError) as raised:
+            parse_skill(PLAIN + "hunter2 " * 2000)
+
+        assert "and these are" in str(raised.value)
+        assert "hunter2" not in str(raised.value)
 
 
 class TestWhatIsNotASkill:

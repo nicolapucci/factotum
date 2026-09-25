@@ -92,6 +92,14 @@ class ActionsSettings(DatabaseSettings):
     actions_run_margin_s: float = Field(default=5.0, ge=0, le=60)
     """What is added to the time limit of a skill for everything that is not the skill."""
 
+    actions_plan_timeout_s: float = Field(default=30.0, gt=0, le=300)
+    """How long a model is waited for to write the plan of a skill that is instructions: a plan is
+    a few hundred tokens of JSON, more than a reading of a message. For each try."""
+
+    actions_plan_attempts: int = Field(default=2, ge=1, le=3)
+    """How many times a model is asked for a plan: once, and again with what the checks said when
+    they refused it."""
+
     actions_max_devices_shown: int = Field(default=10, ge=1, le=50)
     """How many other devices the small model is shown by name."""
 

@@ -5,23 +5,32 @@ what a script prints is believed no further than it can be checked."""
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
 
-from factotum.actions.runner_client import RemoteRunner, hosts_of, read_output
+from factotum.actions.instructions import executor
+from factotum.actions.runner_client import (
+    EXECUTOR_ENTRYPOINT,
+    RemoteRunner,
+    executor_files,
+    hosts_of,
+    read_output,
+)
 from factotum.actions.secrets import FileSecrets, NoSecrets, SecretResolver, parse_secrets
 from factotum.actions.skills import LoadedSkill
 from factotum.actions.store import ActionsStore, InMemoryStore
-from factotum.actions.testing import LAMP, START, VOLUME, WEATHER
+from factotum.actions.testing import LAMP, LAMP_WORDS, START, VOLUME, WEATHER
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DevPrincipalDelegation
 from factotum.contracts.commands import SetVolume
 from factotum.contracts.errors import RunnerUnavailableError, SkillRunError
 from factotum.contracts.identity import Owner, OwnerKind, Subject
 from factotum.contracts.ids import SkillId
+from factotum.contracts.instructions import InstructionPlan
 from factotum.contracts.runner import Job, JobResult, RunRequest
 from factotum.contracts.skills import ParamValue, SkillManifest, SkillMode, SkillPermissions
 from factotum.contracts.testing import make_tenant_id, make_user_id
@@ -259,6 +268,98 @@ class TestWhoseSecretsTheyAre:
             await a_runner(runner, store, NoSecrets()).run(request_for(skill_id))
 
         assert runner.sent == []
+
+
+PROGRAM = Path(executor.__file__ or "").read_bytes()
+PLAN = InstructionPlan.model_validate(
+    {
+        "reason": "switches the lamp",
+        "steps": [
+            {
+                "id": "lamp",
+                "kind": "http",
+                "method": "POST",
+                "url": "http://${device.host}/light",
+                "headers": {"Authorization": "Bearer ${secret.HA_TOKEN}"},
+                "body": {"brightness_pct": "${value.brightness}"},
+            }
+        ],
+        "say": "The lamp is on.",
+    }
+)
+
+
+class TestAPlanIsRun:
+    async def test_it_is_run_by_the_program_that_runs_plans_and_read_by_it_from_standard_input(
+        self,
+    ) -> None:
+        store, runner = InMemoryStore(), Runner()
+        skill_id = SkillId(uuid4())  # nothing of the store is read: there are no files to run
+
+        await a_runner(runner, store).run(request_for(skill_id, LAMP_WORDS, plan=PLAN))
+
+        job = runner.job
+        assert (job.entrypoint, job.label) == ("executor.py", "lamp")
+        assert [file.path for file in job.files] == [EXECUTOR_ENTRYPOINT]
+        assert job.files[0].data == PROGRAM
+        assert json.loads(job.stdin) == {
+            "params": SPOKEN,
+            "device_params": DEVICE,
+            "plan": PLAN.model_dump(mode="json"),
+            "secrets": ["HA_TOKEN"],
+            "budget_s": 9,
+        }
+
+    async def test_it_is_given_the_secrets_and_the_hosts_a_script_would_be(self) -> None:
+        store, runner = InMemoryStore(), Runner()
+
+        await a_runner(runner, store).run(request_for(SkillId(uuid4()), LAMP_WORDS, plan=PLAN))
+
+        assert runner.job.env == {"HA_TOKEN": TOKEN}
+        assert runner.job.hosts == ("home-assistant.local",)
+
+    async def test_the_program_is_told_of_the_secrets_by_name_and_the_plan_holds_none(self) -> None:
+        store, runner = InMemoryStore(), Runner()
+
+        await a_runner(runner, store).run(request_for(SkillId(uuid4()), LAMP_WORDS, plan=PLAN))
+
+        assert TOKEN not in runner.job.stdin
+
+    @pytest.mark.parametrize(("limit", "budget"), [(1, 1), (2, 1), (10, 9), (120, 119)])
+    async def test_the_program_has_a_second_less_than_the_run_and_at_least_one(
+        self, limit: int, budget: int
+    ) -> None:
+        store, runner = InMemoryStore(), Runner()
+
+        await a_runner(runner, store).run(
+            request_for(SkillId(uuid4()), LAMP_WORDS, plan=PLAN, timeout_s=limit)
+        )
+
+        assert json.loads(runner.job.stdin)["budget_s"] == budget
+
+    async def test_a_skill_that_is_instructions_is_not_run_without_its_plan(self) -> None:
+        store, runner = InMemoryStore(), Runner()
+
+        with pytest.raises(SkillRunError, match="run from a plan, and there is none"):
+            await a_runner(runner, store).run(request_for(SkillId(uuid4()), LAMP_WORDS))
+
+        assert runner.sent == []
+
+    async def test_a_skill_that_is_instructions_and_needs_an_account_says_so(self) -> None:
+        store, runner = InMemoryStore(), Runner()
+        needs = SkillPermissions.model_validate(
+            {"accounts": [{"provider": "spotify", "scope": "user"}]}
+        )
+
+        with pytest.raises(SkillRunError, match="linked account"):
+            await a_runner(runner, store).run(
+                request_for(SkillId(uuid4()), LAMP_WORDS, plan=PLAN, permissions=needs)
+            )
+
+        assert runner.sent == []
+
+    def test_the_program_that_is_sent_is_the_one_that_is_in_the_package(self) -> None:
+        assert executor_files() == {"executor.py": PROGRAM}
 
 
 class TestWhatIsNotRun:

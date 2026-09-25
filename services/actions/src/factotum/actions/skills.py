@@ -18,7 +18,12 @@ from pydantic import ValidationError
 
 from factotum.contracts.actions import MAX_SKILL_SOURCE_CHARS, SkillLoadProblem
 from factotum.contracts.errors import SkillInvalidError
-from factotum.contracts.skills import SkillManifest, is_skill_path
+from factotum.contracts.skills import (
+    MAX_INSTRUCTIONS_CHARS,
+    SkillManifest,
+    SkillMode,
+    is_skill_path,
+)
 
 SKILL_FILE = "SKILL.md"
 
@@ -93,12 +98,14 @@ def parse_skill(
             else "a skill given as text cannot have an entrypoint: its scripts come with a folder"
         )
         raise SkillInvalidError(f"{where}: {reason}")
-    return LoadedSkill(
-        manifest=manifest,
-        instructions="\n".join(lines[end + 1 :]).strip(),
-        source=text,
-        files=held,
-    )
+    instructions = "\n".join(lines[end + 1 :]).strip()
+    if manifest.mode is SkillMode.INSTRUCTIONS and len(instructions) > MAX_INSTRUCTIONS_CHARS:
+        raise SkillInvalidError(
+            f"{where}: the instructions of a skill that has no script are at most "
+            f"{MAX_INSTRUCTIONS_CHARS} characters (a model reads them whole every time), and these "
+            f"are {len(instructions)}"
+        )
+    return LoadedSkill(manifest=manifest, instructions=instructions, source=text, files=held)
 
 
 def _problems(error: ValidationError) -> str:

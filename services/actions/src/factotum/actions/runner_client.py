@@ -6,6 +6,10 @@ the job leaves. The files are those of the version that was enabled, read from t
 from what a caller sent. The secrets are the skill's owner's own and only those the version was
 granted. The hosts are what the grant names, with the device's own values where it refers to them.
 
+A skill that has no script is run the same way: the files are the program that runs a plan
+(``instructions.executor``, the one file), and what it reads is the plan that a model wrote and the
+checks accepted.
+
 What comes back is what a script printed, and none of it is trusted: it is read as a
 ``SkillOutput``, and whatever is not one is a failure of the skill, told by what is wrong with it
 and never by what it said.
@@ -14,10 +18,13 @@ and never by what it said.
 import json
 import logging
 from collections.abc import Mapping
+from functools import cache
+from pathlib import Path
 
 import httpx
 from pydantic import ValidationError
 
+from factotum.actions.instructions import executor
 from factotum.actions.secrets import SecretResolver
 from factotum.actions.store.base import ActionsStore
 from factotum.common.devauth import PrincipalDelegation
@@ -33,6 +40,9 @@ from factotum.contracts.skills import (
 )
 
 logger = logging.getLogger("factotum.actions.runner")
+
+EXECUTOR_ENTRYPOINT = "executor.py"
+"""Where the program that runs a plan is, among the files of a job."""
 
 STDERR_LOGGED_CHARS = 300
 """How much of what a failed script wrote to its error output is kept in the log."""
@@ -63,6 +73,14 @@ def hosts_of(
 
 MAX_FIELD_NAME_CHARS = 40
 """A name of a field that a script printed is what it says, so only the start of it is quoted."""
+
+
+@cache
+def executor_files() -> dict[str, bytes]:
+    """The files that are a run of a plan: the program itself, which is the one file."""
+    source = executor.__file__
+    assert source is not None  # noqa: S101 - a module that was imported from a file has one
+    return {EXECUTOR_ENTRYPOINT: Path(source).read_bytes()}
 
 
 def _problems(error: ValidationError) -> str:
@@ -143,28 +161,48 @@ class RemoteRunner:
 
     async def _job(self, request: RunRequest) -> Job:
         """What the runner is asked to run for this request."""
-        if request.mode is not SkillMode.SCRIPT or request.entrypoint is None:
-            raise SkillRunError("a skill that has no script is not run by the runner")
         if request.permissions.accounts:
             raise SkillRunError(
                 "the skill needs a linked account, and accounts are linked by the hub, "
                 "which is not there yet"
             )
-        files = await self._store.get_files(request.tenant_id, request.skill_id, request.version)
-        if files is None or request.entrypoint not in files:
-            raise SkillRunError("the files of the version that was enabled are not there")
+        if request.mode is SkillMode.INSTRUCTIONS:
+            if request.plan is None:
+                raise SkillRunError(
+                    "a skill that has no script is run from a plan, and there is none"
+                )
+            entrypoint = EXECUTOR_ENTRYPOINT
+            files = executor_files()
+            given: dict[str, object] = {
+                "plan": request.plan.model_dump(mode="json"),
+                "secrets": list(request.permissions.secrets),
+                "budget_s": max(request.timeout_s - 1, 1),
+            }
+        else:
+            if request.entrypoint is None:
+                raise SkillRunError("a skill that has no script is not run by the runner")
+            entrypoint = request.entrypoint
+            stored = await self._store.get_files(
+                request.tenant_id, request.skill_id, request.version
+            )
+            if stored is None or entrypoint not in stored:
+                raise SkillRunError("the files of the version that was enabled are not there")
+            files = stored
+            given = {}
         try:
             secrets = await self._secrets.resolve(
                 request.tenant_id, request.owner, request.permissions.secrets
             )
         except SecretNotFoundError as error:
             raise SkillRunError(error.message) from None
-        stdin = json.dumps({"params": request.params, "device_params": request.device_params})
+        stdin = json.dumps(
+            {"params": request.params, "device_params": request.device_params, **given}
+        )
         try:
             return Job(
                 label=request.skill_name,
                 files=tuple(JobFile.of(path, data) for path, data in sorted(files.items())),
-                entrypoint=request.entrypoint,
+                entrypoint=entrypoint,
                 stdin=stdin,
                 env=secrets,
                 hosts=hosts_of(request.permissions, request.device_params),

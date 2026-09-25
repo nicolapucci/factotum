@@ -5,16 +5,23 @@ import asyncio
 from datetime import timedelta
 from typing import Any
 
+import httpx
+
 from factotum.actions.confirmations import ConfirmationReader
 from factotum.actions.directory import DeviceDirectory, FileDeviceDirectory
 from factotum.actions.execution import CommandDispatcher, SkillRunner
+from factotum.actions.instructions.testing import LocalRunner
+from factotum.actions.instructions.writer import PlanWriter
 from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
+from factotum.actions.runner_client import RemoteRunner
+from factotum.actions.secrets import FileSecrets, parse_secrets
 from factotum.actions.service import ActionService, ActionSettings
 from factotum.actions.skills import LoadedSkill
 from factotum.actions.store import ActionsStore, InMemoryStore, StoredSkill
 from factotum.actions.testing import Clock, FakeEmbedder, ScriptedChat
 from factotum.common.config import Environment, ServiceSettings
+from factotum.common.devauth import DevPrincipalDelegation
 from factotum.contracts.actions import ActOutcome, ActRequest
 from factotum.contracts.approval import ApprovalRequest, ApprovalResult
 from factotum.contracts.audit import AuditRecord
@@ -171,8 +178,11 @@ class ActionsRig:
         chat: Chat | None = None,
         embedder: Embedder | None = None,
         patience_s: float | None = None,
+        instructions: bool = False,
     ) -> None:
-        """``chat`` and ``embedder`` are real models for a test that measures them; without them
+        """``instructions`` sets the service up to write and run the plans of skills that have no
+        script (its model is the same scripted one, asked after the reading of the message).
+        ``chat`` and ``embedder`` are real models for a test that measures them; without them
         the doubles are used, and ``plans`` and ``embedder`` are how they are told what to do.
         ``patience_s`` is how long each model is waited for, where the defaults would give up on a
         model that is only slow, which is not what such a test measures."""
@@ -186,6 +196,7 @@ class ActionsRig:
         self._chat: Chat = chat or self.chat
         self._embedder: Embedder = embedder or self.embedder
         self._patience_s = patience_s
+        self._writer = PlanWriter(self._chat, timeout_s=self._wait(30.0)) if instructions else None
         self.index = SkillIndex(self.store, self._embedder, timeout_s=self._wait(8.0))
         self.matcher = SkillMatcher(
             self.store, self._embedder, self.index, timeout_s=self._wait(4.0)
@@ -211,6 +222,7 @@ class ActionsRig:
             reader=ConfirmationReader(self._chat, timeout_s=self._wait(6.0)),
             runner=self._runner,
             dispatcher=self._dispatcher,
+            writer=self._writer,
             approver=self.approver,
             settings=self._settings,
             now=self.clock,
@@ -230,6 +242,26 @@ class ActionsRig:
         if dispatcher is not None:
             self._dispatcher = dispatcher
         self.service = self._service()
+
+    def use_local_runner(
+        self, secrets: str = 'tenant:\n  HA_TOKEN: "the-token-of-the-home"\n'
+    ) -> LocalRunner:
+        """Run skills for real, but in this process (``LocalRunner``): what the runner service
+        does, without a container. The skills of the store are what is run, and ``secrets`` are the
+        ones they are given."""
+        local = LocalRunner()
+        runner = RemoteRunner(
+            httpx.AsyncClient(transport=local.transport(), base_url="http://runner.test"),
+            store=self.store,
+            secrets=FileSecrets(
+                TEST_SETTINGS,
+                parse_secrets(secrets, tenant_id=self.tenant, user_id=self.user),
+                tenant_id=self.tenant,
+            ),
+            delegation=DevPrincipalDelegation(TEST_SETTINGS),
+        )
+        self.use_runner(runner)
+        return local
 
     def device(self, name: str) -> SystemDeviceRecord:
         return next(record for record, _ in self.home.system if record.name == name)
@@ -255,8 +287,10 @@ class ActionsRig:
         enable: bool = True,
         index: bool = True,
         owner: Owner | None = None,
+        instructions: str = "",
     ) -> dict[str, StoredSkill]:
-        """Skills that are installed, enabled with what they declare, and indexed."""
+        """Skills that are installed, enabled with what they declare, and indexed. ``instructions``
+        are what a skill that has no script is followed by."""
         found: dict[str, StoredSkill] = {}
         for manifest in manifests:
             installed = await self.store.install(
@@ -264,8 +298,8 @@ class ActionsRig:
                 owner or self.shared_owner,
                 LoadedSkill(
                     manifest,
-                    "",
-                    f"---\n{manifest.model_dump_json()}\n---\n",
+                    instructions,
+                    f"---\n{manifest.model_dump_json()}\n---\n{instructions}",
                     {"scripts/run.py": b"x"},
                 ),
                 now=self.clock(),

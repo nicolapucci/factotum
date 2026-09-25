@@ -44,6 +44,11 @@ class TestDefaults:
         assert settings.actions_edge_url is None
         assert settings.actions_secrets_file is None
 
+    def test_a_model_has_half_a_minute_to_write_a_plan_and_two_tries(self) -> None:
+        settings = load()
+
+        assert (settings.actions_plan_timeout_s, settings.actions_plan_attempts) == (30.0, 2)
+
     def test_the_edge_is_waited_for_longer_than_it_waits_for_a_device(self) -> None:
         assert load().actions_edge_timeout_s == 15.0
 
@@ -67,6 +72,8 @@ class TestReadingTheEnvironment:
         monkeypatch.setenv("FACTOTUM_ACTIONS_RUNNER_URL", "http://runner:8086")
         monkeypatch.setenv("FACTOTUM_ACTIONS_EDGE_URL", "http://edge:8084")
         monkeypatch.setenv("FACTOTUM_ACTIONS_EDGE_TIMEOUT_S", "30")
+        monkeypatch.setenv("FACTOTUM_ACTIONS_PLAN_TIMEOUT_S", "45")
+        monkeypatch.setenv("FACTOTUM_ACTIONS_PLAN_ATTEMPTS", "3")
         monkeypatch.setenv("FACTOTUM_ACTIONS_SECRETS_FILE", "/etc/factotum/secrets.dev.yaml")
         monkeypatch.setenv("FACTOTUM_ACTIONS_MATCH_THRESHOLD", "0.6")
         monkeypatch.setenv("FACTOTUM_ACTIONS_CONFIRMATION_SECONDS", "30")
@@ -81,6 +88,7 @@ class TestReadingTheEnvironment:
         assert str(settings.actions_runner_url) == "http://runner:8086/"
         assert str(settings.actions_edge_url) == "http://edge:8084/"
         assert settings.actions_edge_timeout_s == 30.0
+        assert (settings.actions_plan_timeout_s, settings.actions_plan_attempts) == (45.0, 3)
         assert settings.actions_secrets_file == Path("/etc/factotum/secrets.dev.yaml")
         assert settings.actions_match_threshold == 0.6
         assert settings.action.confirmation_ttl == timedelta(seconds=30)
@@ -129,6 +137,10 @@ class TestWhatIsRefused:
             {"actions_run_margin_s": 61},
             {"actions_edge_timeout_s": 0},
             {"actions_edge_timeout_s": 601},
+            {"actions_plan_timeout_s": 0},
+            {"actions_plan_timeout_s": 301},
+            {"actions_plan_attempts": 0},
+            {"actions_plan_attempts": 4},
             {"actions_runner_url": "not a url"},
             {"actions_edge_url": "ftp://edge"},
             {"actions_max_devices_shown": 0},

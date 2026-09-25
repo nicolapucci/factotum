@@ -31,10 +31,13 @@ from factotum.actions.approvals import NullApprover
 from factotum.actions.confirmations import Answer, ConfirmationReader
 from factotum.actions.directory import BoundDevice, DeviceDirectory
 from factotum.actions.execution import CommandDispatcher, NullDispatcher, SkillRunner
+from factotum.actions.instructions.checks import PlanRejected, check_plan, describe
+from factotum.actions.instructions.writer import PlanInputs, PlanWriter
 from factotum.actions.matching import Candidate, Candidates, SkillMatcher
 from factotum.actions.phrases import Say, refusal, say
 from factotum.actions.planner import PlanDevices, Planner, view_of
 from factotum.actions.proposal import Proposal
+from factotum.actions.runner_client import hosts_of
 from factotum.actions.store import ActionsStore, PendingRow
 from factotum.actions.understanding import NeedsMore, NothingToDo, Understood, understand
 from factotum.common.authorization import authorize
@@ -61,8 +64,9 @@ from factotum.contracts.devices import ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.errors import FactotumError, RunnerUnavailableError, SkillRunError
 from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.ids import ApprovalId, AuditId, DeviceId, SkillId
+from factotum.contracts.instructions import InstructionPlan
 from factotum.contracts.runner import RunRequest, RunResult
-from factotum.contracts.skills import ParamValue, SkillPermissions, SkillTarget
+from factotum.contracts.skills import ParamValue, SkillMode, SkillPermissions, SkillTarget
 
 logger = logging.getLogger("factotum.actions")
 
@@ -104,6 +108,14 @@ def _redacted(values: dict[str, ParamValue]) -> dict[str, ParamValue]:
     return masked
 
 
+def _with_plan(detail: str | None, plan: InstructionPlan | None) -> str | None:
+    """What the trail says, and what the plan comes to when there is one: the method and host of
+    each request and the name of each command, as they were written."""
+    if plan is None:
+        return detail
+    return f"{detail}; plan: {describe(plan)}" if detail else f"plan: {describe(plan)}"
+
+
 def _kind_of(target: SystemDeviceRecord | ExternalDeviceRecord | None) -> str | None:
     if target is None:
         return None
@@ -121,6 +133,7 @@ class ActionService:
         reader: ConfirmationReader,
         runner: SkillRunner,
         dispatcher: CommandDispatcher | None = None,
+        writer: PlanWriter | None = None,
         approver: Approver | None = None,
         settings: ActionSettings | None = None,
         now: Callable[[], datetime] = _utc_now,
@@ -133,6 +146,7 @@ class ActionService:
         self._reader = reader
         self._runner = runner
         self._dispatcher = dispatcher or NullDispatcher()
+        self._writer = writer
         self._approver = approver or NullApprover()
         self._settings = settings or ActionSettings()
         self._now = now
@@ -261,6 +275,7 @@ class ActionService:
             untrusted=proposal.untrusted_content_in_turn,
             confirmed=True,
             now=now,
+            plan=proposal.plan,
         )
 
     async def _target_of(
@@ -354,6 +369,7 @@ class ActionService:
         untrusted: bool,
         confirmed: bool,
         now: datetime,
+        plan: InstructionPlan | None = None,
     ) -> ActOutcome:
         stored = understood.candidate.skill
         assert stored.enabled is not None  # noqa: S101 - only skills that run are offered
@@ -404,7 +420,9 @@ class ActionService:
         if decision.outcome is DecisionOutcome.REQUIRE_CONFIRMATION:
             if not confirmed:
                 return await self._ask(principal, understood, decision, untrusted, now)
-            return await self._run(principal, understood, decision, confirmed=True, approval=None)
+            return await self._run(
+                principal, understood, decision, confirmed=True, approval=None, plan=plan
+            )
         return await self._run(principal, understood, decision, confirmed=said, approval=None)
 
     async def _ask(
@@ -415,9 +433,15 @@ class ActionService:
         untrusted: bool,
         now: datetime,
     ) -> ActOutcome:
-        """Ask the person a yes or a no, and keep what is asked until it is answered."""
+        """Ask the person a yes or a no, and keep what is asked until it is answered. For a skill
+        that is instructions, what is asked is what a model wrote for it: the plan is written first,
+        checked, and kept with the question, so that a yes confirms what will be done and nothing
+        else is written after it."""
         stored = understood.candidate.skill
         assert stored.enabled is not None  # noqa: S101
+        planned = await self._planned(principal, understood, decision, plan=None, confirmed=None)
+        if isinstance(planned, ActOutcome):
+            return planned
         proposal = Proposal(
             skill_id=stored.id,
             skill_name=stored.name,
@@ -430,6 +454,7 @@ class ActionService:
             question=understood.question,
             decision=decision,
             untrusted_content_in_turn=untrusted,
+            plan=planned,
         )
         await self._store.put_pending(
             PendingRow(
@@ -450,7 +475,7 @@ class ActionService:
             code=None,
             reply=understood.question or say(understood.language, Say.CONFIRM, skill=stored.name),
             result=ActionResult.NOT_EXECUTED,
-            detail="asked for confirmation",
+            detail=_with_plan("asked for confirmation", planned),
             confirmed=None,
         )
 
@@ -529,11 +554,18 @@ class ActionService:
         *,
         confirmed: bool | None,
         approval: ApprovalTrail | None,
+        plan: InstructionPlan | None = None,
     ) -> ActOutcome:
         stored = understood.candidate.skill
         assert stored.enabled is not None  # noqa: S101
         manifest = stored.enabled.manifest
         language = understood.language
+        planned = await self._planned(
+            principal, understood, decision, plan=plan, confirmed=confirmed, approval=approval
+        )
+        if isinstance(planned, ActOutcome):
+            return planned
+        plan = planned
 
         async def settle(
             status: ActStatus,
@@ -567,6 +599,7 @@ class ActionService:
             device_params=understood.device_params,
             permissions=stored.enabled.granted or SkillPermissions(),
             timeout_s=manifest.timeout_s,
+            plan=plan,
         )
         try:
             async with asyncio.timeout(manifest.timeout_s + self._settings.run_margin_s):
@@ -622,8 +655,79 @@ class ActionService:
             None,
             _clip(result.message, MAX_REPLY_CHARS) if result.message else say(language, Say.DONE),
             ActionResult.EXECUTED,
-            None,
+            _with_plan(None, plan),
         )
+
+    async def _planned(
+        self,
+        principal: Principal,
+        understood: Understood,
+        decision: Decision,
+        *,
+        plan: InstructionPlan | None,
+        confirmed: bool | None,
+        approval: ApprovalTrail | None = None,
+    ) -> InstructionPlan | ActOutcome | None:
+        """The plan for a skill that is instructions: the one that was confirmed, checked again, or
+        one that a model writes now. Nothing for a skill that has a script, or when nothing is set
+        up to write one (the skill is then run as it is, which is a dry run). An outcome, which is
+        the answer to give, when there is no plan that may be run."""
+        stored = understood.candidate.skill
+        assert stored.enabled is not None  # noqa: S101
+        manifest = stored.enabled.manifest
+        if manifest.mode is not SkillMode.INSTRUCTIONS or self._writer is None:
+            return None
+        granted = stored.enabled.granted or SkillPermissions()
+        try:
+            if not stored.enabled.instructions.strip():
+                raise PlanRejected("the skill has no instructions to follow")
+            hosts = hosts_of(granted, understood.device_params)
+
+            def check(candidate: InstructionPlan) -> None:
+                check_plan(
+                    candidate,
+                    manifest=manifest,
+                    granted=granted,
+                    hosts=hosts,
+                    values=understood.values,
+                    device_params=understood.device_params,
+                )
+
+            if plan is not None:
+                check(plan)
+                return plan
+            return await self._writer.write(
+                Owner.of_subject(principal.acts_as),
+                PlanInputs(
+                    name=stored.name,
+                    description=manifest.description,
+                    instructions=stored.enabled.instructions,
+                    effect=manifest.effect,
+                    values=understood.values,
+                    device_values=tuple(understood.device_params),
+                    hosts=hosts,
+                    secrets=granted.secrets,
+                    language=understood.language,
+                ),
+                check,
+            )
+        except (PlanRejected, FactotumError) as error:
+            reason = error.message if isinstance(error, FactotumError) else str(error)
+            logger.warning(
+                "a plan could not be had", extra={"skill": stored.name, "reason": reason}
+            )
+            return await self._settle(
+                principal,
+                understood,
+                decision,
+                status=ActStatus.FAILED,
+                code=ActCode.SKILL_FAILED,
+                reply=say(understood.language, Say.FAILED),
+                result=ActionResult.FAILED,
+                detail=f"no plan: {reason}"[:MAX_FAILURE_DETAIL_CHARS],
+                confirmed=confirmed,
+                approval=approval,
+            )
 
     async def _give(
         self, principal: Principal, understood: Understood, result: RunResult

@@ -199,6 +199,37 @@ ROUTER = SkillManifest(
 )
 
 
+# ---- the same skills, and one more, as instructions: no script, and notes for a model
+
+LAMP_NOTES = (
+    "Use the REST API of Home Assistant. To switch the lamp on, POST "
+    "http://HOST:8123/api/services/light/turn_on (with brightness_pct when a brightness is asked "
+    "for); to switch it off, POST http://HOST:8123/api/services/light/turn_off. Send "
+    '{"entity_id": ENTITY} as JSON, with the header Authorization: Bearer TOKEN.'
+)
+LAMP_WORDS = LAMP.model_copy(update={"entrypoint": None})
+"""The lamp, as instructions (it is bound to the same devices, under the same name)."""
+
+GARAGE_NOTES = (
+    "Use the REST API of Home Assistant: POST http://HOST:8123/api/services/cover/open_cover, or "
+    'close_cover, with {"entity_id": ENTITY} as JSON and the header Authorization: Bearer TOKEN.'
+)
+GARAGE_WORDS = GARAGE.model_copy(update={"entrypoint": None})
+"""The garage door, as instructions: it asks for a yes before it does anything."""
+
+ANNOUNCE_NOTES = "Give the device a speak command with the message as its text."
+ANNOUNCE = SkillManifest(
+    name="announce",
+    description="Say something out loud on a device.",
+    examples=("tell the kitchen that dinner is ready", "announce that dinner is ready"),
+    target=SkillTarget.SYSTEM,
+    parameters={"message": ParameterSpec(type=ParamType.STRING)},
+    required=("message",),
+    effect=Effect.REVERSIBLE,
+)
+"""A skill that only has a device do something: no request, and no network."""
+
+
 def stored_skill(
     manifest: SkillManifest,
     tenant: TenantId,

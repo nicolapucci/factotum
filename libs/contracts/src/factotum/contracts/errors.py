@@ -263,6 +263,13 @@ class RunnerUnavailableError(SkillRunError):
     code = "runner_unavailable"
 
 
+class PlanError(SkillRunError):
+    """A skill that is instructions could not be run: no plan that the checks accept was written
+    for it. The message says what the checks said of the last one."""
+
+    code = "plan_error"
+
+
 class EgressGrantError(FactotumError):
     """What a skill presented to the egress proxy to say where it may go is not a grant that the
     runner made: it is malformed, it was altered, or it has run out. The message never says which

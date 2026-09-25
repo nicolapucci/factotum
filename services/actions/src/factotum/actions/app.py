@@ -30,6 +30,7 @@ from factotum.actions.execution import (
     NullDispatcher,
     SkillRunner,
 )
+from factotum.actions.instructions.writer import PlanWriter
 from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
 from factotum.actions.runner_client import RemoteRunner
@@ -138,6 +139,15 @@ def build_app(settings: ActionsSettings) -> FastAPI:
                         principals,
                     )
                 chat = GatewayChat(gateway, delegation)
+                writer = (
+                    None
+                    if settings.actions_runner_url is None
+                    else PlanWriter(
+                        chat,
+                        timeout_s=settings.actions_plan_timeout_s,
+                        attempts=settings.actions_plan_attempts,
+                    )
+                )
                 embedder = GatewayEmbedder(gateway, delegation)
                 index = SkillIndex(store, embedder, timeout_s=settings.actions_index_timeout_s)
                 matcher = SkillMatcher(
@@ -159,6 +169,7 @@ def build_app(settings: ActionsSettings) -> FastAPI:
                         ),
                         runner=runner,
                         dispatcher=dispatcher,
+                        writer=writer,
                         settings=settings.action,
                     ),
                     catalog=Catalog(
