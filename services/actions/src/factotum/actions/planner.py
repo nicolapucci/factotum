@@ -147,7 +147,8 @@ def _value(name: str, spec: ParameterSpec, required: bool) -> str:
         }[spec.type]
         if spec.minimum is not None and spec.maximum is not None:
             kind += f" {spec.minimum:g} to {spec.maximum:g}"
-    return f"{name} ({kind}{', required' if required else ''})"
+    shown = f"{name} ({kind}{', required' if required else ''})"
+    return f"{shown}: {spec.description}" if spec.description else shown
 
 
 def view_of(
@@ -214,30 +215,37 @@ class Example:
         return json.dumps(self.plan, ensure_ascii=False)
 
 
+# The skills of the examples are shown as the ones that come with the project are, with what each
+# value is for (a test keeps the two the same): what is shown of a real skill is what the model has
+# been shown how to read.
 _LAMP = SkillView(
     name="lamp",
     description="Turn a lamp on or off, or set how bright it is.",
     target=SkillTarget.EXTERNAL,
-    values=("state (on or off, required)", "brightness (whole number 0 to 100)"),
+    values=(
+        "state (on or off, required): whether the lamp is to be on or off (on, when only a "
+        "brightness is asked for)",
+        "brightness (whole number 0 to 100): how bright it is to be, in percent",
+    ),
     devices=("Living room lamp (also called: lamp, the lamp)", "Bedroom lamp"),
 )
 _WEATHER = SkillView(
     name="weather",
     description="Say what the weather is like now in a city.",
     target=SkillTarget.NONE,
-    values=("place (text, required)",),
+    values=("place (text, required): the city, as the person said it",),
 )
 _VOLUME = SkillView(
     name="volume",
     description="Set the volume of the device that is being spoken to.",
     target=SkillTarget.SYSTEM,
-    values=("level (whole number 0 to 100, required)",),
+    values=("level (whole number 0 to 100, required): the volume, in percent",),
 )
 _GARAGE = SkillView(
     name="garage-door",
     description="Open or close the garage door.",
     target=SkillTarget.EXTERNAL,
-    values=("action (open or close, required)",),
+    values=("action (open or close, required): whether the door is to open or to close",),
     devices=("Garage door (also called: garage)",),
 )
 

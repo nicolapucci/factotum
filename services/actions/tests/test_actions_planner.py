@@ -23,7 +23,7 @@ from factotum.contracts.devices import ExternalDeviceRecord
 from factotum.contracts.errors import GatewayError, GatewayUnavailableError, ProviderTimeoutError
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.models import ModelRole
-from factotum.contracts.skills import SkillTarget
+from factotum.contracts.skills import ParameterSpec, ParamType, SkillTarget
 from factotum.contracts.testing import make_external_device, make_tenant_id
 
 TENANT = make_tenant_id()
@@ -157,6 +157,28 @@ class TestWhatTheModelIsShown:
         assert view_of(WEATHER).values == ("place (text, required)",)
         assert view_of(VOLUME).values == ("level (whole number 0 to 100, required)",)
         assert view_of(GARAGE).values == ("action (open or close, required)",)
+
+    def test_what_a_value_is_for_is_said_after_its_kind(self) -> None:
+        """A description is how a skill tells the small model that it is to copy the words that were
+        said, or that a brightness alone means on. It was written in every skill and shown to
+        nobody."""
+        described = LAMP.model_copy(
+            update={
+                "parameters": {
+                    "state": ParameterSpec(
+                        type=ParamType.STRING,
+                        enum=("on", "off"),
+                        description="on, when only a brightness is asked for",
+                    ),
+                    "brightness": ParameterSpec(type=ParamType.INTEGER, minimum=0, maximum=100),
+                }
+            }
+        )
+
+        assert view_of(described).values == (
+            "state (on or off, required): on, when only a brightness is asked for",
+            "brightness (whole number 0 to 100)",
+        )
 
     def test_the_skills_and_the_message_are_one_turn(self) -> None:
         text = render(

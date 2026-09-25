@@ -102,8 +102,9 @@ script has the standard library and nothing installed.
    `FACTOTUM_ACTIONS_MATCH_THRESHOLD` (0.45) near go on, the nearest first, up to six. If the
    message cannot be embedded the skills that could not be measured go on unscored, up to twelve.
    With no candidates the answer is `NO_ACTION` and no model is asked.
-2. **A plan from a small model.** The model in `chat.fast` reads the message and the candidates, with
-   the names of the devices the caller may use, and answers a structured `Plan`: *why* (a few words,
+2. **A plan from a small model.** The model in `chat.fast` reads the message and the candidates (each
+   with its values: their kind, and what the skill says each is for), with the names of the devices
+   the caller may use, and answers a structured `Plan`: *why* (a few words,
    which is what makes a small model get the rest right), which skill or none, which device, which
    values, the language, what to ask for a yes and what to ask for a missing value. It is shown 12
    examples as turns of the conversation it is in, and **it is never shown the conversation**, a
@@ -340,8 +341,9 @@ Home Assistant is (an address, or a name the DNS of the machine knows; `host.doc
 on this machine). The secrets they need are in [`config/secrets.example.yaml`](../config/secrets.example.yaml):
 copy it to `config/secrets.dev.yaml` and put your token in it. Bindings for the models are in
 `config/bindings.dev.yaml` (see [model-gateway.md](model-gateway.md)); `chat.fast` and `embedding` are
-the roles used here. The engine must be running (a script runs in a container of its own), and the
-stack needs a key for the grants of the egress proxy, which is yours to make.
+the roles used here, and `chat.main` for the skills that are only instructions (it writes their plans:
+bind it to the same model to start). The engine must be running (a script runs in a container of its
+own), and the stack needs a key for the grants of the egress proxy, which is yours to make.
 
 ```bash
 export FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_ENVIRONMENT=development
@@ -370,8 +372,13 @@ Or as a device, which is how it will be used: `uv run factotum-terminal --profil
 and say *turn on the lamp*, *open the garage door* (it asks; say *yes*), *what is the weather in
 Rome*, *restart the router* (it cannot be approved yet), *apri il garage*; and to the `speaker`
 profile *set the volume to 30*, which the terminal shows as a command it was given (`[do] volume 30`).
+The three skills that are only instructions are tried the same way: to the speaker, *tell everyone that
+dinner is ready* (a `speak` command, no request), *set the movie scene* (two calls to the Home
+Assistant that its notes name: change `homeassistant.local`, in the notes and in the permissions, to
+where yours is) and *how is the air quality in Rome* (two requests to Open-Meteo, which needs no key).
 Without `FACTOTUM_ACTIONS_RUNNER_URL` everything that is done is a dry run, and `GET /v1/audit` shows
-the trail in either case.
+the trail in either case: for these skills it says what the plan did (`plan: POST
+homeassistant.local:8123, POST homeassistant.local:8123`), or why there was none (`no plan: ...`).
 
 ## Tests
 
@@ -562,8 +569,9 @@ What went wrong, six times in 82:
   of 55 commands went to the wrong skill, and none of 39 with five. The way out is in the skills
   (what each says about itself and its examples), not in the code.
 * *annuncia che la cena è pronta* and *dì che è ora di andare* found the announcement, and the model
-  gave it *Cena pronta* and *It's time to go* (translated) as what to say: a model does not always
-  copy what it is asked to say aloud, even when the value says *as the person said it*.
+  gave it *Cena pronta* and *It's time to go* (translated) as what to say. The description of the
+  value says *as the person said it*, and **it was not shown to the model**: no description of a
+  value was, until this was found (it is shown now, and the numbers above are of before).
 
 Questions were better with more skills, not worse (27 of 27; 21 of 22 with five). The meaning search
 does what it did: 55 of 55 commands go on to the model at a threshold of 0.45, the lowest at 0.69, and

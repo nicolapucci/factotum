@@ -106,6 +106,12 @@ looks like JSON.
 - An answer cut off by the output limit, or refused, is not retried: asking again would not help.
   The last failure is `invalid_structured_output`, with the attempts and the problems in `details`.
 - Token usage is added up over the attempts.
+- **Ollama makes a grammar of the schema**, and two things about it were measured (version 0.34): a
+  schema that says nothing (`{}`, "a value of any kind") is an *object* to it, so a model asked for a
+  text there wrote `{"hello world": ""}` and for a number `{"value": 42}` (say `anyOf` the types
+  instead); and a `maxLength` of exactly 2000 makes it fail with an HTTP 400, "failed to parse
+  grammar" (1999 and 2001 are taken). `pattern` and `anyOf` are enforced. It cost a whole class of
+  skills before it was found ([`skills.md`](skills.md#what-the-measurements-found)).
 
 ## Streaming
 

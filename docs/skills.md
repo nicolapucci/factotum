@@ -40,7 +40,7 @@ The lights are managed by Home Assistant, at `homeassistant.local` on port 8123.
 | `description` | one sentence: what it does. It is embedded, and it is what the model that reads a message is shown. |
 | `examples` | things a person would say, in every language you expect. They are embedded too: the more they sound like the messages, the surer the skill is found. |
 | `target` | `none` (no device: a service), `system` (a Factotum device: the one that was spoken to, or the one that was named) or `external` (a lamp, a door, a TV: bound to the skill in the devices file with what is its own). |
-| `parameters`, `required` | what the message may say: a name, a `type` (`string`, `integer`, `number`, `boolean`), and optionally `description`, `enum`, `minimum`, `maximum`. A required value that is not in the message is asked for; one is never invented. |
+| `parameters`, `required` | what the message may say: a name, a `type` (`string`, `integer`, `number`, `boolean`), and optionally `description`, `enum`, `minimum`, `maximum`. The `description` is shown, after the type, to the model that reads a message: it is where to say what a value is for (*as the person said it*, *on, when only a brightness is asked for*). A required value that is not in the message is asked for; one is never invented. |
 | `device_parameters` | what is fixed for an external device (its `host`, its `entity_id`): set in the devices file, never said in a message. |
 | `permissions` | `network`: the hosts the skill may reach (`${device.host}` is the host of the device it is bound to; `*.example.com` is every subdomain), `secrets`: the names of the secrets it may be given. Nothing that is not declared is available, and enabling a version grants exactly what it declares. |
 | `effect` | `read_only`, `reversible` or `irreversible`: how severe the worst thing it does is. It decides what a device may start (a shared speaker may not start what cannot be undone) and, for a skill in instructions mode, what a plan may do: **a plan of a `read_only` skill has `GET`s and nothing else**, whatever it says. Declare it honestly. |
@@ -319,11 +319,16 @@ and the message that failed is the reading model's.
 * **What the notes need** is in *Writing notes that a model follows* above, and it is not what was
   believed: the address in full, and the shape of the answer of an API that the model cannot know.
   How the calls are laid out did not matter.
-* **A model does not copy what it is to say.** Of the six announcements in the corpus of messages, the
-  reading model made *la cena è pronta* into *Cena pronta* and *è ora di andare* into *It's time to
-  go* (translated): the plan is right and the device says something else. What a person said to be
-  said aloud is worth a description that says so, and the example skill's says *as the person said
-  it*, which the 8B model does not always follow.
+* **What a skill says about a value was shown to nobody.** Of the six announcements in the corpus of
+  messages, the reading model made *la cena è pronta* into *Cena pronta* and *è ora di andare* into
+  *It's time to go* (translated): the plan is right and the device says something else. The
+  description of the value (*what to say, as the person said it*) says to copy, and **the model that
+  reads a message was never given it**: a description was in the manifest, checked and kept, and no
+  model saw it (the same for the lamp's *on, when only a brightness is asked for*). It is shown now,
+  after the kind of the value (`message (text, required): what to say, as the person said it`), and
+  the skills in the examples that the model is shown are shown the same way (a test keeps them the
+  same as the skills that come with the project). What that does to the corpus is in
+  [`actions.md`](actions.md#eight-skills-slice-6).
 * **A card that is in use for something else can be far slower than a shared one.** With a game on the
   same card the model wrote 1 to 3 tokens a second (60 to 70 on a card with only the desktop on it),
   and a run of a minute or two took more than ten and was stopped. The memory of the card was full

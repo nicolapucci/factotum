@@ -16,6 +16,8 @@ import pytest
 from factotum.actions.instructions.checks import check_plan
 from factotum.actions.instructions.executor import Context, run
 from factotum.actions.instructions.testing import FakeWeb, plan_dict, step_command, step_http
+from factotum.actions.planner import EXAMPLES as PLANNER_EXAMPLES
+from factotum.actions.planner import view_of
 from factotum.actions.runner_client import hosts_of, read_output
 from factotum.actions.skills import LoadedSkill, load_folder
 from factotum.common.hosts import match_host
@@ -42,6 +44,17 @@ def examples() -> dict[str, LoadedSkill]:
     skills, problems = load_folder(EXAMPLES)
     assert problems == []
     return {skill.manifest.name: skill for skill in skills}
+
+
+def test_the_skills_that_the_planner_is_shown_as_examples_are_shown_as_these_are() -> None:
+    """What the model has been shown how to read is what it is given for a real skill: the same
+    values, with the same words about what each is for."""
+    by_name = examples()
+    shown = {view.name: view for example in PLANNER_EXAMPLES for view in example.skills}
+
+    assert shown
+    for name, view in shown.items():
+        assert view.values == view_of(by_name[name].manifest).values
 
 
 def test_every_example_skill_is_a_skill() -> None:
