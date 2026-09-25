@@ -39,6 +39,7 @@ from factotum.contracts.actions import ActOutcome, ActStatus
 from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.models import BindingOptions, ModelRole, ProviderKind
 from factotum.contracts.runner import RunRequest
+from factotum.contracts.skills import ParamValue
 from factotum.contracts.testing import make_model_binding
 from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder
 from factotum.model_gateway.api import create_app as create_gateway_app
@@ -153,7 +154,7 @@ async def home_of(opened: Gateway) -> ActionsRig:
     catalog = Catalog(rig.store, rig.index, folder=EXAMPLES, enable_folder=True, now=rig.clock)
     read = await catalog.reload(rig.principal(None))
     assert read.problems == ()
-    assert len(read.enabled) == 5
+    assert len(read.enabled) == 8
     return rig
 
 
@@ -178,6 +179,14 @@ class Judged:
         return not self.problems
 
 
+def same(understood: object, wanted: ParamValue) -> bool:
+    """What a person said is not what a model has to repeat letter for letter: a text is the same
+    whatever its case and whatever punctuation it ends with."""
+    if isinstance(understood, str) and isinstance(wanted, str):
+        return understood.strip().strip(".!?").casefold() == wanted.strip().strip(".!?").casefold()
+    return understood == wanted
+
+
 def judge(case: PlanCase, outcome: ActOutcome, ran: RunRequest | None) -> list[str]:
     """What is wrong with what became of a message, in a few words each; nothing when it is
     right."""
@@ -188,7 +197,7 @@ def judge(case: PlanCase, outcome: ActOutcome, ran: RunRequest | None) -> list[s
         problems.append(f"skill {outcome.skill} instead of {case.skill}")
     if ran is not None:
         for name, value in case.params.items():
-            if ran.params.get(name) != value:
+            if not same(ran.params.get(name), value):
                 problems.append(f"{name}={ran.params.get(name)!r} instead of {value!r}")
         if case.device in ENTITIES and ran.device_params.get("entity_id") != ENTITIES[case.device]:
             problems.append(f"device {ran.device_params.get('entity_id')} instead of {case.device}")

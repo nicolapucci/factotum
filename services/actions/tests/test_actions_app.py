@@ -13,6 +13,7 @@ import respx
 from pydantic import AnyHttpUrl
 
 from factotum.actions.app import build_app
+from factotum.actions.instructions.testing import plan_dict, step_command, step_http
 from factotum.actions.rig import HOME_TEXT, plan_of, principal_of_device
 from factotum.actions.settings import ActionsSettings
 from factotum.actions.testing import DIMENSIONS, embed_words
@@ -61,6 +62,41 @@ required: [action]
 effect: irreversible
 confirm: ask
 ---
+"""
+
+
+MOVIE_SCENE = """\
+---
+name: movie-scene
+description: Dim the lights of the living room for watching a movie.
+examples:
+  - set the movie scene
+  - it is movie time
+target: none
+permissions:
+  network: [homeassistant.local]
+  secrets: [HA_TOKEN]
+effect: reversible
+---
+Switch the ceiling light off: POST `http://homeassistant.local:8123/api/services/light/turn_off`
+with `{"entity_id": "light.living_room_ceiling"}` and the header `Authorization: Bearer TOKEN`.
+Say that the movie scene is set.
+"""
+
+ANNOUNCE = """\
+---
+name: announce
+description: Say something out loud on a device, such as that dinner is ready.
+examples:
+  - tell everyone that dinner is ready
+  - announce that the guests have arrived
+target: system
+parameters:
+  message: {type: string}
+required: [message]
+effect: reversible
+---
+Give the device a speak command with the message as its text.
 """
 
 
@@ -201,15 +237,22 @@ class Model:
 
     def __init__(self) -> None:
         self.plans: list[dict[str, Any]] = []
+        self.written: list[dict[str, Any]] = []
         self.reads: list[dict[str, str]] = []
         self.asked: list[dict[str, Any]] = []
 
     def chat(self, request: httpx.Request) -> httpx.Response:
         body: dict[str, Any] = json.loads(request.content)
         self.asked.append(body)
-        # The plan of a message has a schema with a `skill`; the reading of a yes or a no, a `kind`.
+        # What is asked is known by the shape of the answer: the plan of a message has a `skill`,
+        # the plan of a skill that has no script has `steps`, the reading of a yes or a no a `kind`.
         properties = body["response_schema"]["properties"]
-        said = self.plans.pop(0) if "skill" in properties else self.reads.pop(0)
+        if "skill" in properties:
+            said = self.plans.pop(0)
+        elif "steps" in properties:
+            said = self.written.pop(0)
+        else:
+            said = self.reads.pop(0)
         return httpx.Response(
             200, json={"text": json.dumps(said), "parsed": said, "finish_reason": "stop"}
         )
@@ -373,4 +416,151 @@ class TestAgainstARealDatabase:
         assert edge.call_count == 1
         command = json.loads(edge.calls[0].request.content)
         assert command == {"command": {"name": "set_volume", "level": 30}}
+        assert edge.calls[0].request.url.path == f"/v1/devices/{speaker.id}/commands"
+
+    @respx.mock
+    async def test_a_skill_that_is_instructions_is_given_a_plan_and_the_runner_runs_the_program(
+        self, database_settings: DatabaseSettings, tmp_path: Path
+    ) -> None:
+        model = Model()
+        respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
+        respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
+        printed = {"message": "The movie scene is set.", "commands": []}
+        runner = respx.post(f"{RUNNER}/v1/jobs").mock(
+            return_value=httpx.Response(
+                200,
+                json=json.loads(
+                    JobResult(exit_code=0, stdout=json.dumps(printed)).model_dump_json()
+                ),
+            )
+        )
+        home = tmp_path / "devices.yaml"
+        home.write_text(HOME_TEXT, encoding="utf-8", newline="\n")
+        secrets = tmp_path / "secrets.dev.yaml"
+        secrets.write_text(SECRETS, encoding="utf-8", newline="\n")
+        parsed = parse_home(HOME_TEXT, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+        speaker = next(r for r, _ in parsed.system if r.name == "Kitchen speaker")
+        app = build_app(
+            settings_for(
+                database_settings,
+                actions_devices_file=home,
+                actions_secrets_file=secrets,
+                actions_runner_url=AnyHttpUrl(RUNNER),
+                actions_edge_url=AnyHttpUrl(EDGE),
+            )
+        )
+        written = plan_dict(
+            step_http(
+                "ceiling",
+                "POST",
+                "http://homeassistant.local:8123/api/services/light/turn_off",
+                headers={"Authorization": "Bearer ${secret.HA_TOKEN}"},
+                body={"entity_id": "light.living_room_ceiling"},
+            ),
+            say="The movie scene is set.",
+        )
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://actions"
+            ) as http,
+        ):
+            installed = (await http.post("/v1/skills", json={"source": MOVIE_SCENE})).json()
+            assert installed["mode"] == "instructions"
+            await http.post(f"/v1/skills/{installed['id']}/enable")
+            model.plans.append(plan_of("movie-scene"))
+            model.written.append(written)
+
+            done = await http.post(
+                "/v1/act",
+                json={"message": "set the movie scene"},
+                headers=dev_headers(principal_of_device(speaker)),
+            )
+            trail = (await http.get("/v1/audit")).json()["records"]
+
+        assert (done.json()["status"], done.json()["reply"]) == (
+            "done",
+            "The movie scene is set.",
+        )
+        # The model that wrote the plan was given what the skill says, and no secret.
+        [_, writing] = model.asked
+        assert "light/turn_off" in writing["messages"][-1]["content"]
+        assert "the-token-of-the-home" not in json.dumps(model.asked)
+        # What was run is the program that runs plans and the plan, with the secret only in the
+        # environment of the run: the plan holds its name.
+        assert runner.call_count == 1
+        sent = json.loads(runner.calls[0].request.content)
+        assert (sent["label"], sent["entrypoint"]) == ("movie-scene", "executor.py")
+        assert [file["path"] for file in sent["files"]] == ["executor.py"]
+        assert (sent["env"], sent["hosts"]) == (
+            {"HA_TOKEN": "the-token-of-the-home"},
+            ["homeassistant.local"],
+        )
+        given = json.loads(sent["stdin"])
+        assert given["plan"]["steps"][0]["headers"] == {
+            "Authorization": "Bearer ${secret.HA_TOKEN}"
+        }
+        assert given["secrets"] == ["HA_TOKEN"]
+        assert "the-token-of-the-home" not in sent["stdin"]
+        # And the trail says what was done.
+        assert trail[0]["skill_name"] == "movie-scene"
+        assert trail[0]["detail"].startswith("plan: POST homeassistant.local")
+
+    @respx.mock
+    async def test_what_a_plan_has_a_device_say_reaches_the_device_through_the_edge(
+        self, database_settings: DatabaseSettings, tmp_path: Path
+    ) -> None:
+        model = Model()
+        respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
+        respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
+        printed = {"commands": [{"name": "speak", "text": "dinner is ready"}]}
+        runner = respx.post(f"{RUNNER}/v1/jobs").mock(
+            return_value=httpx.Response(
+                200,
+                json=json.loads(
+                    JobResult(exit_code=0, stdout=json.dumps(printed)).model_dump_json()
+                ),
+            )
+        )
+        edge = respx.post(url__regex=rf"{EDGE}/v1/devices/.+/commands").mock(
+            return_value=httpx.Response(200, json={"status": "ok"})
+        )
+        home = tmp_path / "devices.yaml"
+        home.write_text(HOME_TEXT, encoding="utf-8", newline="\n")
+        parsed = parse_home(HOME_TEXT, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+        speaker = next(r for r, _ in parsed.system if r.name == "Kitchen speaker")
+        app = build_app(
+            settings_for(
+                database_settings,
+                actions_devices_file=home,
+                actions_runner_url=AnyHttpUrl(RUNNER),
+                actions_edge_url=AnyHttpUrl(EDGE),
+            )
+        )
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://actions"
+            ) as http,
+        ):
+            installed = (await http.post("/v1/skills", json={"source": ANNOUNCE})).json()
+            await http.post(f"/v1/skills/{installed['id']}/enable")
+            model.plans.append(plan_of("announce", parameters={"message": "dinner is ready"}))
+            model.written.append(plan_dict(step_command("say", "speak", text="${value.message}")))
+
+            done = await http.post(
+                "/v1/act",
+                json={"message": "tell everyone that dinner is ready"},
+                headers=dev_headers(principal_of_device(speaker)),
+            )
+
+        assert done.json()["status"] == "done"
+        sent = json.loads(runner.calls[0].request.content)
+        assert json.loads(sent["stdin"])["params"] == {"message": "dinner is ready"}
+        assert (sent["env"], sent["hosts"]) == ({}, [])
+        assert edge.call_count == 1
+        command = json.loads(edge.calls[0].request.content)["command"]
+        assert (command["name"], command["text"]) == ("speak", "dinner is ready")
         assert edge.calls[0].request.url.path == f"/v1/devices/{speaker.id}/commands"

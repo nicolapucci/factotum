@@ -20,7 +20,8 @@ HOME_TEXT = (ROOT / "config" / "devices.example.yaml").read_text("utf-8")
 EXAMPLES = ROOT / "skills" / "examples"
 
 ITALIAN = (
-    "accendi", "spegni", "metti", "apri", "chiudi", "alza", "abbassa", "che ", "riavvia"
+    "accendi", "spegni", "metti", "apri", "chiudi", "alza", "abbassa", "che ", "riavvia",
+    "com'è", "annuncia", "dì ", "prepara",
 )  # fmt: skip
 
 
@@ -87,17 +88,24 @@ class TestTheCorpus:
             assert checked.invalid == (), case.message
             assert checked.values == case.params, case.message
 
-    def test_a_device_is_an_external_one_that_the_skill_is_bound_to(self) -> None:
+    def test_a_device_is_one_that_the_skill_acts_on(self) -> None:
+        """An external device that the skill is bound to, or a system one for a skill that acts on
+        the device that was named."""
         home = ActionsRig(home_text=HOME_TEXT).home
         skills = manifests()
         bound = {(binding.skill, binding.device_name) for binding in home.bindings}
         external = {device.name for device in home.external}
+        system = {device.name for device, _ in home.system}
 
         for case in PLAN_CASES:
             if case.device is None:
                 continue
             assert case.skill is not None
-            assert skills[case.skill].target is SkillTarget.EXTERNAL, case.message
+            target = skills[case.skill].target
+            if target is SkillTarget.SYSTEM:
+                assert case.device in system, case.message
+                continue
+            assert target is SkillTarget.EXTERNAL, case.message
             assert (case.skill, case.device) in bound, case.message
             assert case.device in external, case.message
 

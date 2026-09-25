@@ -22,7 +22,6 @@ answer has `results`, a list, and the first has `latitude` and `longitude`.
 
 Then read the air: GET
 `https://air-quality-api.open-meteo.com/v1/air-quality?current=european_aqi&latitude=LAT&longitude=LON`.
-The answer has `current.european_aqi`, the European air quality index: up to 20 is good, up to 40
-fair, above 60 poor.
+The answer has `current.european_aqi`, the European air quality index (the lower, the cleaner).
 
 Say the index and the place, in the language of the message.

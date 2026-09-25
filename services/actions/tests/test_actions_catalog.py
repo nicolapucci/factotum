@@ -521,16 +521,18 @@ class TestReadingAFolder:
 
         assert read.problems == ()
         assert sorted(read.enabled) == [
+            "air-quality@1",
+            "announce@1",
             "garage-door@1",
             "lamp@1",
+            "movie-scene@1",
             "restart-router@1",
             "volume@1",
             "weather@1",
         ]
-        files = await rig.store.get_files(
-            rig.tenant,
-            next(s.id for s in (await catalog.list(admin)).skills if s.name == "lamp"),
-            1,
-        )
+        by_name = {s.name: s.id for s in (await catalog.list(admin)).skills}
+        files = await rig.store.get_files(rig.tenant, by_name["lamp"], 1)
         assert files is not None
         assert "scripts/run.py" in files
+        # a skill that is instructions has no files: what it says is the text of the document
+        assert await rig.store.get_files(rig.tenant, by_name["movie-scene"], 1) == {}

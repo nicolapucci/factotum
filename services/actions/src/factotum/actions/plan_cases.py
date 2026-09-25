@@ -44,14 +44,17 @@ class PlanCase:
 
 
 def _action(
-    message: str,
+    said: str,
     speaker: str,
     skill: str,
     status: ActStatus,
     device: str | None = None,
+    /,
     **params: ParamValue,
 ) -> PlanCase:
-    return PlanCase(message, speaker, skill, status, device, params)
+    """What is said, where, what it asks for and what comes of it; the rest are the values in it,
+    which may be called ``message`` as a skill's are."""
+    return PlanCase(said, speaker, skill, status, device, params)
 
 
 def _question(message: str, speaker: str = KITCHEN) -> PlanCase:
@@ -145,6 +148,42 @@ PLAN_CASES: tuple[PlanCase, ...] = (
     _action("what's the weather in Naples today", DISPLAY, "weather", _DONE, place="Naples"),
     _action("is it going to rain in Genoa?", KITCHEN, "weather", _DONE, place="Genoa"),
     _action("che tempo c'è a Bologna oggi?", DISPLAY, "weather", _DONE, place="Bologna"),
+    # ---- the air: it only reads too, and it is asked for a place like the weather
+    _action("how is the air quality in Rome", KITCHEN, "air-quality", _DONE, place="Rome"),
+    _action("is the air clean in Milan", DISPLAY, "air-quality", _DONE, place="Milan"),
+    _action("what is the air like in Turin today", KITCHEN, "air-quality", _DONE, place="Turin"),
+    _action("com'è la qualità dell'aria a Torino", KITCHEN, "air-quality", _DONE, place="Torino"),
+    _action("com'è l'aria a Milano", DISPLAY, "air-quality", _DONE, place="Milano"),
+    _action("how is the air quality", KITCHEN, "air-quality", _MORE),
+    # ---- an announcement: said on the device that is spoken to, or on the one that is named
+    _action(
+        "tell everyone that dinner is ready", KITCHEN, "announce", _DONE, message="dinner is ready"
+    ),
+    _action(
+        "announce that the guests have arrived",
+        DISPLAY,
+        "announce",
+        _DONE,
+        message="the guests have arrived",
+    ),
+    _action("say that it is time to go", KITCHEN, "announce", _DONE, message="it is time to go"),
+    _action(
+        "announce on the living room display that dinner is ready",
+        KITCHEN,
+        "announce",
+        _DONE,
+        "Living room display",
+        message="dinner is ready",
+    ),
+    _action(
+        "annuncia che la cena è pronta", KITCHEN, "announce", _DONE, message="la cena è pronta"
+    ),
+    _action("dì che è ora di andare", DISPLAY, "announce", _DONE, message="è ora di andare"),
+    # ---- the scene for a movie: lights, by Home Assistant, and it can be undone
+    _action("set the movie scene", KITCHEN, "movie-scene", _DONE),
+    _action("it is movie time", DISPLAY, "movie-scene", _DONE),
+    _action("prepara la scena per il film", KITCHEN, "movie-scene", _DONE),
+    _action("abbassa le luci, guardiamo un film", DISPLAY, "movie-scene", _DONE),
     # ---- the router: somebody has to approve it, and nobody can yet
     _action("restart the router", KITCHEN, "restart-router", _REFUSED),
     _action("riavvia il router", DISPLAY, "restart-router", _REFUSED),
@@ -173,4 +212,9 @@ PLAN_CASES: tuple[PlanCase, ...] = (
     _question("what volume is safe for headphones?"),
     _question("can you tell me what a router restart actually does?"),
     _question("how much does a garage door opener cost?"),
+    _question("how is the air quality index worked out?"),
+    _question("is polluted air bad for asthma?"),
+    _question("how do I set up a movie scene in Home Assistant?"),
+    _question("what is a good speaker for announcements?"),
+    _question("perché l'aria di città è così inquinata?"),
 )
