@@ -580,6 +580,30 @@ does what it did: 55 of 55 commands go on to the model at a threshold of 0.45, t
 Skills that are instructions have their own numbers, which are those of a model writing a plan and
 not of one reading a message: [`skills.md`](skills.md#what-was-measured).
 
+### The three skills that are instructions, in containers (slice 6)
+
+The whole stack in containers (the five services, Postgres, the runner and the egress proxy), the
+three skills read from a folder and enabled as they were read, a stand-in for Home Assistant on the
+host, and messages said to the speaker through the edge with the terminal client. **The graphics card
+was in use for something else, so the two chat roles were a stand-in that reads a message and writes
+the plan of a skill from what is in the prompt** (built with the helpers of the plan writer, so that
+what it wrote had the shape that is asked for); the embeddings were the real `bge-m3`. What this shows
+is the plumbing of slice 6, from the message to the device, and not what a model writes: that is
+[`skills.md`](skills.md#what-was-measured).
+
+| | |
+| --- | --- |
+| *tell everyone that dinner is ready* / *annuncia che la cena è pronta* | the speaker was given `speak` with *dinner is ready* / *la cena è pronta* (in UTF-8 all the way), and said *Done.* / *Fatto.*: 1.7 s (5.6 s the first time) |
+| *set the movie scene* / *prepara la scena per il film* | the stand-in for Home Assistant saw the four `POST`s (two for each message) with the token and the bodies of the plan, and the person heard *The movie scene is set.* / *La scena del film è impostata.*: 2.3 and 3.0 s |
+| *how is the air quality in Rome* / *com'è l'aria a Milano* | two HTTPS requests to Open-Meteo through the proxy each, and *The air quality in Rome is 30.* / *A Milano l'indice dell'aria è 52.*: 2.3 and 2.6 s |
+| *what is the capital of France?* | answered as a question, as it was before |
+
+`GET /v1/audit` had a record for each, `executed`, whose detail says what the plan did without a value
+(`plan: speak`, `plan: POST host.docker.internal:8123, POST host.docker.internal:8123`, `plan: GET
+geocoding-api.open-meteo.com, GET air-quality-api.open-meteo.com`). With the models as fast as a
+stand-in a message costs what the runner costs (2 to 3 s): the two model calls are the rest, and are
+measured in `skills.md`.
+
 ### What the measurements found
 
 * **A run makes a container, and it is the cheapest part of the wait now.** About a second and a half
