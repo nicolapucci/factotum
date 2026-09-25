@@ -133,7 +133,11 @@ uv run factotum-terminal --profile smart-display            # say: turn on the l
 
 The tests of the runner that need a real engine (they run scripts in containers and look at them
 from the inside) skip where there is no socket, which is Windows; they run in a Linux container that
-is given one, and in CI: [`runner.md`](runner.md#tests) has the command.
+is given one, and in CI: [`runner.md`](runner.md#tests) has the command. So do the ones that run the
+program that runs the plans of skills that are only instructions
+(`services/actions/tests/test_actions_executor_sandbox.py`); how to write such a skill, and what a
+small model makes of it, is in [`skills.md`](skills.md), and the live test that measures it is
+`FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s -k live_instructions`.
 
 ## Database
 

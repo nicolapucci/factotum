@@ -13,9 +13,12 @@ the decision with the policy of the device, confirmations (a yes or a no), appro
 closed, the audit trail, English and Italian replies, the HTTP API, a container image, and the
 asking from the conversation service. *Implemented* (slice 5b): **running a skill** (its script runs
 in the isolated `runner`, [`runner.md`](runner.md)), **doing what a skill answers with on a device**
-(over the edge), and **secrets for skills** (a file, for development). *Not yet*: approvals have no
-way to be asked (ADR 0007), a skill that needs a linked account does not run, instructions-mode skills
-are slice 6, and the hub (slice 7) registers devices, keeps secrets and issues credentials.
+(over the edge), and **secrets for skills** (a file, for development). *Implemented* (slice 6):
+**skills that are instructions**, which have no script: a model writes a plan from the notes, code
+checks it, and the platform runs it in the sandbox ([`skills.md`](skills.md), [ADR
+0016](decisions/0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md)). *Not
+yet*: approvals have no way to be asked (ADR 0007), a skill that needs a linked account does not run,
+and the hub (slice 7) registers devices, keeps secrets and issues credentials.
 
 ## A message
 
@@ -51,8 +54,10 @@ A skill is a folder with a `SKILL.md` and, if it runs code, the scripts. The `SK
 frontmatter (the manifest of [ADR 0006](decisions/0006-skills-and-sandboxed-execution.md): name,
 description, examples, target, parameters, required, device parameters, permissions, effect, confirm,
 approval, entrypoint) between two lines of three dashes, then instructions or notes in markdown.
-[`skills/`](../skills/README.md) has five worked examples: a lamp, a garage door, a volume, the
-weather and a router restart, each showing a different way an action is decided.
+[`skills/`](../skills/README.md) has eight worked examples: a lamp, a garage door, a volume, the
+weather and a router restart, each showing a different way an action is decided, and three that are
+only instructions (an announcement, a scene for a movie, the air quality). How to write one is in
+[`skills.md`](skills.md).
 
 * **Versions never change.** A version is identified by the SHA-256 of the `SKILL.md` and of every
   other file, so changing a script is a new version and reading the same folder again is not one.
@@ -67,7 +72,8 @@ weather and a router restart, each showing a different way an action is decided.
   tenant's skills are its administrators' to manage and everybody's to use. Nothing about skills is
   managed through a device (ADR 0004): a call that arrives from one is refused.
 * **Text or a folder.** `POST /v1/skills` takes the text of a `SKILL.md`, which cannot have scripts
-  and so is for skills that only carry instructions. A skill with scripts comes from a folder
+  and so is for skills that only carry instructions (with no `entrypoint`, a skill is in
+  *instructions* mode: it is followed by a model, see below). A skill with scripts comes from a folder
   (`FACTOTUM_ACTIONS_SKILLS_DIR`), read again with `POST /v1/skills/reload`. In development
   `FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR=true` enables what is read as it is read, as if it had been
   reviewed: the service refuses to start with it anywhere else.
@@ -202,6 +208,31 @@ cannot choose the device: it is the one the skill was aimed at, or the one that 
 the runner did not or could not do (unreachable, busy, does not know us) is `runner_unavailable`,
 told to the person as *I cannot run that right now*.
 
+**A skill that is instructions** goes through the same runner and the same `RunRequest`, and what is
+different is what is run and how it came to be. There is no script: the notes are given to a model in
+the `chat.main` role (`PlanWriter`), with the values the message gave, the *names* of what the skill
+may reach and be given, and the language of the message, and it writes a **plan** (data: at most eight
+steps, each a request or a command for a device, and what to say). `checks` decides whether the plan
+may be run, against what the version was granted, before anything is sent, and the runner is given
+`executor.py`, the program that does what a plan says, and the plan, in place of a script. What it
+prints is read as a script's output is, and the commands go to a device the same way.
+[`skills.md`](skills.md) is the language of a plan and what is checked. What is settled here:
+
+* **The plan is written before the question.** When the decision is to ask a yes or a no, the plan is
+  written and checked first, and kept in the confirmation with the rest of what was understood; the
+  yes is read by its words as it always is, and when it comes the plan is checked once more against
+  what is granted then. Nothing that a model writes comes after a yes.
+* **A model is asked twice at most** for a plan (`FACTOTUM_ACTIONS_PLAN_ATTEMPTS`): a plan that the
+  checks refuse is given back with which step and why, and the second is checked the same way.
+  `FACTOTUM_ACTIONS_PLAN_TIMEOUT_S` is how long each question is waited for. A plan that could not
+  be had is a `failed` outcome with a plain sentence, and the trail says `no plan: <why>`; what was
+  run is `plan: POST host, ...`, without a value.
+* **Without a runner, or without a gateway to ask, it is a dry run** as every skill is. The service
+  starts to write plans only with `FACTOTUM_ACTIONS_RUNNER_URL` set.
+* **The requests go out from the sandbox**, through the proxy, with the hosts the grant names: the
+  actions service has no way to reach a network for a plan, so a plan cannot do what a skill that
+  was not granted the host could not.
+
 Everything before and after is as it was: the choice, the checks, the decision, the confirmation, the
 reply, the trail. A skill that fails, times out or cannot be run is a `failed` outcome with a plain
 sentence, and is audited; the log says why (which secret, which exit code, which status), with
@@ -283,6 +314,7 @@ not there and one that is another person's are the same `404`.
 | `_CONFIRMATION_SECONDS` | `60` | how long a yes or a no is waited for |
 | `_APPROVAL_WAIT_S`, `_APPROVAL_MINUTES` | `20`, `10` | how long a turn waits for an approver, and how long a request is open |
 | `_RUN_MARGIN_S` | `5` | added to the time limit of a skill |
+| `_PLAN_TIMEOUT_S`, `_PLAN_ATTEMPTS` | `30`, `2` | how long a model is waited for to write the plan of a skill that is instructions (each try), and how many tries it has when the checks refuse a plan |
 | `_MAX_DEVICES_SHOWN` | `10` | other devices the model is shown by name |
 
 The conversation service is pointed at it with `FACTOTUM_CONVERSATION_ACTIONS_URL` (without one,
@@ -347,15 +379,19 @@ the trail in either case.
 what a test says, and every rule (the checks on a plan, the values, the decision, the confirmation,
 the audit) is tested on its own and through the service. The store has one set of tests that runs
 against both implementations; the ones that need Postgres are `integration` and skip without it. A
-corpus of 61 messages (`factotum.actions.plan_cases`) is run through the whole service with a planner
-that reads every one as it is meant, to keep the expectations honest; `tests/live` measures a real
-model against it:
+corpus of 82 messages (`factotum.actions.plan_cases`: 55 that ask for something, for the eight skills
+that come with the project, and 27 that do not) is run through the whole service with a planner that
+reads every one as it is meant, to keep the expectations honest; `tests/live` measures a real model
+against it:
 
 ```bash
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s
 # a model to try as the small one, and another way to embed:
 FACTOTUM_LIVE_PLAN_MODELS=llama3.2:3b-instruct-q8_0,gemma3:4b  ...same command...
 ```
+
+The plans of the skills that are instructions have a live test of their own
+(`tests/live/test_live_instructions.py`, [`skills.md`](skills.md#what-was-measured)).
 
 ## Measured
 
@@ -365,13 +401,14 @@ else was using it, over half busy with nothing of ours running, so the models wr
 a second) and **idle** (60 tokens a second). The answers are the same in both, because the models
 are asked with the temperature at zero, and the times are not, so they are given for each. One run of
 each: read them as what to expect, not as exact figures. `tests/live` measures it again, and
-measures any model you bind. The messages are the 61 of `factotum.actions.plan_cases`: 39 that ask
-for something to be done (some in the words of the skill's own examples, some far from them, in
-English and Italian, said to the speaker, the display and the phone) and 22 that do not, half of
-them worded to look like commands ("how do I turn on the lamp with Home Assistant?", "should I
-close the garage door at night?").
+measures any model you bind. The messages of slice 5a were the 61 that `factotum.actions.plan_cases`
+had then, for five skills: 39 that ask for something to be done (some in the words of the skill's own
+examples, some far from them, in English and Italian, said to the speaker, the display and the phone)
+and 22 that do not, half of them worded to look like commands ("how do I turn on the lamp with Home
+Assistant?", "should I close the garage door at night?"). Slice 6 added three skills and 21 messages,
+and [its numbers](#eight-skills-slice-6) are further down.
 
-### Telling commands from questions
+### Telling commands from questions (slice 5a: five skills, 61 messages)
 
 | | `llama3.1:8b-instruct-q4_K_M` | `llama3.2:3b-instruct-q8_0` |
 | --- | --- | --- |
@@ -492,6 +529,49 @@ rest of the time is the models: on a card that is shared, the model that reads t
 seconds of every command. The logs of the five services had no error; the three warnings were the
 first messages after a pause, below.
 
+### Eight skills (slice 6)
+
+Slice 6 added three skills (a scene of two calls, a lookup of two requests, and an announcement that
+only tells a device something) and the 21 messages for them: **82 messages, 55 that ask for
+something and 27 that do not**, said to the speaker, the display and the phone, in English and
+Italian. The 8B model in the `chat.fast` role and `bge-m3`, on the same card with only the desktop
+on it (the whole live test took 2 minutes 12 seconds):
+
+| | `llama3.1:8b-instruct-q4_K_M` |
+| --- | --- |
+| Commands read exactly as meant | 49 of 55 |
+| Commands with the right skill | 53 of 55 |
+| Questions left as questions | **27 of 27** |
+| A message that is acted on, median (90th percentile) | 1.24 s (1.40 s) |
+| A question that is passed over | 0.98 s |
+| A yes or a no read as it was meant | 22 of 22, 0.30 s |
+
+By skill: air quality 6 of 6, announcement 4 of 6, garage door 7 of 7, lamp 11 of 13, scene 3 of 4,
+router 4 of 4, volume 7 of 8, weather 7 of 7. The 3B model was not measured again: it was the one that
+took eight questions for requests with five skills, and it is not the model to bind to this role.
+The times are those of a card with nothing on it, and half of what slice 5a measured on the same card
+(2.5 s); the difference was not looked into.
+
+What went wrong, six times in 82:
+
+* *metti la luce al 50 per cento* was *needs more* and *make the volume a bit lower* was **done** with
+  a level that nobody said: both as in slice 5a.
+* *could you dim the lights to thirty percent* went to the scene (*dim the lights of the living room
+  for watching a movie*) and not to the lamp, and *it is movie time* went to the announcement (*say
+  that it is time to go*) and not to the scene: **two skills whose words overlap are confused**. Two
+  of 55 commands went to the wrong skill, and none of 39 with five. The way out is in the skills
+  (what each says about itself and its examples), not in the code.
+* *annuncia che la cena è pronta* and *dì che è ora di andare* found the announcement, and the model
+  gave it *Cena pronta* and *It's time to go* (translated) as what to say: a model does not always
+  copy what it is asked to say aloud, even when the value says *as the person said it*.
+
+Questions were better with more skills, not worse (27 of 27; 21 of 22 with five). The meaning search
+does what it did: 55 of 55 commands go on to the model at a threshold of 0.45, the lowest at 0.69, and
+25 of 27 questions do (the nearest, 0.86, is *what is the weather usually like in Rome in August?*).
+
+Skills that are instructions have their own numbers, which are those of a model writing a plan and
+not of one reading a message: [`skills.md`](skills.md#what-was-measured).
+
 ### What the measurements found
 
 * **A run makes a container, and it is the cheapest part of the wait now.** About a second and a half
@@ -532,8 +612,11 @@ first messages after a pause, below.
   (slice 7). Secrets are in a file for development, refused anywhere else, until the hub keeps them.
 * **Scripts are Python and the standard library**, in a container of the level of isolation that
   ADR 0015 describes: fine for code the household wrote or trusts, not for a stranger's.
-* **A skill installed as text has no scripts**, only instructions; instructions-mode skills are
-  slice 6.
+* **A skill installed as text has no scripts**, only instructions, which a model turns into a plan.
+  A plan is a straight line of at most eight steps (no conditions, no loops), its requests are HTTP(S)
+  (no MQTT: there is no broker to reach and the proxy tunnels to port 443 only), and a model never
+  reads what a service answers, so a skill that has to decide on an answer is a script. How close
+  the plan is to what the notes say depends on the model: see [`skills.md`](skills.md#what-was-measured).
 * **The reply is one sentence per outcome** (in English or Italian): a request that is made of
   several actions ("turn on the lamp and open the garage") is read as one, and the model picks one.
 * **The threshold is a property of the embedding model**: 0.45 was set with `bge-m3`. Another model

@@ -31,6 +31,8 @@ FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_BOOK=/path/to.pdf uv run pytest -m live serv
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/conversation/tests/live -s
 # the actions service against real models (see docs/actions.md):
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s
+# skills that are only instructions, against real models (see docs/skills.md):
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s -k live_instructions
 # the tests that run scripts in real containers need the socket of an engine (see docs/runner.md):
 uv run pytest -m integration services/runner/tests/test_runner_sandbox_engine.py
 # the edge, and a device in a terminal (docs/edge.md; needs config/devices.dev.yaml and the services):
@@ -100,6 +102,19 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   through `authorize()` first, and what a failure says is never what the script said. Do not add a
   field to a job that steers the container, do not give another service the socket, and do not put
   anything else on the sandbox network.
+- **A plan is data, a model never runs anything, and a model never reads what a service
+  answers** (ADR 0016). A skill that is only instructions is followed by a model that writes a plan
+  once: steps that are requests or device commands, with placeholders for secrets, values and the
+  answers of earlier requests. `factotum.actions.instructions.checks` decides whether the plan may be
+  run (hosts with the same function as the egress proxy, a `read_only` skill only `GET`s, a secret
+  only in a request, only the commands of the vocabulary, only what exists) *before* anything is
+  sent, and again when a yes comes; the plan is written before the question and kept with it.
+  `executor.py` is the only file that runs for such a skill: it is one file of the standard library,
+  it shares its reading of a placeholder with the checks, and it runs in the sandbox with the
+  network and the secrets that were granted (the actions service has no way out for a plan). A model
+  is given the *names* of secrets and never a value, and never anything that came from a document or
+  a page. Do not feed the answer of a request back to a model, do not add a step that runs code,
+  and do not let a model choose a host that was not granted.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
@@ -136,6 +151,16 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - Compose interpolates every service of the file even when its profile is off, so a required
   variable (`${X:?}`) stops a plain `docker compose up` for the database: give a key an empty default
   and let the service that needs it refuse to start.
+- The grammar that Ollama makes of a JSON Schema (llama.cpp) fails for a `maxLength` of exactly
+  2000 (1999 and 2001 are taken): the schema of a plan that a model is asked to answer with has no
+  limits of size in it, and they are checked when the answer is read. A model that may leave a field
+  out sometimes leaves out the address of a request, and one that is shown a field that does not
+  apply fills it in: the schema is written strictly (`factotum.actions.instructions.writer`).
+- **A schema that says nothing is an object to that grammar.** `{}` ("a value of any kind") makes
+  the model write an object whatever it is asked for (a text came out as `{"hello world": ""}`, a
+  number as `{"value": 42}`): a field that may be a text says `anyOf` its types. It cost a whole
+  class of skills (every plain-text body was written as JSON) before a test with skills that nothing
+  was tuned on showed it; the tests now refuse a part of the shape that has no `type` or `anyOf`.
 - Tests import `--import-mode=importlib`: one test module cannot import another, so what tests share
   lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`).
 - Starlette's `TestClient` is unusable here (its deprecation warning is an error): what needs a

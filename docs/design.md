@@ -177,11 +177,11 @@ device defaults to `max_effect = reversible`; the tenant admin can raise it.
 
 ## 6. Skills
 
-*Implemented* (slices 5a and 5b, [`actions.md`](actions.md) and [`runner.md`](runner.md)): the
-manifest (`factotum.contracts.skills`), loading and versioning, the catalog with review and enabling,
-matching by meaning, the planner and the checks on it, the decision and the confirmation, running a
-script in an isolated container and giving a device the commands it answers with, and secrets for
-skills. *Planned*: instructions mode (slice 6) and linked accounts (slice 7).
+*Implemented* (slices 5a, 5b and 6, [`actions.md`](actions.md), [`runner.md`](runner.md) and
+[`skills.md`](skills.md)): the manifest (`factotum.contracts.skills`), loading and versioning, the
+catalog with review and enabling, matching by meaning, the planner and the checks on it, the decision
+and the confirmation, running a script in an isolated container and giving a device the commands it
+answers with, secrets for skills, and instructions mode. *Planned*: linked accounts (slice 7).
 
 A skill teaches Factotum to do something. It is a folder with a `SKILL.md` (YAML frontmatter plus
 markdown) and, optionally, scripts. The frontmatter is validated as a `SkillManifest`.
@@ -216,9 +216,15 @@ Markdown instructions for the model, or notes for humans.
   the platform's point of view: the world is affected through the network it was allowed, and
   commands for devices leave as *data* that the platform runs after the checks, so the sandbox needs
   no back channel.
-- **Instructions mode** (no entrypoint): the model follows the markdown using only the platform's
-  primitives (`http.request`, `mqtt.publish`, `device.command`) within the declared permissions. The
-  model writes the plan; `actions` executes it and resolves secrets server-side.
+- **Instructions mode** (no entrypoint, *implemented*, [`skills.md`](skills.md), [ADR
+  0016](decisions/0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md)): a
+  model (`chat.main`) reads the markdown and writes a **plan**, once: data, at most eight steps, each
+  an HTTP request or a command for a device, with placeholders where a secret, a value or the answer
+  of an earlier request goes. Code checks the plan against what the skill was granted (hosts, effect,
+  secrets, commands) before anything is sent, and the platform runs it in the sandbox with a program
+  of its own, which resolves the placeholders there. A model never reads what a service answers, so
+  nothing a service says can steer what happens next. `mqtt.publish` is not among the primitives
+  (there is no broker, and the proxy tunnels to port 443 only).
 - **Selection** (*implemented*): skill descriptions and examples are embedded and matched by
   similarity; a model of the `chat.fast` role picks the skill and extracts parameters with structured
   output, validated against the skill's schema, and then checked in code (the model proposes, the
@@ -349,7 +355,7 @@ answer and other things than actions, voice.
 | 4 | `edge` and a terminal client with device profiles: protocol v1 over a WebSocket, answers by sentences and by what a device can render, interruption, commands with an acknowledgement, container image | done |
 | 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner), asked first by the conversation service | done |
 | 5b | `runner` (a container for each run) and `egress` (a proxy with a signed grant), device command dispatch through the edge, secrets for skills | done |
-| 6 | Instructions-mode skills | |
+| 6 | Instructions-mode skills: a plan that a model writes, code that checks it, the sandbox that runs it | done |
 | 7 | `hub` | |
 | 8 | Voice and the Raspberry Pi client | |
 | 9 | Web app | |

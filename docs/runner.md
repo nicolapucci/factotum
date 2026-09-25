@@ -18,8 +18,10 @@ may have and *what* to do with what it printed is the actions service's, on its 
 
 *Implemented* (slice 5b): both services, their images and compose files, the actions service
 running scripts through the one and giving devices commands through the edge, and secrets for
-skills (a file, for development). *Not yet*: linked accounts (the hub, slice 7), instructions-mode
-skills (slice 6), any language but Python, a stronger sandbox for a cloud (gVisor or Kata, ADR 0009).
+skills (a file, for development). *Since* (slice 6): a skill that is only instructions is run by
+this same runner with `executor.py`, the program that does what a plan says, as the one file of the
+job ([`skills.md`](skills.md)). *Not yet*: linked accounts (the hub, slice 7), any language but Python,
+a stronger sandbox for a cloud (gVisor or Kata, ADR 0009).
 
 ## A run
 
@@ -319,7 +321,12 @@ is not there, and the service says so when it starts.
   ```
 
   (`FACTOTUM_TEST_DOCKER_SOCKET` and `FACTOTUM_TEST_SANDBOX_IMAGE` say where the engine and the image
-  are.) CI pulls the image and runs them.
+  are.) CI pulls the image and runs them. The program that runs the plans of skills that are only
+  instructions has four such tests of its own (`services/actions/tests/test_actions_executor_sandbox.py`):
+  that the job the actions service makes for a plan runs in the container as it is made (with a
+  message in Italian, so that what it prints is UTF-8), that it has no network when no host was
+  granted, that a secret in its environment is never in what it prints, and that what is not a plan
+  is refused with an exit code of its own.
 * **The deployment files** are tested too: only the runner mounts the socket, nothing but the proxy
   is on the sandbox networks, the sandbox network has no way out, the key goes to the proxy and the
   runner and to nothing else, and no service is privileged or shares the host.

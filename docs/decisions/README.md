@@ -21,3 +21,4 @@ the old one instead of rewriting history.
 | [0013](0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md) | The edge: typed parts, filtered by what a device can render |
 | [0014](0014-actions-the-model-proposes-the-code-decides.md) | Actions: the model proposes, the code decides |
 | [0015](0015-the-runner-a-container-for-each-run-and-a-proxy-that-checks-a-grant.md) | The runner: a container for each run, and a proxy that checks a grant |
+| [0016](0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md) | Skills that are instructions: a model writes a plan, the code decides, the sandbox runs it |
