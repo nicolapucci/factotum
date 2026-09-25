@@ -341,6 +341,7 @@ machine improves. One run of each.
 | --- | --- |
 | A container that does nothing, one after the other (15 runs) | median **1.35 s** (1.14 to 1.68 s, 90th percentile 1.62 s), from the request to the answer |
 | The example skills, as the runner reports them | volume (no network) 0.94 s; lamp through the proxy to a home server 1.44 s; garage door 1.82 s; weather (two HTTPS requests to Open-Meteo) 1.65 s |
+| Plans that a person wrote, run by `executor.py` in the runner (slice 6, no model) | two HTTPS requests to Open-Meteo 2.28 s; two POSTs with a token to a home server 1.80 s; two commands, no network, 1.44 s; from the request to the answer 1.9 to 2.7 s |
 | Four scripts of 3 s at once (four at a time) | 5.7 to 6.0 s each |
 | Eight at once | the first four in 5.3 to 5.9 s, the next four in 10.4 to 11.0 s |
 | Twelve at once | eight answered (up to 11.3 s) and **four refused with `503` after 6.5 s**, as the wait of 5 s for a turn says |
@@ -355,6 +356,17 @@ granted, the proxy let the request through and refused with `403` *example.com* 
 a tunnel), *169.254.169.254*, the proxy's own loopback, *postgres*, the proxy itself by name, and a
 tunnel to the granted host on a port that is not a tunnel port; the home server saw exactly the two
 requests that were allowed, one with the token and one with a wrong one (which it refused itself).
+
+The program that runs the plans of skills that are only instructions was run the same way, with plans
+written by hand and sent to the runner as the actions service sends them (no model in it): the two
+HTTPS requests to Open-Meteo went through the proxy and the sentence came back with what they
+answered (*L'aria a Roma: indice 22*, in UTF-8); the two `POST`s with a token reached the stand-in for a
+home server, authorized, with the bodies that the plan gave (`brightness_pct` as a number); a command
+with an accent and an emoji came back as it was written; a request to a host that was not granted was
+refused by the proxy and ended the run with `step out: the request did not get through (OSError)`;
+and a plan that says a secret made its request and left the sentence unsaid (`a secret is not for
+saying` on standard error), with the token nowhere in what it printed. The checks refuse both of
+those before anything is run; these are the second line of defence.
 
 ### What the live run found
 
