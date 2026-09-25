@@ -13,12 +13,23 @@ from typing import Any
 
 import pytest
 
+from factotum.actions.instructions.checks import check_plan
+from factotum.actions.instructions.executor import Context, run
+from factotum.actions.instructions.testing import FakeWeb, plan_dict, step_command, step_http
 from factotum.actions.runner_client import hosts_of, read_output
 from factotum.actions.skills import LoadedSkill, load_folder
+from factotum.common.hosts import match_host
 from factotum.contracts.commands import SetVolume
 from factotum.contracts.effects import Effect
+from factotum.contracts.instructions import InstructionPlan
 from factotum.contracts.runner import JobResult, RunResult
-from factotum.contracts.skills import ApprovalPolicy, ConfirmPolicy, SkillMode, SkillTarget
+from factotum.contracts.skills import (
+    MAX_INSTRUCTIONS_CHARS,
+    ApprovalPolicy,
+    ConfirmPolicy,
+    SkillMode,
+    SkillTarget,
+)
 from factotum.contracts.testing import make_tenant_id, make_user_id
 from factotum.devices.home import parse_home
 
@@ -35,16 +46,25 @@ def examples() -> dict[str, LoadedSkill]:
 
 def test_every_example_skill_is_a_skill() -> None:
     assert sorted(examples()) == [
+        "air-quality",
+        "announce",
         "garage-door",
         "lamp",
+        "movie-scene",
         "restart-router",
         "volume",
         "weather",
     ]
 
 
-@pytest.mark.parametrize("name", sorted(examples()))
-def test_each_example_runs_a_script_that_is_in_its_folder(name: str) -> None:
+def scripts() -> list[str]:
+    return sorted(
+        name for name, skill in examples().items() if skill.manifest.mode is SkillMode.SCRIPT
+    )
+
+
+@pytest.mark.parametrize("name", scripts())
+def test_each_example_that_has_a_script_runs_one_that_is_in_its_folder(name: str) -> None:
     skill = examples()[name]
 
     assert skill.manifest.mode is SkillMode.SCRIPT
@@ -347,7 +367,206 @@ class TestTheScriptsDoWhatTheirSkillsSay:
             )
 
     def test_every_script_asks_for_no_secret_that_its_skill_does_not_declare(self) -> None:
-        for name, skill in examples().items():
+        for name in scripts():
+            skill = examples()[name]
             source = skill.files["scripts/run.py"].decode()
             asked = set(re.findall(r"os\.environ\[['\"]([A-Z_]+)['\"]\]", source))
             assert asked == set(skill.manifest.permissions.secrets), name
+
+
+AUTHORIZATION = {"Authorization": "Bearer ${secret.HA_TOKEN}"}
+LIGHTS = "http://homeassistant.local:8123/api/services/light"
+GEOCODING = "https://geocoding-api.open-meteo.com/v1/search?count=1&name=${value.place}"
+AIR = (
+    "https://air-quality-api.open-meteo.com/v1/air-quality?current=european_aqi"
+    "&latitude=${step.place.json.results.0.latitude}"
+    "&longitude=${step.place.json.results.0.longitude}"
+)
+
+PLANS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+    # what a model is to write for each of them, and what the person asked for
+    "announce": (
+        plan_dict(step_command("say", "speak", text="${value.message}")),
+        {"message": "Dinner is ready"},
+    ),
+    "movie-scene": (
+        plan_dict(
+            step_http(
+                "ceiling",
+                "POST",
+                f"{LIGHTS}/turn_off",
+                headers=AUTHORIZATION,
+                body={"entity_id": "light.living_room_ceiling"},
+            ),
+            step_http(
+                "backlight",
+                "POST",
+                f"{LIGHTS}/turn_on",
+                headers=AUTHORIZATION,
+                body={"entity_id": "light.tv_backlight", "brightness_pct": 20},
+            ),
+            say="The movie scene is set.",
+        ),
+        {},
+    ),
+    "air-quality": (
+        plan_dict(
+            step_http("place", "GET", GEOCODING),
+            step_http("air", "GET", AIR),
+            say="The air quality index in ${value.place} is ${step.air.json.current.european_aqi}.",
+        ),
+        {"place": "Rome"},
+    ),
+}
+
+
+class TestTheSkillsThatAreInstructions:
+    """A skill that has no script is followed by a model, which writes a plan that is checked and
+    run. These are the plans it is to write: the checks accept them for what each skill declares,
+    and the program that runs them does what the notes say, against the shape of what the services
+    answer."""
+
+    @pytest.mark.parametrize("name", sorted(PLANS))
+    def test_it_is_instructions_that_a_model_can_follow_and_has_no_files(self, name: str) -> None:
+        skill = examples()[name]
+
+        assert skill.manifest.mode is SkillMode.INSTRUCTIONS
+        assert skill.manifest.entrypoint is None
+        assert skill.files == {}
+        assert 100 < len(skill.instructions) <= MAX_INSTRUCTIONS_CHARS
+
+    def test_the_examples_that_are_instructions_are_the_ones_that_have_a_plan_here(self) -> None:
+        by_mode = {
+            name
+            for name, skill in examples().items()
+            if skill.manifest.mode is SkillMode.INSTRUCTIONS
+        }
+
+        assert by_mode == set(PLANS)
+
+    @pytest.mark.parametrize("name", sorted(PLANS))
+    def test_the_checks_accept_the_plan_for_what_the_skill_declares(self, name: str) -> None:
+        skill = examples()[name]
+        plan, values = PLANS[name]
+
+        check_plan(
+            InstructionPlan.model_validate(plan),
+            manifest=skill.manifest,
+            granted=skill.manifest.permissions,
+            hosts=hosts_of(skill.manifest.permissions, {}),
+            values=values,
+            device_params={},
+        )
+
+    @pytest.mark.parametrize("name", ["movie-scene", "air-quality"])
+    def test_what_the_notes_say_to_reach_is_what_the_skill_is_granted(self, name: str) -> None:
+        skill = examples()[name]
+        granted = hosts_of(skill.manifest.permissions, {})
+
+        named = set(re.findall(r"https?://([a-z0-9.-]+)", skill.instructions))
+
+        assert named
+        assert all(match_host(granted, host) is not None for host in named), (named, granted)
+        assert all(any(host == mentioned for mentioned in named) for host in granted)
+
+    def test_a_skill_that_only_reads_is_declared_so_and_its_plan_only_reads(self) -> None:
+        skill = examples()["air-quality"]
+        plan, _ = PLANS["air-quality"]
+
+        assert skill.manifest.effect is Effect.READ_ONLY
+        assert {step["method"] for step in plan["steps"]} == {"GET"}
+
+    def test_the_lights_are_a_reversible_change_that_needs_the_token(self) -> None:
+        skill = examples()["movie-scene"]
+
+        assert skill.manifest.effect is Effect.REVERSIBLE
+        assert skill.manifest.permissions.secrets == ("HA_TOKEN",)
+
+    def test_what_is_only_said_to_a_device_needs_no_network_and_no_secret(self) -> None:
+        skill = examples()["announce"]
+
+        assert skill.manifest.permissions.network == ()
+        assert skill.manifest.permissions.secrets == ()
+        assert skill.manifest.target is SkillTarget.SYSTEM
+
+    def test_announcing_is_a_command_for_the_device_with_the_message_as_its_text(self) -> None:
+        plan, values = PLANS["announce"]
+
+        answer = run(
+            plan,
+            context=Context(secrets={}, device={}, values=values),
+            budget_s=5,
+        )
+
+        assert answer["commands"] == [{"name": "speak", "text": "Dinner is ready"}]
+
+    def test_the_movie_scene_makes_two_calls_with_the_token_and_says_it_is_set(self) -> None:
+        skill = examples()["movie-scene"]
+        plan, values = PLANS["movie-scene"]
+        with FakeWeb() as web:
+            web.answer("POST", "/api/services/light/turn_off", json_body=[])
+            web.answer("POST", "/api/services/light/turn_on", json_body=[])
+            there = json.loads(
+                json.dumps(plan).replace("http://homeassistant.local:8123", web.url(""))
+            )
+            check_plan(
+                InstructionPlan.model_validate(there),
+                manifest=skill.manifest,
+                granted=skill.manifest.permissions,
+                hosts=("127.0.0.1",),
+                values=values,
+                device_params={},
+            )
+
+            answer = run(
+                there,
+                context=Context(secrets={"HA_TOKEN": "tok"}, device={}, values=values),
+                budget_s=10,
+            )
+
+        assert answer["message"] == "The movie scene is set."
+        assert [(seen.method, seen.path) for seen in web.seen] == [
+            ("POST", "/api/services/light/turn_off"),
+            ("POST", "/api/services/light/turn_on"),
+        ]
+        assert web.seen[0].json() == {"entity_id": "light.living_room_ceiling"}
+        assert web.seen[1].json() == {"entity_id": "light.tv_backlight", "brightness_pct": 20}
+        assert {seen.headers["authorization"] for seen in web.seen} == {"Bearer tok"}
+
+    def test_the_air_quality_is_looked_up_by_the_place_and_said_with_it(self) -> None:
+        skill = examples()["air-quality"]
+        plan, values = PLANS["air-quality"]
+        with FakeWeb() as web:
+            web.answer(
+                "GET",
+                "/v1/search",
+                json_body={
+                    "results": [{"name": "Rome", "latitude": 41.89193, "longitude": 12.51133}]
+                },
+            )
+            web.answer(
+                "GET",
+                "/v1/air-quality",
+                json_body={
+                    "current": {"time": "2026-09-25T10:00", "interval": 3600, "european_aqi": 33}
+                },
+            )
+            there = json.loads(
+                json.dumps(plan)
+                .replace("https://geocoding-api.open-meteo.com", web.url(""))
+                .replace("https://air-quality-api.open-meteo.com", web.url(""))
+            )
+            check_plan(
+                InstructionPlan.model_validate(there),
+                manifest=skill.manifest,
+                granted=skill.manifest.permissions,
+                hosts=("127.0.0.1",),
+                values=values,
+                device_params={},
+            )
+
+            answer = run(there, context=Context(secrets={}, device={}, values=values), budget_s=10)
+
+        assert answer["message"] == "The air quality index in Rome is 33."
+        assert web.seen[0].query == "count=1&name=Rome"
+        assert web.seen[1].query == "current=european_aqi&latitude=41.89193&longitude=12.51133"
