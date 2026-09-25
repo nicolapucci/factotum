@@ -10,11 +10,13 @@ from factotum.actions.instructions.testing import FakeWeb, plan_dict, step_comma
 from factotum.actions.proposal import Proposal
 from factotum.actions.rig import HOME_TEXT, ActionsRig, plan_of
 from factotum.actions.runner_client import EXECUTOR_ENTRYPOINT, executor_files
+from factotum.actions.service import MAX_FAILURE_DETAIL_CHARS
 from factotum.actions.testing import (
     ANNOUNCE,
     ANNOUNCE_NOTES,
     GARAGE_NOTES,
     GARAGE_WORDS,
+    LAMP,
     LAMP_NOTES,
     LAMP_WORDS,
 )
@@ -177,6 +179,26 @@ class TestAPlanIsRun:
             (rig.tenant, rig.device(KITCHEN).id, Speak(text="Dinner is ready"))
         ]
 
+    async def test_what_is_said_in_other_languages_and_with_emoji_reaches_the_device_as_it_is(
+        self,
+    ) -> None:
+        message = "la cena è pronta, venite a tavola \U0001f600"
+        rig = ActionsRig(instructions=True)
+        await rig.install(ANNOUNCE, instructions=ANNOUNCE_NOTES)
+        rig.use_local_runner()
+        rig.plans(
+            plan_of("announce", parameters={"message": message}),
+            plan_dict(
+                step_command("say", "speak", text="${value.message}"),
+                say="Fatto: ${value.message}",
+            ),
+        )
+
+        outcome = await rig.hear(KITCHEN, "tell the kitchen that dinner is ready")
+
+        assert (outcome.status, outcome.reply) == (ActStatus.DONE, f"Fatto: {message}")
+        assert rig.dispatcher.given == [(rig.tenant, rig.device(KITCHEN).id, Speak(text=message))]
+
     async def test_a_command_the_device_did_not_declare_it_can_run_is_not_given(self) -> None:
         rig = ActionsRig(instructions=True)
         await rig.install(ANNOUNCE, instructions=ANNOUNCE_NOTES)
@@ -258,6 +280,17 @@ class TestAPlanThatIsNotRun:
         assert local.jobs == []
         [record] = await rig.audit()
         assert record.detail == "no plan: the model gateway is away"
+
+    async def test_why_there_was_no_plan_is_kept_in_the_trail_in_a_few_words(self) -> None:
+        rig, _ = await lamp_rig()
+        rig.plans(ON, GatewayUnavailableError("the model gateway is away: " + "x" * 1000))
+
+        await rig.hear(KITCHEN, TURN_ON)
+
+        [record] = await rig.audit()
+        assert record.detail is not None
+        assert record.detail.startswith("no plan: the model gateway is away: xxx")
+        assert len(record.detail) == MAX_FAILURE_DETAIL_CHARS
 
     async def test_a_skill_that_has_no_instructions_is_not_run(self) -> None:
         rig = ActionsRig(home_text=HOME, instructions=True)
@@ -422,6 +455,21 @@ class TestWithNobodyToWriteThePlan:
         [request] = rig.runner.requests
         assert isinstance(request, RunRequest)
         assert (request.mode, request.plan) == (SkillMode.INSTRUCTIONS, None)
+
+
+class TestASkillThatHasAScript:
+    async def test_it_is_run_as_it_is_and_no_model_writes_a_plan_for_it(self) -> None:
+        rig = ActionsRig(home_text=HOME, instructions=True)  # someone is set up to write plans
+        await rig.install(LAMP)
+        rig.plans(ON)
+
+        outcome = await rig.hear(KITCHEN, TURN_ON)
+
+        assert outcome.status is ActStatus.DONE
+        [request] = rig.runner.requests
+        assert isinstance(request, RunRequest)
+        assert (request.mode, request.plan) == (SkillMode.SCRIPT, None)
+        assert len(rig.chat.asked) == 1  # the message was read, and that was all
 
 
 def test_the_program_that_runs_a_plan_is_the_one_file_of_the_job() -> None:

@@ -228,6 +228,19 @@ class TestWhereARequestMayGo:
     def test_a_host_that_is_not_one_is_refused(self, url: str) -> None:
         rejected(step_http("s", "GET", url), match="is not a host|not one the skill may reach")
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://bad_name.example.org/x",
+            "http://a b.example.org/x",
+            "http://é.example.org/x",
+            "http://-a.example.org/x",
+            "http://a..example.org/x",
+        ],
+    )
+    def test_a_name_in_a_domain_that_was_granted_is_still_to_be_a_host(self, url: str) -> None:
+        rejected(step_http("s", "GET", url), match="is not a host", hosts=("*.example.org",))
+
     def test_the_host_of_the_device_is_put_in_and_checked(self) -> None:
         rejected(
             step_http("s", "GET", "http://${device.host}/x"),
@@ -490,7 +503,10 @@ class TestCommands:
     def test_an_argument_that_the_command_does_not_have_is_refused(self) -> None:
         rejected(
             step_command("c", "set_volume", loudness=3),
-            match=r"set_volume has no argument called loudness \(it has: level\)",
+            match=(
+                r"set_volume does not take an argument called loudness: leave it out "
+                r"\(it takes: level\)"
+            ),
         )
 
     @pytest.mark.parametrize(

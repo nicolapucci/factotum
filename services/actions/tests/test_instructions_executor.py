@@ -233,6 +233,16 @@ class TestWhenTheWorldDoesNotGiveWhatThePlanNeeds:
         with pytest.raises(StepError, match="did not get through"):
             request(step_http("s", "GET", web.url("/slow")), held(), 0.5)
 
+    def test_a_host_that_is_slow_is_given_up_on_at_the_time_a_request_has_however_much_is_left(
+        self, web: FakeWeb, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(executor, "REQUEST_TIMEOUT_S", 0.3)
+        web.answer("GET", "/slow", text="late")
+        web.delay_s = 2
+
+        with pytest.raises(StepError, match="did not get through"):
+            request(step_http("s", "GET", web.url("/slow")), held(), 60)
+
     def test_a_get_with_a_body_is_not_made(self, web: FakeWeb) -> None:
         with pytest.raises(StepError, match="no body"):
             request(step_http("s", "GET", web.url("/x"), body={"a": 1}), held(), 5)

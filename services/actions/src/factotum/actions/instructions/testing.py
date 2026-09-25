@@ -218,12 +218,15 @@ class LocalRunner:
             if job.hosts and self._proxy is not None:
                 environment["http_proxy"] = environment["https_proxy"] = self._proxy
             try:
+                # UTF-8 whatever the code page of this machine is, as in the sandbox (its LANG is
+                # C.UTF-8) and as the runner reads what comes back (and what is not, it replaces).
                 done = subprocess.run(  # noqa: S603 - the interpreter of the tests, and files a test wrote
-                    [sys.executable, "-E", "-s", str(root / job.entrypoint)],
+                    [sys.executable, "-E", "-s", "-X", "utf8", str(root / job.entrypoint)],
                     input=job.stdin,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
+                    errors="replace",
                     cwd=root,
                     env=environment,
                     timeout=job.timeout_s,
