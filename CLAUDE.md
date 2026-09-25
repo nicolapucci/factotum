@@ -31,6 +31,8 @@ FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_BOOK=/path/to.pdf uv run pytest -m live serv
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/conversation/tests/live -s
 # the actions service against real models (see docs/actions.md):
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s
+# the tests that run scripts in real containers need the socket of an engine (see docs/runner.md):
+uv run pytest -m integration services/runner/tests/test_runner_sandbox_engine.py
 # the edge, and a device in a terminal (docs/edge.md; needs config/devices.dev.yaml and the services):
 uv run factotum-terminal --profile smart-display
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
@@ -66,10 +68,11 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   cannot render is never sent to it (ADR 0013). A connection answers one utterance at a time and a
   new one interrupts the answer to the last; the last connection of a device wins. What a device is
   and whom it acts for come from the registry, never from what it says.
-- The development file of devices, the development authentication, the development delegation of
-  one service to another (`DevDelegation`, `DevPrincipalDelegation`) and the enabling of a folder of
-  skills by reading it refuse to be built outside development and tests, and the environment
-  defaults to production. The hub replaces them (slice 7).
+- The development file of devices, the development file of secrets, the development authentication,
+  the development delegation of one service to another (`DevDelegation`, `DevPrincipalDelegation`),
+  the enabling of a folder of skills by reading it and the runner itself refuse to be built outside
+  development and tests, and the environment defaults to production. The hub replaces them
+  (slice 7).
 - **The model proposes, the code decides** (ADR 0014). What plans an action reads the message alone:
   never a document, a page of the web or the conversation. What a model says (the skill, the device,
   the values, the questions) is checked in code before anything with an effect is decided, and what
@@ -83,6 +86,20 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   with no URL nothing is asked, and when it cannot be reached the message is a question and the turn
   says so in a warning. Skills, the audit trail and everything that manages them are never served
   through a device.
+- **A script runs in a container of its own and reaches only what its grant lists** (ADR 0015). The
+  `runner` is the only service given the socket of the engine (as much as being root on the
+  machine), and a job cannot say what the container is like: the body of the container is built in
+  one function from settings, and nothing about it comes from a job. A container has no network
+  unless the skill was granted hosts, and then its only exit is the egress proxy with a grant signed
+  by the runner; the proxy checks every address a name resolves to and connects to the one it
+  checked. The key of the grants goes to the runner and the proxy and to nothing else, has no
+  default, and both refuse to start without it. A skill is given only the secrets that it declared,
+  that were granted and that are its owner's own; secrets are the environment of the container and
+  nothing else, and are taken out of what it wrote. What a script prints is read strictly as
+  `{message, data, commands}` and is never believed further than that: commands are data that go
+  through `authorize()` first, and what a failure says is never what the script said. Do not add a
+  field to a job that steers the container, do not give another service the socket, and do not put
+  anything else on the sandbox network.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
@@ -108,6 +125,17 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   documentation and types, never from memory. An OpenAI-compatible server is not OpenAI: declare what
   differs on the binding rather than assuming.
 - `pytest.raises(match=...)` takes a regular expression: escape the dots (ruff's RUF043 enforces it).
+- What Windows hides, Linux shows: an event loop reports a reset at the end of a connection as an end
+  on Windows and raises `ConnectionResetError` on Linux, so a test over real sockets that passes here
+  proves nothing about it. Give the code sides that fail as Linux's do (see the tests of the egress
+  proxy), and run the suite in a Linux container before calling a network change done.
+- A `.env` in the repository belongs to the stack, not to the tests: a root fixture runs every test
+  from an empty directory. A test that wants a settings file makes one and moves there.
+- Docker refuses to put files into a container whose root filesystem is read-only, so the sandbox
+  does not use the flag (docs/runner.md says what it does instead); do not "fix" it back.
+- Compose interpolates every service of the file even when its profile is off, so a required
+  variable (`${X:?}`) stops a plain `docker compose up` for the database: give a key an empty default
+  and let the service that needs it refuse to start.
 - Tests import `--import-mode=importlib`: one test module cannot import another, so what tests share
   lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`).
 - Starlette's `TestClient` is unusable here (its deprecation warning is an error): what needs a

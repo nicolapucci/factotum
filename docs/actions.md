@@ -11,10 +11,11 @@ model's word**: the model proposes, and code decides ([ADR 0014](decisions/0014-
 enabling, matching a message with the skills by meaning, the planner and the checks on what it says,
 the decision with the policy of the device, confirmations (a yes or a no), approvals that fail
 closed, the audit trail, English and Italian replies, the HTTP API, a container image, and the
-asking from the conversation service. *Not yet*: **running a skill** (the isolated runner) and **doing
-what a skill answers with on a device** (over the edge) are slice 5b: until then a skill that is
-run says that it would have been, and nothing is switched, opened or restarted. Approvals have no way
-to be asked (ADR 0007); the hub (slice 7) registers devices and issues credentials.
+asking from the conversation service. *Implemented* (slice 5b): **running a skill** (its script runs
+in the isolated `runner`, [`runner.md`](runner.md)), **doing what a skill answers with on a device**
+(over the edge), and **secrets for skills** (a file, for development). *Not yet*: approvals have no
+way to be asked (ADR 0007), a skill that needs a linked account does not run, instructions-mode skills
+are slice 6, and the hub (slice 7) registers devices, keeps secrets and issues credentials.
 
 ## A message
 
@@ -75,11 +76,18 @@ weather and a router restart, each showing a different way an action is decided.
   one that could not be indexed (no model, the gateway away) is offered to the model unscored until it
   can be, so a skill works the moment it is enabled.
 
-The protocol of a script (which slice 5b runs) is: parameters and the device's own parameters come in
-as JSON on standard input, secrets it was granted as environment variables, and it answers a JSON
-object `{"message", "data", "commands"}` on standard output. A command is *data*: the platform gives
-it to a device after the checks, so the sandbox needs no way back into the platform. The examples
-already follow it.
+The protocol of a script is: parameters and the device's own parameters come in as JSON on standard
+input (`{"params": ..., "device_params": ...}`), secrets it was granted as environment variables, and
+it answers **one JSON object** `{"message", "data", "commands"}` on standard output, exits with 0, and
+logs to standard error. A command is *data*: the platform gives it to a device after the checks, so
+the sandbox needs no way back into the platform. **What is read is exactly those three fields**: a
+script that misspells a key is a failure that names the key, and a script cannot say that nothing was
+run. The examples follow it, and a test runs each of them as it is.
+
+What loads is what can run: the entrypoint is a **Python** file, every file in the folder has a name a
+container can be given (letters, digits, `.`, `-`, `_`), and a secret cannot be called what the runner
+sets or what changes how a program starts (`PATH`, `HTTPS_PROXY`, `PYTHON*`, `LD_*`, `FACTOTUM_*`). A
+script has the standard library and nothing installed.
 
 ## Choosing a skill
 
@@ -159,19 +167,45 @@ who approved.
 
 ## Running, and what a device is told
 
-Two interfaces, and what stands in until slice 5b:
+Two interfaces, each with a real implementation and a stand-in for when nothing is set up (what is
+not set is not there, and the service says so when it starts):
 
 * `SkillRunner.run(RunRequest) -> RunResult` runs a version of a skill with the values that were
   checked, the device's own parameters, what was granted and a time limit (the skill's own, and a
-  margin). **Now** it is a dry run: the answer says what would have been run, it is marked as such,
-  and the trail records it as *not executed*.
+  margin). **`RemoteRunner`** runs the script in the runner service
+  (`FACTOTUM_ACTIONS_RUNNER_URL`). **`DryRunRunner`**, without one, says what would have been run,
+  marks it as such, and the trail records it as *not executed*.
 * `CommandDispatcher.dispatch(tenant, device, command) -> CommandResult` gives a device a command
-  the skill answered with, after checking that the device declared what the command needs. **Now** it
-  reaches no device.
+  the skill answered with, after checking that the device declared what the command needs.
+  **`EdgeDispatcher`** gives it through the edge (`FACTOTUM_ACTIONS_EDGE_URL`, acting for the tenant).
+  `NullDispatcher`, without one, reaches no device: the command is not done, and the person is told.
 
-Everything before and after them is real: the choice, the checks, the decision, the confirmation, the
+**What is settled on this side of the wire, before a script runs** (the runner knows nothing of
+skills, tenants or devices):
+
+* **The files** are those of the version that was enabled, read from the store: never what a caller
+  sent, and never a newer version that has not been reviewed.
+* **The secrets** are the ones the version declared, that were granted when it was enabled, and that
+  are **its owner's own**. A skill a person wrote for themselves that asks for `HA_TOKEN` is given
+  that person's, or does not run; it is never given the household's, however it is granted. A secret
+  that is not set fails the run and is named (`the secret HA_TOKEN is not set`), never shown.
+* **The hosts** are what the grant names, with the device's own host where it says `${device.host}`
+  (one host, never a pattern, whatever the binding says). No hosts means no network.
+* **A skill that needs a linked account** fails and says so: accounts come with the hub.
+
+**What comes back** is read as a `SkillOutput` (`message`, `data`, `commands`, and nothing else) and
+believed no further than that. A script that did not end well (a code that is not 0, too slow, killed
+for memory), that printed something that is not one JSON document, or whose document is not one a
+skill gives, is a failure of the skill, and **what the failure says is what is wrong and never what the
+script said**. A command is given to a device only if the device declared what it needs, and a script
+cannot choose the device: it is the one the skill was aimed at, or the one that was spoken to. What
+the runner did not or could not do (unreachable, busy, does not know us) is `runner_unavailable`,
+told to the person as *I cannot run that right now*.
+
+Everything before and after is as it was: the choice, the checks, the decision, the confirmation, the
 reply, the trail. A skill that fails, times out or cannot be run is a `failed` outcome with a plain
-sentence, and is audited.
+sentence, and is audited; the log says why (which secret, which exit code, which status), with
+nothing a script wrote but the end of its error output.
 
 ## The audit trail
 
@@ -202,7 +236,10 @@ wrote to ask for a yes, are said as they are.
 | No embedding model, or it is slow | the skills that could not be measured go to the model unscored; without any, no action |
 | The message is from a device that is not known | refused if it is an action, and nothing is done for it |
 | A skill is disabled between the question and the yes | refused: *that is not available any more* |
-| A skill fails or takes too long | `failed`, a plain sentence, audited |
+| A skill fails or takes too long | `failed`, a plain sentence, audited; the log says why |
+| The runner cannot be reached, is busy or does not know the service | `failed` with `runner_unavailable`: *I cannot run that right now* |
+| A secret is not set, or the skill needs a linked account | `failed`; the log names the secret, never its value |
+| A command is not done (the device is not connected, is slow, or the edge is away) | `failed` with `command_failed`: *I asked the device, and it did not do it* |
 | The actions service is away (seen from the conversation service) | the turn goes on as a question and says so in a warning |
 | The database is away | `/readyz` says so, and the calls fail |
 
@@ -233,6 +270,9 @@ not there and one that is another person's are the same `404`.
 | --- | --- | --- |
 | `_HOST`, `_PORT` | `127.0.0.1`, `8085` | loopback unless told otherwise |
 | `_GATEWAY_URL` | `http://127.0.0.1:8081` | where the gateway is |
+| `_RUNNER_URL` | none | where the runner is; without it a skill is a dry run |
+| `_EDGE_URL`, `_EDGE_TIMEOUT_S` | none, `15` | where the edge is (without it commands are not done), and how long it is waited for to say what became of one |
+| `_SECRETS_FILE` | none | the secrets skills are given (development only, `config/secrets.example.yaml`) |
 | `_DEVICES_FILE` | none | the file of devices (development only), the one the edge reads too |
 | `_SKILLS_DIR` | none | a folder of skills, read on `POST /v1/skills/reload` |
 | `_ENABLE_SKILLS_DIR` | `false` | enable what is read as it is read (development only) |
@@ -263,13 +303,19 @@ against both.
 ## Trying it
 
 The devices are those of [`config/devices.example.yaml`](../config/devices.example.yaml): copy it to
-`config/devices.dev.yaml`. Bindings for the models are in `config/bindings.dev.yaml` (see
-[model-gateway.md](model-gateway.md)); `chat.fast` and `embedding` are the roles used here.
+`config/devices.dev.yaml`, and put in it, as the `host` of the lamp and the garage door, where your
+Home Assistant is (an address, or a name the DNS of the machine knows; `host.docker.internal` for one
+on this machine). The secrets they need are in [`config/secrets.example.yaml`](../config/secrets.example.yaml):
+copy it to `config/secrets.dev.yaml` and put your token in it. Bindings for the models are in
+`config/bindings.dev.yaml` (see [model-gateway.md](model-gateway.md)); `chat.fast` and `embedding` are
+the roles used here. The engine must be running (a script runs in a container of its own), and the
+stack needs a key for the grants of the egress proxy, which is yours to make.
 
 ```bash
 export FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_ENVIRONMENT=development
+export FACTOTUM_EGRESS_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
 export FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR=true      # development: what is read is enabled
-docker compose --profile services up -d --build --wait postgres model-gateway actions conversation edge
+docker compose --profile services up -d --build --wait
 
 # The examples are installed and enabled (and indexed by meaning), as an administrator:
 curl -s -X POST http://127.0.0.1:8085/v1/skills/reload
@@ -281,7 +327,8 @@ DISPLAY_ID=fa54fa4e-e63e-5b9a-b760-92a9c52f77bb
 curl -s http://127.0.0.1:8083/v1/turns -H 'content-type: application/json' \
      -H 'x-factotum-dev-subject: tenant' -H "x-factotum-dev-device: $DISPLAY_ID" \
      -d '{"message": "open the garage door"}'
-# ...a question ("Do you really want me to open the garage door?"), and the next message answers it:
+# ...a question ("Do you really want me to open the garage door?"), and the next message answers it
+# (and the garage door is opened, through your Home Assistant, by a script in a container):
 curl -s http://127.0.0.1:8083/v1/turns -H 'content-type: application/json' \
      -H 'x-factotum-dev-subject: tenant' -H "x-factotum-dev-device: $DISPLAY_ID" \
      -d '{"message": "yes"}'
@@ -289,8 +336,10 @@ curl -s http://127.0.0.1:8083/v1/turns -H 'content-type: application/json' \
 
 Or as a device, which is how it will be used: `uv run factotum-terminal --profile smart-display`
 and say *turn on the lamp*, *open the garage door* (it asks; say *yes*), *what is the weather in
-Rome*, *restart the router* (it cannot be approved yet), *apri il garage*. Everything that is done
-is a dry run in this slice, and `GET /v1/audit` shows the trail.
+Rome*, *restart the router* (it cannot be approved yet), *apri il garage*; and to the `speaker`
+profile *set the volume to 30*, which the terminal shows as a command it was given (`[do] volume 30`).
+Without `FACTOTUM_ACTIONS_RUNNER_URL` everything that is done is a dry run, and `GET /v1/audit` shows
+the trail in either case.
 
 ## Tests
 
@@ -419,8 +468,41 @@ are two): the skill, the decision, the confirmation, *not executed* (it is a dry
 values (`{"action": "open"}`, `{"level": 30}`). With the actions container stopped, a message was
 answered as a question with the `actions_unavailable` warning.
 
+### Running skills (slice 5b)
+
+The same stack plus the runner and the egress proxy, with the actions service pointed at both, on the
+shared card (the desktop was using it: 44% and 7 of the 8 GB), with a stand-in for Home Assistant on the
+host that checks the token, the five examples read from the folder and messages said to the display and
+the speaker through the edge with the terminal client. **What a script does is the runner's**
+([`runner.md`](runner.md#measured) has what a container costs); what is here is what the person
+waits for.
+
+| | |
+| --- | --- |
+| *yes*, to the question about the garage door: the door is opened by a script through the proxy, from the message to the reply (no model is asked) | **1.9 s** (the script took 1.8 s) |
+| *what is the weather like in Rome* (two HTTPS requests to Open-Meteo through the proxy) | 5.2 s (the script 1.65 s) |
+| *set the volume to 30* to the speaker: the command reaches the device 15 ms after the script ends | 5.0 s (the script 0.94 s) |
+| *accendi la luce del salotto* to the speaker: the lamp is switched through the stand-in | 5.8 s (the script 1.44 s) |
+| *restart the router* | 4.0 s: *That needs somebody's approval, and I have no way to ask for it.* |
+| *open the garage door* to the speaker | 4.3 s: *This device is not allowed to do that.* |
+
+What the stand-in for Home Assistant saw was exactly what should have reached it: the garage door
+opened once and the lamp switched on once, each with the token and the entity of the binding. The
+rest of the time is the models: on a card that is shared, the model that reads the message is 3 to 4
+seconds of every command. The logs of the five services had no error; the three warnings were the
+first messages after a pause, below.
+
 ### What the measurements found
 
+* **A run makes a container, and it is the cheapest part of the wait now.** About a second and a half
+  where nothing else is going on; the model that reads the message is more than that on a card that
+  is shared. Several runs at once wait for their turn (four at a time, five seconds) and are told
+  that the runner is busy after that: the person hears *I cannot run that right now*.
+* **A brightness alone still misses the lamp sometimes.** *Set the lamp to 30 percent* was answered
+  *I still need: state* (the 8B model on the shared card left out that the lamp is to be on), after
+  the example was changed to say that a brightness alone means on. It is the same weakness as in the
+  table above, and a skill that a person writes will have it too: the way out is in the skill (a
+  value that is optional and that the script defaults) and in slice 6, not in the code that checks.
 * **A busy card makes the assistant deaf, and quietly.** The first run of the corpus, with the
   defaults (4 s to embed a message, 10 s to plan it), gave up on a third of the messages (14
   embeddings and 6 plans timed out): with the card shared a plan took 8 to 10 s. A message that
@@ -444,9 +526,12 @@ answered as a question with the `actions_unavailable` warning.
 
 ## Known limits
 
-* **Nothing is run yet** (slice 5b): the runner, the dispatch of commands to devices over the edge,
-  secrets for skills. Everything that is *done* here is a dry run.
-* **No approvals**: a skill that needs one is refused until there is a way to ask (ADR 0007).
+* **No approvals**: a skill that needs one is refused until there is a way to ask (ADR 0007). The
+  router example cannot be restarted until then.
+* **No linked accounts**: a skill that declares one fails and says so, until the hub links them
+  (slice 7). Secrets are in a file for development, refused anywhere else, until the hub keeps them.
+* **Scripts are Python and the standard library**, in a container of the level of isolation that
+  ADR 0015 describes: fine for code the household wrote or trusts, not for a stranger's.
 * **A skill installed as text has no scripts**, only instructions; instructions-mode skills are
   slice 6.
 * **The reply is one sentence per outcome** (in English or Italian): a request that is made of

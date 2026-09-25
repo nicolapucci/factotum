@@ -20,3 +20,4 @@ the old one instead of rewriting history.
 | [0012](0012-conversation-no-history-in-a-turn-a-log-to-search-when-referred-to.md) | Conversation: no history in a turn, and a log to search when a message refers to it |
 | [0013](0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md) | The edge: typed parts, filtered by what a device can render |
 | [0014](0014-actions-the-model-proposes-the-code-decides.md) | Actions: the model proposes, the code decides |
+| [0015](0015-the-runner-a-container-for-each-run-and-a-proxy-that-checks-a-grant.md) | The runner: a container for each run, and a proxy that checks a grant |

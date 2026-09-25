@@ -10,6 +10,10 @@ uv sync --all-packages      # creates .venv from uv.lock
 cp .env.example .env        # then set FACTOTUM_POSTGRES_PASSWORD
 ```
 
+A `.env` in the repository is read by the services and not by the tests: every test runs from an
+empty directory, so what it finds does not depend on the passwords, keys and environment of the stack
+you have up.
+
 ## The checks
 
 CI runs exactly these, so run them before committing:
@@ -34,7 +38,7 @@ skills/           example skills (folders with a SKILL.md and their scripts)
 libs/web/         what the HTTP interfaces share: errors, authentication, body limits
 libs/db/          the Postgres pool, migrations and the harness for tests against a real database
 libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
-services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions)
+services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions, runner, egress)
 clients/          the devices that talk to the edge (so far: terminal, a device in a terminal)
 config/           example configuration, such as the model bindings
 docs/             design.md, the decision records, one document per service
@@ -110,14 +114,26 @@ no Docker.
 ## Trying the actions
 
 The actions service reads the same `config/devices.dev.yaml` as the edge (the devices, and which
-skill drives which lamp or door), and `skills/examples` are the skills to try. In development the
-folder of skills can be enabled as it is read; [`actions.md`](actions.md#trying-it) has the commands.
+skill drives which lamp or door) and `config/secrets.dev.yaml` (the secrets skills are given), and
+`skills/examples` are the skills to try. In development the folder of skills can be enabled as it is
+read; [`actions.md`](actions.md#trying-it) has the commands. What runs a script is the runner, in a
+container of its own per run, so **the engine must be running** and the stack needs a key for the
+egress proxy (`FACTOTUM_EGRESS_KEY` in `.env`, 32 characters or more:
+`python -c "import secrets; print(secrets.token_urlsafe(48))"`); [`runner.md`](runner.md) says how
+it works.
 
 ```bash
-FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR=true FACTOTUM_POSTGRES_PASSWORD=dev     FACTOTUM_ENVIRONMENT=development docker compose --profile services up -d --build --wait
+cp config/devices.example.yaml config/devices.dev.yaml
+cp config/secrets.example.yaml config/secrets.dev.yaml     # put real values in it; git ignores it
+FACTOTUM_EGRESS_KEY=... FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR=true FACTOTUM_POSTGRES_PASSWORD=dev \
+    FACTOTUM_ENVIRONMENT=development docker compose --profile services up -d --build --wait
 curl -s -X POST http://127.0.0.1:8085/v1/skills/reload      # installs and enables the examples
 uv run factotum-terminal --profile smart-display            # say: turn on the lamp
 ```
+
+The tests of the runner that need a real engine (they run scripts in containers and look at them
+from the inside) skip where there is no socket, which is Windows; they run in a Linux container that
+is given one, and in CI: [`runner.md`](runner.md#tests) has the command.
 
 ## Database
 

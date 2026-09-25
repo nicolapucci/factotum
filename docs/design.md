@@ -1,12 +1,14 @@
 # Factotum: design (v1)
 
-Status: **Slices 0 to 5a are implemented**: the foundations and shared contracts, the
-`model-gateway`, `knowledge`, `conversation`, `edge` and `actions` services, and a terminal client
-that is a device. The other services are not started yet, and the actions service does not run a
-skill yet (slice 5b). Sections say whether something is *implemented* or *planned*. The reasons
-behind the biggest decisions live in [`decisions/`](decisions/README.md); the services have their
-own documents, [`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
-[`conversation.md`](conversation.md), [`edge.md`](edge.md) and [`actions.md`](actions.md).
+Status: **Slices 0 to 5b are implemented**: the foundations and shared contracts, the
+`model-gateway`, `knowledge`, `conversation`, `edge`, `actions`, `runner` and `egress` services, and a
+terminal client that is a device. The other services are not started yet, and a skill that needs a
+linked account or an approval does not run until the hub (slice 7). Sections say whether something is
+*implemented* or *planned*. The reasons behind the biggest decisions live in
+[`decisions/`](decisions/README.md); the services have their own documents,
+[`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
+[`conversation.md`](conversation.md), [`edge.md`](edge.md), [`actions.md`](actions.md) and
+[`runner.md`](runner.md).
 
 ## 1. What Factotum is
 
@@ -49,11 +51,12 @@ flowchart TD
     actions --> gateway
     actions --> runner["runner (isolated)"]
     actions --> edge
+    runner --> egress["egress proxy"]
     hub --> knowledge
     hub --> actions
     hub --> gateway
     gateway --> providers["Providers chosen by the user"]
-    runner --> external["Devices and services the user controls"]
+    egress --> external["Devices and services the user controls"]
 ```
 
 | Service | Responsibility | What it does not know |
@@ -62,8 +65,9 @@ flowchart TD
 | `conversation` (*implemented* for text) | One conversation turn: retrieval from `knowledge` (and later the web) with timeouts and partial degradation, context budgeting, streamed answers with citations, and no history unless the message refers to it, when what was said is looked up in a log; later routing with structured output and the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
 | `knowledge` (*implemented*) | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
 | `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
-| `actions` (*implemented* except running: slice 5b) | Skills (validation, versions, matching by meaning), the catalog and its review, the planner and the checks on what it says, permissions and grants, the policy decision, confirmations, approvals, audit; later the dispatch of device commands | how a model was chosen |
-| `runner` | Runs skill scripts in isolation | everything else |
+| `actions` (*implemented*) | Skills (validation, versions, matching by meaning), the catalog and its review, the planner and the checks on what it says, permissions and grants, the policy decision, confirmations, approvals, audit, the secrets a skill is given and whose they are, running a skill through the runner and giving a device its commands through the edge | how a model was chosen; how a container is made |
+| `runner` (*implemented*) | Runs the script of a skill in a container of its own, made for the run and thrown away after it; the only service given the socket of the engine | skills, tenants, devices, models |
+| `egress` (*implemented*) | The only way out of a script's container: lets a run reach the hosts its signed grant lists, and checks every address they resolve to | what a skill is, and anything but the key it shares with the runner |
 | `hub` | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
 
 Infrastructure: Postgres with pgvector (one schema per service; *implemented in compose*), SearXNG
@@ -173,10 +177,11 @@ device defaults to `max_effect = reversible`; the tenant admin can raise it.
 
 ## 6. Skills
 
-*Implemented* (slice 5a, [`actions.md`](actions.md)): the manifest (`factotum.contracts.skills`),
-loading and versioning, the catalog with review and enabling, matching by meaning, the planner and
-the checks on it, the decision and the confirmation. *Planned*: running (slice 5b) and instructions
-mode (slice 6).
+*Implemented* (slices 5a and 5b, [`actions.md`](actions.md) and [`runner.md`](runner.md)): the
+manifest (`factotum.contracts.skills`), loading and versioning, the catalog with review and enabling,
+matching by meaning, the planner and the checks on it, the decision and the confirmation, running a
+script in an isolated container and giving a device the commands it answers with, and secrets for
+skills. *Planned*: instructions mode (slice 6) and linked accounts (slice 7).
 
 A skill teaches Factotum to do something. It is a folder with a `SKILL.md` (YAML frontmatter plus
 markdown) and, optionally, scripts. The frontmatter is validated as a `SkillManifest`.
@@ -206,10 +211,11 @@ entrypoint: scripts/run.py  # omit for instructions mode
 Markdown instructions for the model, or notes for humans.
 ```
 
-- **Script mode** (an entrypoint): the script runs in the `runner`, receives its parameters as JSON on
-  stdin and answers `{message, data, commands}` on stdout. It is a function from the platform's point
-  of view: the world is affected through the network it was allowed, and commands for devices leave
-  as *data* that the platform runs after the checks, so the sandbox needs no back channel.
+- **Script mode** (an entrypoint, a Python file): the script runs in the `runner`, receives its
+  parameters as JSON on stdin and answers `{message, data, commands}` on stdout. It is a function from
+  the platform's point of view: the world is affected through the network it was allowed, and
+  commands for devices leave as *data* that the platform runs after the checks, so the sandbox needs
+  no back channel.
 - **Instructions mode** (no entrypoint): the model follows the markdown using only the platform's
   primitives (`http.request`, `mqtt.publish`, `device.command`) within the declared permissions. The
   model writes the plan; `actions` executes it and resolves secrets server-side.
@@ -221,11 +227,16 @@ Markdown instructions for the model, or notes for humans.
 - **Permissions** (*implemented*) are deny-by-default and reviewed by the user at installation and at
   every change: a version runs only once it has been enabled, which grants what it declares.
   Permissions that depend on a device are resolved and approved when the skill is bound to it.
-- **Sandbox**: a separate container, non-root, read-only filesystem, CPU / memory / time limits, an
-  internal network whose only exit is a proxy with a per-skill allowlist, no access to the container
-  runtime or to internal services. In v1 scripts speak HTTP(S) only; other protocols go through
-  platform primitives. Isolation is at process level: fine for code the user wrote or trusts, not for
-  strangers' code (ADR 0006). The `SkillRunner` interface allows a stronger backend later.
+- **Sandbox** (*implemented*, [`runner.md`](runner.md), [ADR 0015](decisions/0015-the-runner-a-container-for-each-run-and-a-proxy-that-checks-a-grant.md)):
+  a container of its own for each run, unprivileged, with every capability dropped, ceilings on
+  memory, CPU and processes, a small non-executable memory `/tmp` as the only place to write, and no
+  network at all unless the skill was granted hosts, and then an internal network whose only exit is a
+  proxy that checks a signed per-run grant and every address a host resolves to. It has no access to
+  the container runtime or to internal services; a script is given only the secrets that are its
+  owner's own and that were granted. In v1 scripts are Python and speak HTTP(S) only; other protocols
+  go through platform primitives. Isolation is at the level of a container: fine for code the user
+  wrote or trusts, not for strangers' code (ADR 0006). The `SkillRunner` interface allows a stronger
+  backend later.
 
 ## 7. Models
 
@@ -337,7 +348,7 @@ answer and other things than actions, voice.
 | 3 | `conversation` (text): a turn with no history, a log searched when a message refers to it, streamed answers with citations, container image | done |
 | 4 | `edge` and a terminal client with device profiles: protocol v1 over a WebSocket, answers by sentences and by what a device can render, interruption, commands with an acknowledgement, container image | done |
 | 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner), asked first by the conversation service | done |
-| 5b | `runner` and device command dispatch | |
+| 5b | `runner` (a container for each run) and `egress` (a proxy with a signed grant), device command dispatch through the edge, secrets for skills | done |
 | 6 | Instructions-mode skills | |
 | 7 | `hub` | |
 | 8 | Voice and the Raspberry Pi client | |
