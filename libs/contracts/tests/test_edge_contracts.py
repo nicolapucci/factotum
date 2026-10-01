@@ -7,6 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import AnyHttpUrl, ValidationError
 
+from factotum.contracts.audio import AudioFormat, AudioPayload
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.cards import Card, CardItem
 from factotum.contracts.commands import (
@@ -30,6 +31,7 @@ from factotum.contracts.edge import (
     MAX_FRAME_BYTES,
     PROTOCOL_VERSION,
     Ack,
+    AudioUtterance,
     Bye,
     Cancel,
     ClientInfo,
@@ -84,6 +86,11 @@ def ready(**changes: Any) -> Ready:
     return Ready(**{**fields, **changes})
 
 
+def audio_payload(**changes: Any) -> AudioPayload:
+    fields: dict[str, Any] = {"sample_rate": 16000, "data": b"\x00\x01\xfe\xff RIFF not really"}
+    return AudioPayload(**{**fields, **changes})
+
+
 DEVICE_FRAMES = [
     hello(),
     hello(
@@ -92,6 +99,7 @@ DEVICE_FRAMES = [
         client=ClientInfo(name="factotum-terminal", version="0.0.0"),
     ),
     Utterance(id="u1", text="how do I reset the router?"),
+    AudioUtterance(id="u2", audio=audio_payload()),
     Cancel(id="u1"),
     Ack(id="c1", result=CommandResult.ok()),
     Ack(id="c2", result=CommandResult(status=CommandStatus.FAILED, detail="the amplifier is off")),
@@ -124,6 +132,11 @@ EDGE_FRAMES = [
         heartbeat_s=5,
     ),
     PartFrame(utterance_id="u1", seq=0, part=Speech(text="Hold the button for ten seconds.")),
+    PartFrame(
+        utterance_id="u1",
+        seq=6,
+        part=Speech(text="Hold the button for ten seconds.", audio=audio_payload()),
+    ),
     PartFrame(utterance_id="u1", seq=1, part=Text(text="Hold the button for ten seconds. [1]")),
     PartFrame(utterance_id="u1", seq=2, part=CardPart(card=CARD)),
     PartFrame(
@@ -237,6 +250,32 @@ class TestWhatIsSaidToTheDevice:
         for text in ("", "   ", "w" * (MAX_MESSAGE_CHARS + 1)):
             with pytest.raises(ValidationError):
                 Utterance(id="u", text=text)
+
+
+class TestARecording:
+    def test_the_bytes_of_a_recording_survive_the_wire_exactly(self) -> None:
+        # Every byte value, including ones that are not valid UTF-8 on their own: this is what
+        # tells base64 (ser_json_bytes) apart from the default, which would mangle them.
+        payload = audio_payload(data=bytes(range(256)))
+        frame = AudioUtterance(id="u1", audio=payload)
+
+        restored = decode_device_frame(encode_frame(frame))
+
+        assert restored == frame
+        assert isinstance(restored, AudioUtterance)
+        assert restored.audio.data == bytes(range(256))
+
+    def test_an_empty_recording_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            audio_payload(data=b"")
+
+    @pytest.mark.parametrize("rate", [7999, 48001])
+    def test_a_sample_rate_outside_what_speech_needs_is_rejected(self, rate: int) -> None:
+        with pytest.raises(ValidationError):
+            audio_payload(sample_rate=rate)
+
+    def test_the_format_defaults_to_wav(self) -> None:
+        assert audio_payload().format is AudioFormat.WAV
 
     def test_the_parts_of_an_answer_are_counted_from_nothing(self) -> None:
         with pytest.raises(ValidationError):

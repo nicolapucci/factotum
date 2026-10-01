@@ -192,6 +192,18 @@ class ChatNotConfiguredError(FactotumError):
     code = "chat_not_configured"
 
 
+class SttNotConfiguredError(FactotumError):
+    """The owner has no speech-to-text model bound, so a recording cannot be understood."""
+
+    code = "stt_not_configured"
+
+
+class TtsNotConfiguredError(FactotumError):
+    """The owner has no text-to-speech model bound, so an answer cannot be spoken."""
+
+    code = "tts_not_configured"
+
+
 class GatewayError(FactotumError):
     """The model gateway answered with an error the caller cannot fix by asking again."""
 

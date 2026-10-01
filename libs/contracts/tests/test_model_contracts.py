@@ -172,6 +172,17 @@ class TestModelBinding:
         assert make_model_binding(tenant_id=make_tenant_id()).id.version == 4
         assert uuid4().version == 4
 
+    @pytest.mark.parametrize("provider", [ProviderKind.WHISPER_LOCAL, ProviderKind.PIPER_LOCAL])
+    def test_a_provider_in_the_gateways_own_process_needs_neither_an_address_nor_a_key(
+        self, provider: ProviderKind
+    ) -> None:
+        binding = make_model_binding(
+            tenant_id=make_tenant_id(), provider=provider, base_url=None, secret_ref=None
+        )
+
+        assert binding.base_url is None
+        assert binding.secret_ref is None
+
 
 def test_a_profile_says_what_a_role_can_do_without_naming_the_model() -> None:
     profile = Profile(

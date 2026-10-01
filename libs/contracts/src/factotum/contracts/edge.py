@@ -7,11 +7,12 @@ The device speaks first. ``hello`` says which protocol it speaks, who it is (a h
 credential it was given when it was paired) and what it can do; the edge answers ``ready``, or an
 ``error`` and closes.
 
-* A device that can start conversations (``audio_in``) sends an ``utterance``: what was said, as
-  text. The edge answers with ``part`` frames, the pieces of the answer in the order they are to be
-  rendered, each of a kind the device declared it can render, and then ``turn_ended``. Another
-  ``utterance`` interrupts the answer to the one before (the person spoke over it), and so does a
-  ``cancel``.
+* A device that can start conversations (``audio_in``) sends an ``utterance`` (what was said, as
+  text) or an ``audio_utterance`` (a recording, transcribed before the turn runs as if it had been
+  typed). The edge answers with ``part`` frames, the pieces of the answer in the order they are to
+  be rendered, each of a kind the device declared it can render, and then ``turn_ended``. Another
+  ``utterance`` or ``audio_utterance`` interrupts the answer to the one before (the person spoke
+  over it), and so does a ``cancel``.
 * When something wants the device to do something (set the volume, show a card) the edge sends a
   ``command``, and the device answers with an ``ack`` that carries the result.
 * ``ping`` and ``pong`` say that each side is still there. A device that says nothing for too long
@@ -33,6 +34,7 @@ from pydantic import (
     model_validator,
 )
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.commands import CommandResult, DeviceCommand
@@ -43,9 +45,10 @@ from factotum.contracts.response import ResponsePart
 
 PROTOCOL_VERSION = 1
 
-MAX_FRAME_BYTES = 64 * 1024
-"""The largest frame either side sends or accepts. Devices send small frames, and the parts of an
-answer are cut to fit long before this."""
+MAX_FRAME_BYTES = 4 * 1024 * 1024
+"""The largest frame either side sends or accepts. A text frame is small; this is sized for an
+``audio_utterance`` or a ``speech`` part's recording (``factotum.contracts.audio``), base64 and
+all."""
 
 HEARTBEAT_SECONDS = 20
 """How often a device that has nothing else to say is asked to say that it is there."""
@@ -120,6 +123,19 @@ class Utterance(Contract):
     text: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
 
 
+class AudioUtterance(Contract):
+    """Something a person said to the device, recorded whole after it heard the wake word.
+
+    A future slice streams the recording instead of sending it whole, and lets a new one that
+    starts while an answer is still playing interrupt it as it is heard, not only once it ends
+    (ADR 0021); this one is a single clip, like an ``Utterance`` is a single line of text.
+    """
+
+    type: Literal["audio_utterance"] = "audio_utterance"
+    id: FrameId
+    audio: AudioPayload
+
+
 class Cancel(Contract):
     """Stop answering an utterance (a button, or the person saying stop)."""
 
@@ -145,7 +161,9 @@ class Bye(Contract):
     type: Literal["bye"] = "bye"
 
 
-DeviceFrame = Annotated[Hello | Utterance | Cancel | Ack | Ping | Bye, Field(discriminator="type")]
+DeviceFrame = Annotated[
+    Hello | Utterance | AudioUtterance | Cancel | Ack | Ping | Bye, Field(discriminator="type")
+]
 
 
 # ---- from the edge to the device ----------------------------------------------------------------
@@ -274,9 +292,13 @@ def encode_frame(frame: Contract) -> str:
     return frame.model_dump_json(exclude_none=True)
 
 
-def decode_device_frame(data: str | bytes) -> Hello | Utterance | Cancel | Ack | Ping | Bye:
+def decode_device_frame(
+    data: str | bytes,
+) -> Hello | Utterance | AudioUtterance | Cancel | Ack | Ping | Bye:
     """A frame a device sent, or ``InvalidFrameError``."""
-    frame: Hello | Utterance | Cancel | Ack | Ping | Bye = _decode(_DEVICE_FRAMES, data)
+    frame: Hello | Utterance | AudioUtterance | Cancel | Ack | Ping | Bye = _decode(
+        _DEVICE_FRAMES, data
+    )
     return frame
 
 

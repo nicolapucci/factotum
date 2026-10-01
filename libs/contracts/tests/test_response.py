@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
+from factotum.contracts.audio import AudioFormat, AudioPayload
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import LedPattern, Pause, SetLed, SetVolume, Speak
@@ -70,6 +71,18 @@ def test_an_unknown_part_type_is_rejected() -> None:
 def test_speech_cannot_be_empty() -> None:
     with pytest.raises(ValidationError):
         Speech(text="")
+
+
+def test_speech_has_no_audio_until_something_synthesizes_it() -> None:
+    assert Speech(text="Ecco la ricetta").audio is None
+
+
+def test_speech_with_audio_still_needs_a_speaker_and_round_trips() -> None:
+    payload = AudioPayload(format=AudioFormat.WAV, sample_rate=16000, data=b"some-wav-bytes")
+    part = Speech(text="Ecco la ricetta", audio=payload)
+
+    assert required_capability(part) is Capability.AUDIO_OUT
+    assert part_adapter.validate_json(part.model_dump_json()) == part
 
 
 def test_a_media_part_needs_a_valid_url() -> None:

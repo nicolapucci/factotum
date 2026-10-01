@@ -50,6 +50,12 @@ class ProviderKind(StrEnum):
     OPENAI_COMPATIBLE = "openai_compatible"
     """Any server that speaks the OpenAI API: vLLM, LM Studio, llama.cpp, OpenRouter, Groq..."""
 
+    WHISPER_LOCAL = "whisper_local"
+    """``faster-whisper``, in the gateway's own process: speech-to-text only, no address, no key."""
+
+    PIPER_LOCAL = "piper_local"
+    """``piper``, in the gateway's own process: text-to-speech only, no address, no key."""
+
 
 HOSTED_PROVIDERS = frozenset({ProviderKind.OPENAI, ProviderKind.ANTHROPIC, ProviderKind.GEMINI})
 """Providers that always need a key and have a well-known address."""

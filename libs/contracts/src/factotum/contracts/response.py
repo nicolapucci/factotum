@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import AnyHttpUrl, Field
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
@@ -26,6 +27,9 @@ class Speech(Contract):
 
     type: Literal["speech"] = "speech"
     text: str = Field(min_length=1, max_length=2000)
+    audio: AudioPayload | None = None
+    """``text`` synthesized, when a text-to-speech role is bound. ``None`` means the device must
+    speak the words itself, or not at all: the text is sent either way."""
 
 
 class Text(Contract):
