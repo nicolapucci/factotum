@@ -23,3 +23,4 @@ the old one instead of rewriting history.
 | [0015](0015-the-runner-a-container-for-each-run-and-a-proxy-that-checks-a-grant.md) | The runner: a container for each run, and a proxy that checks a grant |
 | [0016](0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md) | Skills that are instructions: a model writes a plan, the code decides, the sandbox runs it |
 | [0017](0017-hub-tokens-a-signed-principal-every-service-can-check.md) | The hub's tokens: a signed `Principal` every service can check |
+| [0018](0018-device-pairing-a-long-lived-credential-checked-without-the-hub.md) | Device pairing: a long-lived credential, checked without the hub |

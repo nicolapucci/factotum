@@ -1,11 +1,12 @@
 # Factotum: design (v1)
 
-Status: **Slices 0 to 6 are implemented, and slice 7a**: the foundations and shared contracts, the
+Status: **Slices 0 to 6 are implemented, and slices 7a-7b**: the foundations and shared contracts, the
 `model-gateway`, `knowledge`, `conversation`, `edge`, `actions`, `runner`, `egress` and `hub`
-services, and a terminal client that is a device. Of the hub, only its tenant, its users and the
-tokens every service checks are there: a device's pairing, its spaces, linked accounts, model
-bindings and skill secrets are slices 7b to 7d, and a skill that needs a linked account or an
-approval does not run until they are. Sections say whether something is *implemented* or *planned*.
+services, and a terminal client that is a device. Of the hub, its tenant, its users, the tokens every
+service checks, and now a device's pairing and the external devices a skill is bound to are there:
+its spaces, linked accounts, model bindings and skill secrets are slices 7c-7d, and a skill that
+needs a linked account or an approval does not run until they are. Sections say whether something is
+*implemented* or *planned*.
 The reasons behind the biggest decisions live in [`decisions/`](decisions/README.md); the services
 have their own documents, [`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
 [`conversation.md`](conversation.md), [`edge.md`](edge.md), [`actions.md`](actions.md),
@@ -69,7 +70,7 @@ flowchart TD
 | `actions` (*implemented*) | Skills (validation, versions, matching by meaning), the catalog and its review, the planner and the checks on what it says, permissions and grants, the policy decision, confirmations, approvals, audit, the secrets a skill is given and whose they are, running a skill through the runner and giving a device its commands through the edge | how a model was chosen; how a container is made |
 | `runner` (*implemented*) | Runs the script of a skill in a container of its own, made for the run and thrown away after it; the only service given the socket of the engine | skills, tenants, devices, models |
 | `egress` (*implemented*) | The only way out of a script's container: lets a run reach the hosts its signed grant lists, and checks every address they resolve to | what a skill is, and anything but the key it shares with the runner |
-| `hub` (*implemented* for tenants, users and tokens) | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
+| `hub` (*implemented* for tenants, users, tokens, devices and their pairing) | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
 
 Infrastructure: Postgres with pgvector (one schema per service; *implemented in compose*), SearXNG
 or a keyed search API for the web.
@@ -165,14 +166,15 @@ shown, with its sources, by a screen), so the first sound is heard after the fir
 connection answers one utterance at a time and speaking over an answer interrupts it; the last
 connection of a device wins. Commands go over the same connection and come back with a result
 (`ok`, `failed`, `unsupported`, `timeout`, `offline`); inside the platform a connected device is a
-`SystemDevice`. Until the hub registers them (slice 7b) devices are registered in a YAML file and the
-edge only runs in development. `factotum-terminal` is a device in a terminal, with a profile for each
-kind of device.
+`SystemDevice`. The hub registers and pairs them (slice 7b, [`hub.md`](hub.md)); without it, devices
+are registered in a YAML file and the edge only runs in development. `factotum-terminal` is a device
+in a terminal, with a profile for each kind of device.
 
-**External devices** (lights, a TV...) are registered by hand and have no built-in methods:
-everything they can do is supplied by skills the user explicitly binds to them. A **binding**
-attaches a skill to a device with the device's own parameters, so one skill serves many devices.
-An external device has a `sensitivity` that raises the effect of any action on it.
+**External devices** (lights, a TV...) are registered by hand, through the hub, and have no built-in
+methods: everything they can do is supplied by skills the user explicitly binds to them. A
+**binding** attaches a skill to a device, by the skill's name, with the device's own parameters, so
+one skill serves many devices. An external device has a `sensitivity` that raises the effect of any
+action on it.
 
 Both kinds have an owner (a user or the tenant), tags, optional aliases and a space, and a
 **policy**: `max_effect`, an optional list of allowed skills, and `requires_approval`. A communal
@@ -360,7 +362,7 @@ answer and other things than actions, voice.
 | 5b | `runner` (a container for each run) and `egress` (a proxy with a signed grant), device command dispatch through the edge, secrets for skills | done |
 | 6 | Instructions-mode skills: a plan that a model writes, code that checks it, the sandbox that runs it | done |
 | 7a | `hub`: a tenant and its administrator, logging in, and the signed tokens every service checks | done |
-| 7b | `hub`: a device's pairing, spaces, the external devices a skill is bound to | |
+| 7b | `hub`: a device's pairing, the external devices a skill is bound to | done |
 | 7c | `hub`: model bindings, encrypted at rest | |
 | 7d | `hub`: skill secrets and linked accounts | |
 | 8 | Voice and the Raspberry Pi client | |

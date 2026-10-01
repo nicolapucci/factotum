@@ -16,10 +16,11 @@ in the isolated `runner`, [`runner.md`](runner.md)), **doing what a skill answer
 (over the edge), and **secrets for skills** (a file, for development). *Implemented* (slice 6):
 **skills that are instructions**, which have no script: a model writes a plan from the notes, code
 checks it, and the platform runs it in the sandbox ([`skills.md`](skills.md), [ADR
-0016](decisions/0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md)). *Not
-yet*: approvals have no way to be asked (ADR 0007), a skill that needs a linked account does not run,
-and the hub registers devices (slice 7b) and keeps secrets (slice 7d); it already issues the tokens
-every service checks (slice 7a, [`hub.md`](hub.md)).
+0016](decisions/0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md)).
+*Implemented* (slice 7b): the hub registers devices and the skills bound to them
+([`hub.md`](hub.md)), once configured, in place of the file. *Not yet*: approvals have no way to be
+asked (ADR 0007), a skill that needs a linked account does not run, and the hub keeps secrets (slice
+7d); it already issues the tokens every service checks (slice 7a, [`hub.md`](hub.md)).
 
 ## A message
 
@@ -345,7 +346,10 @@ copy it to `config/secrets.dev.yaml` and put your token in it. Bindings for the 
 `config/bindings.dev.yaml` (see [model-gateway.md](model-gateway.md)); `chat.fast` and `embedding` are
 the roles used here, and `chat.main` for the skills that are only instructions (it writes their plans:
 bind it to the same model to start). The engine must be running (a script runs in a container of its
-own), and the stack needs a key for the grants of the egress proxy, which is yours to make.
+own), and the stack needs a key for the grants of the egress proxy, which is yours to make. In
+production the devices and their bindings come from the hub instead
+(`FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_ACTIONS_HUB_URL`, [`hub.md`](hub.md)): pair and bind them
+there, and this file is not read.
 
 ```bash
 export FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_ENVIRONMENT=development
@@ -679,4 +683,11 @@ measured in `skills.md`.
   whichever the model picks, and the other is lost.
 * **The audit trail can be a record short** if it cannot be written after something was done; it
   says so in the log.
-* **The devices are a file** until the hub registers them (slice 7b).
+* **A file without the hub.** Once `FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_ACTIONS_HUB_URL` are
+  set, the devices and the bindings of the tenant come from the hub, fetched once at startup; without
+  either, this is still a development-only file.
+* **The model gateway is still asked for with the development delegation**
+  (`factotum.model_client.gateway.DevDelegation`), unlike every other call this service makes: the
+  owner of a model binding is not yet proven to the gateway by a hub token, so this service does not
+  start in production yet, hub or not ([`hub.md`](hub.md#known-limits)). Likely 7c, once the
+  gateway's own bindings move to the hub.

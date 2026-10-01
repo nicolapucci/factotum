@@ -5,12 +5,11 @@ bindings and the secrets of skills (`docs/design.md#3-architecture-planned`). It
 the web app (slice 9), not a step in a conversation's turn: a speaker still talks to the edge, which
 asks the conversation service, exactly as before. **It knows no document and no plaintext key.**
 
-*Implemented* (slice 7a only): the service itself, a tenant and its administrator made once at the
-first start, logging in, changing a password, adding a user to a tenant, and the tokens that prove
-who a request is for to every other service. *Not yet*: a device's pairing (slice 7b, until then the
-edge and the actions service still read a file), spaces, linked accounts and model bindings (7c),
-skill secrets (7d), and any web app to use this from (slice 9: today it is an HTTP API only, tried
-with `curl` below).
+*Implemented* (slices 7a-7b): the service itself, a tenant and its administrator made once at the
+first start, logging in, changing a password, adding a user to a tenant, the tokens that prove who a
+request is for to every other service, and now pairing a device and binding a skill to one. *Not
+yet*: spaces, linked accounts and model bindings (7c), skill secrets (7d), and any web app to use
+this from (slice 9: today it is an HTTP API only, tried with `curl` below).
 
 ## Tokens, and how every service learns to check them
 
@@ -40,6 +39,26 @@ is created with it due to be changed at the first login** (`must_change_password
 (`password_change_required`). A later start finds the tenant already there and does nothing: the
 bootstrap credentials only matter once.
 
+## Devices and bindings
+
+A system device (Factotum hardware: a speaker with a microphone) is paired once: an administrator
+calls `POST /v1/devices` with `kind: system`, a name, a `hardware_id` and its capabilities. The hub
+mints a credential, hands it back once in the response (`PairedDevice.token`) and keeps only its
+hash (`factotum.common.credentials`, a plain fast hash — the credential is already high entropy, not
+a password that needs a slow one). An external device (a lamp, a garage door — anything Factotum
+does not run on) is registered the same way with `kind: external`; it has no connection of its own
+and so no credential. A binding ties a skill, by name (`CreateBindingRequest.skill`, not an id: a
+binding can be made before the skill is installed), to a device, with that device's own parameters
+(an entity id, for instance).
+
+The edge and the actions service each fetch their tenant's devices once, in their own lifespan
+(`GET /v1/devices`; the actions service also fetches `GET /v1/bindings`), and keep them in memory —
+a connection or a message is never made to wait on the hub, the same choice as the tokens above.
+Reading either list only needs an authenticated caller of the tenant, not an administrator: it is
+how the edge and the actions service, which act for the tenant and not for a person, read it. The
+reasons for this shape are in
+[ADR 0018](decisions/0018-device-pairing-a-long-lived-credential-checked-without-the-hub.md).
+
 ## The HTTP API
 
 | | |
@@ -49,6 +68,10 @@ bootstrap credentials only matter once.
 | `POST /v1/auth/change-password` | `{current_password, new_password}` → `204` |
 | `POST /v1/users` | Add a user to the caller's tenant (an administrator, not pending a password change): `{username, password, roles}` → `201` |
 | `GET /v1/users` | The users of the caller's tenant (an administrator only) |
+| `POST /v1/devices` | Pair a system device or register an external one (an administrator): `{kind, name, ...}` → `201`, a `PairedDevice` (system) or the bare record (external) |
+| `GET /v1/devices` | The tenant's devices, system and external (any authenticated caller) |
+| `POST /v1/bindings` | Bind a skill, by name, to a device (an administrator): `{skill, device_id, params, enabled}` → `201` |
+| `GET /v1/bindings` | The tenant's bindings (any authenticated caller) |
 | `GET /healthz`, `GET /readyz` | Liveness; readiness (the database answers) |
 
 Errors have the shape of the other services, `{"error": {"code", "message", "details"}}`. Logging in
@@ -89,20 +112,41 @@ Logging in again after changing the password gives `must_change_password: false`
 reaches `/v1/users`. The same `FACTOTUM_HUB_TOKEN_SECRET` given to the other services lets a token
 from here authenticate a call to any of them.
 
+```bash
+TOKEN=$(curl -s localhost:8087/v1/auth/login \
+    -d '{"username":"admin","password":"something longer than that"}' \
+    | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
+
+PAIRED=$(curl -s localhost:8087/v1/devices -H "Authorization: Bearer $TOKEN" -d '{
+    "kind": "system", "name": "Kitchen speaker", "hardware_id": "kitchen-01",
+    "capabilities": ["audio_in", "audio_out"]}')
+echo "$PAIRED"  # {"device": {...}, "token": "..."} — the token is shown here and never again
+
+DEVICE_ID=$(echo "$PAIRED" | python -c "import json,sys; print(json.load(sys.stdin)['device']['id'])")
+curl -s localhost:8087/v1/bindings -H "Authorization: Bearer $TOKEN" \
+    -d "{\"skill\": \"lamp\", \"device_id\": \"$DEVICE_ID\", \"params\": {}}"
+```
+
+Give `FACTOTUM_EDGE_HUB_URL` and `FACTOTUM_ACTIONS_HUB_URL` to the edge and the actions service (both
+default to `http://hub:8087` in compose) and the hub's devices and bindings replace the file, the
+moment `FACTOTUM_HUB_TOKEN_SECRET` is also set.
+
 ## Tests
 
 Unit tests with a store in memory; the same contract tests run again against a real Postgres
 (`pytest.mark.integration`), including that the administrator is made once and kept across a
-restart. `factotum.common.tokens` and `factotum.common.hubauth` are tested on their own: a token
-round-trips to the same `Principal`, a tampered payload or signature is refused the same way as a
-token that is not one, and an expired one stops working at the second it says it would.
+restart, and that a device's `hardware_id` and a binding's device can only be each tenant's own.
+`factotum.common.tokens` and `factotum.common.hubauth` are tested on their own: a token round-trips
+to the same `Principal`, a tampered payload or signature is refused the same way as a token that is
+not one, and an expired one stops working at the second it says it would. `HubDeviceRegistry`
+(edge) and `HubDeviceDirectory` (actions) are tested against a fake hub of their own, for what each
+needs: a registry proves a device by its hashed credential; a directory also resolves bindings and
+the `enabled` and ownership filters that the file-based ones already apply.
 
 ## Known limits
 
 - **No web app yet** (slice 9): everything here is tried with `curl`, as the other services were
   before their place in the pipeline had a client of its own.
-- **No device pairing yet** (slice 7b): `config/devices.dev.yaml` is still what the edge and the
-  actions service read, and only in development.
 - **One tenant.** Nothing here makes a second one: `multi_tenant` mode and any sign-up flow are not
   slice 7a.
 - **A shared secret, not a key pair.** Any service holding `FACTOTUM_HUB_TOKEN_SECRET` can mint a
@@ -115,3 +159,10 @@ token that is not one, and an expired one stops working at the second it says it
   from yet, either).
 - **Linked accounts, model bindings and skill secrets are not here** (7c, 7d): a deployment still
   configures the gateway and a skill's secrets from files, as before.
+- **A device's credential cannot be rotated or revoked.** Pairing mints it once; a lost or
+  compromised one means registering the device again, under a new name.
+- **The model gateway is still asked for with the development delegation**, in the actions,
+  conversation and knowledge services (`factotum.model_client.gateway.DevDelegation`): unlike the
+  principal of a caller, the owner of a model binding is not yet proven to the gateway by a hub
+  token, so none of the three starts in production yet, hub or not. Likely 7c, once the gateway's
+  bindings themselves move to the hub.

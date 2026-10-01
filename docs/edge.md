@@ -7,12 +7,12 @@ show a card) and learn what became of it. It **knows no model, no document and n
 answer says is the conversation service's business; what a device is sent of it is the edge's.
 
 *Implemented* (text): the protocol, sessions, answers adapted to what a device can do, interruption,
-commands with an acknowledgement, a registry of devices read from a file (development only), an HTTP
-API, a container image, a terminal client that is a device (`factotum-terminal`), and (slice 5b) the
-`actions` service giving a device the commands a skill answers with, through the endpoint below, once
-it has decided that the device may have something done ([`actions.md`](actions.md)). *Not yet*: audio
-(voice is slice 8: the protocol carries text today) and devices registered and paired by the hub
-(slice 7b).
+commands with an acknowledgement, a registry of devices read from a file (development) or from the
+hub, which registers and pairs them (slice 7b, [`hub.md`](hub.md)), an HTTP API, a container image, a
+terminal client that is a device (`factotum-terminal`), and (slice 5b) the `actions` service giving a
+device the commands a skill answers with, through the endpoint below, once it has decided that the
+device may have something done ([`actions.md`](actions.md)). *Not yet*: audio (voice is slice 8: the
+protocol carries text today).
 
 The reasons behind the design are in
 [ADR 0013](decisions/0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md).
@@ -146,11 +146,14 @@ A device that does not exist for the caller's tenant is a `404`. Inside the plat
 
 ## Registering devices
 
-Every device that connects must be registered: a name, a `hardware_id`, a `token` (its credential),
-an `owner` and the `capabilities` it may use. **Until the hub exists this is a YAML file, and only
-in development**: the file registry and the development authentication refuse to be built when
-`FACTOTUM_ENVIRONMENT` is anything but `development` or `test`, and it defaults to `production`, so
-forgetting to set it disables them instead of enabling them.
+Every device that connects must be registered: a name, a `hardware_id`, a credential, an `owner` and
+the `capabilities` it may use. In production this is the hub ([`hub.md`](hub.md)): pairing a device
+there (`POST /v1/devices`) hands back a credential shown once, and the edge fetches the tenant's
+devices from it once, in its own lifespan (`FACTOTUM_EDGE_HUB_URL`), checking what a device presents
+against the hash the hub keeps, never asking it again per connection. **Without the hub this is a
+YAML file, for development only**: the file registry and the development authentication refuse to be
+built when `FACTOTUM_ENVIRONMENT` is anything but `development` or `test`, and it defaults to
+`production`, so forgetting to set it disables them instead of enabling them.
 
 ```bash
 cp config/devices.example.yaml config/devices.dev.yaml     # git ignores *.dev.yaml
@@ -307,12 +310,14 @@ the conversation service drops from the citations but a screen shows as written 
 
 ## Known limits
 
-- **Development only.** The devices still come from a file, and a device's own credential (what it
-  presents at `hello`) is only checked against it: the hub (slice 7b) is what will register and pair
-  devices instead, keeping only hashes of their credentials. What the edge presents *to the other
-  services* on a device's behalf is the hub's real, signed token once
-  `FACTOTUM_HUB_TOKEN_SECRET` is set ([`hub.md`](hub.md), slice 7a); without one this is still
-  development headers, and the edge only runs with `FACTOTUM_ENVIRONMENT=development`.
+- **A file without the hub.** Once `FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_EDGE_HUB_URL` are set,
+  devices and their credentials come from the hub, which registered and paired them
+  ([`hub.md`](hub.md), slice 7b); without either, this is still a development-only file, and a
+  device's own credential (what it presents at `hello`) is only checked against it. What the edge
+  presents *to the other services* on a device's behalf is likewise the hub's real, signed token once
+  `FACTOTUM_HUB_TOKEN_SECRET` is set (slice 7a); without one this is development headers, and the
+  edge only runs with `FACTOTUM_ENVIRONMENT=development`. A device's credential cannot be rotated or
+  revoked yet: a lost one means pairing the device again, under a new name.
 - **Who may command a device is not decided here.** The command endpoint asks for an authenticated
   caller of the device's tenant and no more: grants, the device's policy (`max_effect`,
   `requires_approval`) and `authorize()` belong to the `actions` service, which decides whether the
