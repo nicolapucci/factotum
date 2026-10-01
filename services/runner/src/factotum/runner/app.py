@@ -1,9 +1,9 @@
 """Putting the runner together from its settings: the engine, the sandbox, and the sweeper.
 
 The runner is the only service that is given an engine to make containers with, and so the only one
-that can be asked to make one: the caller is authenticated (the development authenticator, which
-refuses to exist outside development and tests, until the hub issues real credentials), and what it
-sends is a job, which cannot say what the container is like.
+that can be asked to make one: the caller is authenticated (the hub's, once a token secret is
+configured; otherwise the development authenticator, which refuses to exist outside development and
+tests), and what it sends is a job, which cannot say what the container is like.
 
 While it runs, a sweeper removes the containers of the runner that a runner that died left behind.
 """
@@ -17,7 +17,8 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
+from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
+from factotum.common.hubauth import authenticator_for
 from factotum.runner.api import create_app
 from factotum.runner.docker import DockerEngine, parse_host
 from factotum.runner.sandbox import Sandbox
@@ -51,7 +52,7 @@ async def sweep(sandbox: Sandbox, *, every_s: float = SWEEP_EVERY_S) -> None:
 
 
 def build_app(settings: RunnerSettings) -> FastAPI:
-    authenticator = DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+    authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     holder: dict[str, Sandbox] = {}
 
     @asynccontextmanager

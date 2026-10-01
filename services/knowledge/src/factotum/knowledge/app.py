@@ -12,7 +12,8 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
+from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
+from factotum.common.hubauth import authenticator_for
 from factotum.db.pool import Database
 from factotum.knowledge.api import create_app
 from factotum.knowledge.ingestion import Ingestor
@@ -32,11 +33,11 @@ _STOP_GRACE_S = 30.0
 def build_app(settings: KnowledgeSettings) -> FastAPI:
     """The service as a web application.
 
-    Until the hub issues real credentials the only way to authenticate is the development
-    authenticator, which refuses to exist outside development and test: in production this
-    raises, and the service does not start.
+    Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
+    otherwise the development authenticator, which refuses to exist outside development and test,
+    so without one in production this raises and the service does not start.
     """
-    authenticator = DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+    authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     delegation = DevDelegation(settings)
     holder: dict[str, Database] = {}
 

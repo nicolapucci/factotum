@@ -38,12 +38,8 @@ from factotum.actions.secrets import NoSecrets, SecretResolver, load_secrets
 from factotum.actions.service import ActionService
 from factotum.actions.settings import ActionsSettings
 from factotum.actions.store.postgres import PostgresStore, prepare
-from factotum.common.devauth import (
-    DEV_TENANT_ID,
-    DEV_USER_ID,
-    DevAuthenticator,
-    DevPrincipalDelegation,
-)
+from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
+from factotum.common.hubauth import authenticator_for, principal_delegation_for
 from factotum.db.pool import Database
 from factotum.devices.home import Home
 from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder
@@ -76,13 +72,14 @@ def _secrets(settings: ActionsSettings) -> SecretResolver:
 def build_app(settings: ActionsSettings) -> FastAPI:
     """The service as a web application.
 
-    Until the hub issues real credentials the only way to authenticate is the development
-    authenticator, and the only knowledge of the devices is a file: both refuse to exist outside
-    development and test, so in production this raises, and the service does not start.
+    Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
+    otherwise the development authenticator, which refuses to exist outside development and test,
+    so without one in production this raises and the service does not start. The devices are still
+    only a file (the hub registers them in slice 7b).
     """
-    authenticator = DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+    authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     delegation = DevDelegation(settings)
-    principals = DevPrincipalDelegation(settings)
+    principals = principal_delegation_for(settings)
     directory = _directory(settings)
     secrets = _secrets(settings)
     if settings.actions_runner_url is None:

@@ -1,9 +1,10 @@
 """Putting the edge together from its settings: the devices it knows, the conversation service it
 asks, and the connections it holds.
 
-Until the hub issues real credentials the only way to authenticate the HTTP interface is the
-development authenticator, and the only registry of devices is a file: both refuse to exist outside
-development and tests, so in production this raises, and the edge does not start.
+Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
+otherwise the development authenticator, which refuses to exist outside development and tests, so
+without one in production this raises and the edge does not start. The registry of devices is still
+only a file until the hub registers and pairs them (slice 7b).
 """
 
 import logging
@@ -13,12 +14,8 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from factotum.common.devauth import (
-    DEV_TENANT_ID,
-    DEV_USER_ID,
-    DevAuthenticator,
-    DevPrincipalDelegation,
-)
+from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
+from factotum.common.hubauth import authenticator_for, principal_delegation_for
 from factotum.edge.api import create_app
 from factotum.edge.conversation import ConversationClient
 from factotum.edge.registry import DeviceRegistry, FileDeviceRegistry, load_devices_file
@@ -39,8 +36,8 @@ def _registry(settings: EdgeSettings) -> DeviceRegistry:
 
 
 def build_app(settings: EdgeSettings) -> FastAPI:
-    authenticator = DevAuthenticator(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
-    delegation = DevPrincipalDelegation(settings)
+    authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+    delegation = principal_delegation_for(settings)
     registry = _registry(settings)
     sessions = Sessions()
     client = httpx.AsyncClient(
