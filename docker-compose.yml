@@ -141,9 +141,10 @@ services:
 
   edge:
     # The door of the system devices: they connect to it over a WebSocket. Like the others it is not
-    # started by a plain `docker compose up`: it needs the "services" profile, and until the hub
-    # registers devices it reads them from config/devices.dev.yaml (copy config/devices.example.yaml)
-    # and only runs with FACTOTUM_ENVIRONMENT=development.
+    # started by a plain `docker compose up`: it needs the "services" profile. Without
+    # FACTOTUM_HUB_TOKEN_SECRET it reads devices from config/devices.dev.yaml (copy
+    # config/devices.example.yaml) and only runs with FACTOTUM_ENVIRONMENT=development; with it, the
+    # hub registers devices instead and it runs anywhere.
     profiles: ["services"]
     build:
       context: .
@@ -152,6 +153,10 @@ services:
     depends_on:
       conversation:
         condition: service_healthy
+      # Only reached once FACTOTUM_HUB_TOKEN_SECRET is set; the edge does not need it otherwise.
+      hub:
+        condition: service_healthy
+        required: false
     environment:
       FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
@@ -162,6 +167,8 @@ services:
       # model, no key, no document.
       FACTOTUM_EDGE_CONVERSATION_URL: http://conversation:8083
       FACTOTUM_EDGE_DEVICES_FILE: /etc/factotum/devices.dev.yaml
+      # Used only once FACTOTUM_HUB_TOKEN_SECRET is also set, in place of the file above.
+      FACTOTUM_EDGE_HUB_URL: http://hub:8087
       FACTOTUM_EDGE_HELLO_TIMEOUT_S: ${FACTOTUM_EDGE_HELLO_TIMEOUT_S:-10}
       FACTOTUM_EDGE_HEARTBEAT_S: ${FACTOTUM_EDGE_HEARTBEAT_S:-20}
       FACTOTUM_EDGE_IDLE_TIMEOUT_S: ${FACTOTUM_EDGE_IDLE_TIMEOUT_S:-60}
@@ -178,11 +185,12 @@ services:
   actions:
     # What a message asks to be done: it chooses the skill, decides whether it may run, asks for a
     # yes when it must, and audits it. Like the others it is not started by a plain
-    # `docker compose up`: it needs the "services" profile, and until the hub registers devices and
-    # keeps secrets it reads them from config/devices.dev.yaml and config/secrets.dev.yaml (copy the
-    # example files) and only runs with FACTOTUM_ENVIRONMENT=development. It runs the script of a
-    # skill in the runner and has a device do what it answers with through the edge; it is given
-    # neither an engine nor a device connection itself.
+    # `docker compose up`: it needs the "services" profile. Without FACTOTUM_HUB_TOKEN_SECRET it
+    # reads devices and secrets from config/devices.dev.yaml and config/secrets.dev.yaml (copy the
+    # example files) and only runs with FACTOTUM_ENVIRONMENT=development; with it, the hub registers
+    # devices and bindings instead (secrets are still a file, until a later slice). It runs the
+    # script of a skill in the runner and has a device do what it answers with through the edge; it
+    # is given neither an engine nor a device connection itself.
     profiles: ["services"]
     build:
       context: .
@@ -194,6 +202,10 @@ services:
       # It does not need the runner to start: without it a skill fails, and says so. (Not the edge:
       # the edge waits for the conversation service, which asks this one.)
       runner:
+        condition: service_healthy
+        required: false
+      # Only reached once FACTOTUM_HUB_TOKEN_SECRET is set; the service does not need it otherwise.
+      hub:
         condition: service_healthy
         required: false
     environment:
@@ -213,6 +225,8 @@ services:
       FACTOTUM_ACTIONS_RUNNER_URL: http://runner:8086
       FACTOTUM_ACTIONS_EDGE_URL: http://edge:8084
       FACTOTUM_ACTIONS_DEVICES_FILE: /etc/factotum/devices.dev.yaml
+      # Used only once FACTOTUM_HUB_TOKEN_SECRET is also set, in place of the file above.
+      FACTOTUM_ACTIONS_HUB_URL: http://hub:8087
       FACTOTUM_ACTIONS_SECRETS_FILE: /etc/factotum/secrets.dev.yaml
       FACTOTUM_ACTIONS_SKILLS_DIR: /skills
       FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR: ${FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR:-false}
@@ -338,9 +352,9 @@ services:
       - "127.0.0.1:${FACTOTUM_RUNNER_PORT:-8086}:8086"
 
   hub:
-    # Tenants, users and the tokens above (see docs/hub.md). Slice 7a only: a device's pairing, a
+    # Tenants, users, the tokens above, and now devices and their bindings (see docs/hub.md). A
     # tenant's spaces, its linked accounts, its model bindings and the secrets of its skills are
-    # later. Like the others it needs the "services" profile. Unlike them it always needs
+    # later slices. Like the others it needs the "services" profile. Unlike them it always needs
     # FACTOTUM_HUB_TOKEN_SECRET set, in every environment: it is the one that mints every token.
     profiles: ["services"]
     build:

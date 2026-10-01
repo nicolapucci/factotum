@@ -159,6 +159,19 @@ def test_the_conversation_service_finds_the_actions_service_by_name_and_does_not
     assert dependency["required"] is False
 
 
+def test_the_edge_and_the_actions_service_find_the_hub_by_name_and_do_not_need_it() -> None:
+    for name, url_key in (
+        ("edge", "FACTOTUM_EDGE_HUB_URL"),
+        ("actions", "FACTOTUM_ACTIONS_HUB_URL"),
+    ):
+        service = SERVICES[name]
+        dependency = service["depends_on"]["hub"]
+
+        assert service["environment"][url_key] == "http://hub:8087"
+        assert dependency["condition"] == "service_healthy"
+        assert dependency["required"] is False
+
+
 def test_the_edge_and_the_actions_service_read_the_same_file_of_devices() -> None:
     edge = SERVICES["edge"]["environment"]["FACTOTUM_EDGE_DEVICES_FILE"]
     actions = SERVICES["actions"]["environment"]["FACTOTUM_ACTIONS_DEVICES_FILE"]
