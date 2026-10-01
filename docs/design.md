@@ -1,12 +1,12 @@
 # Factotum: design (v1)
 
-Status: **Slices 0 to 6 are implemented, and slices 7a-7c**: the foundations and shared contracts, the
+Status: **Slices 0 to 6 are implemented, and slices 7a-7d**: the foundations and shared contracts, the
 `model-gateway`, `knowledge`, `conversation`, `edge`, `actions`, `runner`, `egress` and `hub`
 services, and a terminal client that is a device. Of the hub, its tenant, its users, the tokens every
-service checks, a device's pairing, the external devices a skill is bound to, and now the models
-bound to a role are there: its spaces, linked accounts and skill secrets are slice 7d, and a skill
-that needs a linked account or an approval does not run until it is. Sections say whether something
-is *implemented* or *planned*.
+service checks, a device's pairing, the external devices a skill is bound to, the models bound to a
+role, and now the secrets a skill is given are there: its spaces and linked accounts are not slices
+of their own yet, and a skill that needs a linked account or an approval does not run until they are.
+Sections say whether something is *implemented* or *planned*.
 The reasons behind the biggest decisions live in [`decisions/`](decisions/README.md); the services
 have their own documents, [`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
 [`conversation.md`](conversation.md), [`edge.md`](edge.md), [`actions.md`](actions.md),
@@ -70,7 +70,7 @@ flowchart TD
 | `actions` (*implemented*) | Skills (validation, versions, matching by meaning), the catalog and its review, the planner and the checks on what it says, permissions and grants, the policy decision, confirmations, approvals, audit, the secrets a skill is given and whose they are, running a skill through the runner and giving a device its commands through the edge | how a model was chosen; how a container is made |
 | `runner` (*implemented*) | Runs the script of a skill in a container of its own, made for the run and thrown away after it; the only service given the socket of the engine | skills, tenants, devices, models |
 | `egress` (*implemented*) | The only way out of a script's container: lets a run reach the hosts its signed grant lists, and checks every address they resolve to | what a skill is, and anything but the key it shares with the runner |
-| `hub` (*implemented* for tenants, users, tokens, devices and their pairing, and model bindings) | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
+| `hub` (*implemented* for tenants, users, tokens, devices and their pairing, model bindings and skill secrets) | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, a provider's own key (a model binding only ever names where the gateway finds it) |
 
 Infrastructure: Postgres with pgvector (one schema per service; *implemented in compose*), SearXNG
 or a keyed search API for the web.
@@ -182,11 +182,12 @@ device defaults to `max_effect = reversible`; the tenant admin can raise it.
 
 ## 6. Skills
 
-*Implemented* (slices 5a, 5b and 6, [`actions.md`](actions.md), [`runner.md`](runner.md) and
+*Implemented* (slices 5a, 5b, 6 and 7d, [`actions.md`](actions.md), [`runner.md`](runner.md) and
 [`skills.md`](skills.md)): the manifest (`factotum.contracts.skills`), loading and versioning, the
 catalog with review and enabling, matching by meaning, the planner and the checks on it, the decision
 and the confirmation, running a script in an isolated container and giving a device the commands it
-answers with, secrets for skills, and instructions mode. *Planned*: linked accounts (slice 7d).
+answers with, secrets for skills (kept by the hub, [`hub.md`](hub.md)), and instructions mode.
+*Planned*: linked accounts, not yet a slice of its own.
 
 A skill teaches Factotum to do something. It is a folder with a `SKILL.md` (YAML frontmatter plus
 markdown) and, optionally, scripts. The frontmatter is validated as a `SkillManifest`.
@@ -366,7 +367,7 @@ answer and other things than actions, voice.
 | 7a | `hub`: a tenant and its administrator, logging in, and the signed tokens every service checks | done |
 | 7b | `hub`: a device's pairing, the external devices a skill is bound to | done |
 | 7c | `hub`: model bindings, the gateway reading them from it, a real delegation for `actions`, `conversation` and `knowledge` | done |
-| 7d | `hub`: skill secrets and linked accounts | |
+| 7d | `hub`: skill secrets, the actions service reading them from it | done |
 | 8 | Voice and the Raspberry Pi client | |
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |

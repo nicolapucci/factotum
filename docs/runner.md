@@ -18,10 +18,11 @@ may have and *what* to do with what it printed is the actions service's, on its 
 
 *Implemented* (slice 5b): both services, their images and compose files, the actions service
 running scripts through the one and giving devices commands through the edge, and secrets for
-skills (a file, for development). *Since* (slice 6): a skill that is only instructions is run by
-this same runner with `executor.py`, the program that does what a plan says, as the one file of the
-job ([`skills.md`](skills.md)). *Not yet*: linked accounts (the hub, slice 7d), any language but Python,
-a stronger sandbox for a cloud (gVisor or Kata, ADR 0009).
+skills (kept by the hub, slice 7d, [`hub.md`](hub.md); a file for development). *Since* (slice 6): a
+skill that is only instructions is run by this same runner with `executor.py`, the program that does
+what a plan says, as the one file of the job ([`skills.md`](skills.md)). *Not yet*: linked accounts
+(no design of their own yet, [`hub.md`](hub.md#known-limits)), any language but Python, a stronger
+sandbox for a cloud (gVisor or Kata, ADR 0009).
 
 ## A run
 
@@ -169,11 +170,12 @@ grant) out of what the script wrote before it is answered, so a traceback that p
 token in it does not leak it. They are in no log, reply or audit record; an error names a secret
 (`the secret HA_TOKEN is not set`) and never says a value.
 
-Until the hub keeps them (slice 7d) they are in a file for development,
+The hub keeps them (slice 7d, [`hub.md`](hub.md)), fetched once by the actions service, in its own
+lifespan; without it, this is still a file, for development,
 [`config/secrets.example.yaml`](../config/secrets.example.yaml) (copy it to `config/secrets.dev.yaml`,
 which git ignores): a `tenant` section, for the skills of the household, and a `user` section, for the
-development user's. The service refuses to read it outside development and tests. A skill that needs
-a secret that is not there fails and says which.
+development user's. The file refuses to be read outside development and tests. A skill that needs a
+secret that is not there fails and says which.
 
 ## What a script prints
 

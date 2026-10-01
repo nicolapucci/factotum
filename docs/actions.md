@@ -12,15 +12,15 @@ enabling, matching a message with the skills by meaning, the planner and the che
 the decision with the policy of the device, confirmations (a yes or a no), approvals that fail
 closed, the audit trail, English and Italian replies, the HTTP API, a container image, and the
 asking from the conversation service. *Implemented* (slice 5b): **running a skill** (its script runs
-in the isolated `runner`, [`runner.md`](runner.md)), **doing what a skill answers with on a device**
-(over the edge), and **secrets for skills** (a file, for development). *Implemented* (slice 6):
-**skills that are instructions**, which have no script: a model writes a plan from the notes, code
-checks it, and the platform runs it in the sandbox ([`skills.md`](skills.md), [ADR
+in the isolated `runner`, [`runner.md`](runner.md)) and **doing what a skill answers with on a
+device** (over the edge). *Implemented* (slice 6): **skills that are instructions**, which have no
+script: a model writes a plan from the notes, code checks it, and the platform runs it in the
+sandbox ([`skills.md`](skills.md), [ADR
 0016](decisions/0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md)).
-*Implemented* (slice 7b): the hub registers devices and the skills bound to them
-([`hub.md`](hub.md)), once configured, in place of the file. *Not yet*: approvals have no way to be
-asked (ADR 0007), a skill that needs a linked account does not run, and the hub keeps secrets (slice
-7d); it already issues the tokens every service checks (slice 7a, [`hub.md`](hub.md)).
+*Implemented* (slices 7b-7d): the hub registers devices and the skills bound to them and keeps the
+secrets a skill is given ([`hub.md`](hub.md)), once configured, in place of a file. *Not yet*:
+approvals have no way to be asked (ADR 0007), and a skill that needs a linked account does not run;
+the hub already issues the tokens every service checks (slice 7a, [`hub.md`](hub.md)).
 
 ## A message
 
@@ -307,8 +307,9 @@ not there and one that is another person's are the same `404`.
 | `_GATEWAY_URL` | `http://127.0.0.1:8081` | where the gateway is |
 | `_RUNNER_URL` | none | where the runner is; without it a skill is a dry run |
 | `_EDGE_URL`, `_EDGE_TIMEOUT_S` | none, `15` | where the edge is (without it commands are not done), and how long it is waited for to say what became of one |
-| `_SECRETS_FILE` | none | the secrets skills are given (development only, `config/secrets.example.yaml`) |
-| `_DEVICES_FILE` | none | the file of devices (development only), the one the edge reads too |
+| `_SECRETS_FILE` | none | the secrets skills are given, for development (`config/secrets.example.yaml`); overridden by the hub once it is configured, below |
+| `_DEVICES_FILE` | none | the file of devices, for development, the one the edge reads too; overridden by the hub once it is configured, below |
+| `_HUB_URL` | none | where the hub is; once `FACTOTUM_HUB_TOKEN_SECRET` is also set, its devices, bindings and secrets replace the two files above |
 | `_SKILLS_DIR` | none | a folder of skills, read on `POST /v1/skills/reload` |
 | `_ENABLE_SKILLS_DIR` | `false` | enable what is read as it is read (development only) |
 | `_MATCH_THRESHOLD` | `0.45` | how near, by meaning, a message must be to a skill (0 to 1) |
@@ -347,9 +348,9 @@ copy it to `config/secrets.dev.yaml` and put your token in it. Bindings for the 
 the roles used here, and `chat.main` for the skills that are only instructions (it writes their plans:
 bind it to the same model to start). The engine must be running (a script runs in a container of its
 own), and the stack needs a key for the grants of the egress proxy, which is yours to make. In
-production the devices and their bindings come from the hub instead
-(`FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_ACTIONS_HUB_URL`, [`hub.md`](hub.md)): pair and bind them
-there, and this file is not read.
+production the devices, their bindings and the secrets above come from the hub instead
+(`FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_ACTIONS_HUB_URL`, [`hub.md`](hub.md)): register and set
+them there, and neither file is read.
 
 ```bash
 export FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_ENVIRONMENT=development
@@ -650,9 +651,9 @@ measured in `skills.md`.
 
 * **No approvals**: a skill that needs one is refused until there is a way to ask (ADR 0007). The
   router example cannot be restarted until then.
-* **No linked accounts**: a skill that declares one fails and says so, until the hub links them
-  (slice 7d). Secrets are in a file for development, refused anywhere else, until the hub keeps them
-  (slice 7d).
+* **No linked accounts**: a skill that declares one fails and says so; nothing beyond the manifest's
+  own declaration shape exists for it yet, and it needs its own design
+  ([`hub.md`](hub.md#known-limits)).
 * **Scripts are Python and the standard library**, in a container of the level of isolation that
   ADR 0015 describes: fine for code the household wrote or trusts, not for a stranger's.
 * **A skill installed as text has no scripts**, only instructions, which a model turns into a plan.
@@ -684,5 +685,5 @@ measured in `skills.md`.
 * **The audit trail can be a record short** if it cannot be written after something was done; it
   says so in the log.
 * **A file without the hub.** Once `FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_ACTIONS_HUB_URL` are
-  set, the devices and the bindings of the tenant come from the hub, fetched once at startup; without
-  either, this is still a development-only file.
+  set, the devices, the bindings and the secrets of the tenant come from the hub, fetched once at
+  startup; without either, these are still development-only files.

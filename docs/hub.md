@@ -3,13 +3,13 @@
 The platform's own administration: tenants, users and devices, spaces, linked accounts, model
 bindings and the secrets of skills (`docs/design.md#3-architecture-planned`). It is the backend of
 the web app (slice 9), not a step in a conversation's turn: a speaker still talks to the edge, which
-asks the conversation service, exactly as before. **It knows no document and no plaintext key.**
+asks the conversation service, exactly as before. **It knows no document.**
 
-*Implemented* (slices 7a-7c): the service itself, a tenant and its administrator made once at the
+*Implemented* (slices 7a-7d): the service itself, a tenant and its administrator made once at the
 first start, logging in, changing a password, adding a user to a tenant, the tokens that prove who a
-request is for to every other service, pairing a device and binding a skill to one, and now binding
-a role to a model. *Not yet*: spaces, linked accounts, skill secrets (7d), and any web app to use
-this from (slice 9: today it is an HTTP API only, tried with `curl` below).
+request is for to every other service, pairing a device and binding a skill to one, binding a role
+to a model, and now the secrets a skill is given. *Not yet*: spaces, linked accounts, and any web
+app to use this from (slice 9: today it is an HTTP API only, tried with `curl` below).
 
 ## Tokens, and how every service learns to check them
 
@@ -72,6 +72,21 @@ where the gateway already resolves it
 The gateway fetches its tenant's bindings once, in its own lifespan (`GET /v1/models`), the same way
 the edge and the actions service fetch devices.
 
+## Secrets
+
+`POST /v1/secrets` sets the value of a secret a skill may be granted (a Home Assistant token, a
+router's password), for the tenant or for the caller's own use, by name — the same shape
+`config/secrets.example.yaml` already has, now kept by the hub instead of a file. A name must be one
+a skill's manifest could actually declare (upper-snake-case, never one the runner itself sets); a
+secret of the same name for the same owner is **replaced**, the same choice already made for a model
+binding. **Unlike a device's credential or a model binding's reference, the hub genuinely holds the
+value**, in plain text — there is nothing else for it to point to, and the actions service needs it
+back in the clear to run a skill with it. [ADR
+0020](decisions/0020-skill-secrets-in-the-hub-plaintext-not-encrypted.md) records why this is not
+encrypted. The actions service fetches its tenant's secrets once, in its own lifespan
+(`GET /v1/secrets`), the same way it fetches devices and bindings, and resolves a skill's own from
+what it holds.
+
 ## The HTTP API
 
 | | |
@@ -87,6 +102,8 @@ the edge and the actions service fetch devices.
 | `GET /v1/bindings` | The tenant's bindings (any authenticated caller) |
 | `POST /v1/models` | Bind a role to a model, for the tenant or the caller's own use (an administrator): `{role, provider, model, ...}` → `200`, replacing any binding the same owner already had for the role |
 | `GET /v1/models` | The tenant's model bindings (any authenticated caller) |
+| `POST /v1/secrets` | Set the value of a secret, for the tenant or the caller's own use (an administrator): `{name, value, owner}` → `200`, replacing any value the same owner already had for the name |
+| `GET /v1/secrets` | The tenant's secrets, with their values (any authenticated caller) |
 | `GET /healthz`, `GET /readyz` | Liveness; readiness (the database answers) |
 
 Errors have the shape of the other services, `{"error": {"code", "message", "details"}}`. Logging in
@@ -155,21 +172,32 @@ curl -s localhost:8087/v1/models -H "Authorization: Bearer $TOKEN" -d '{
 `FACTOTUM_GATEWAY_HUB_URL` (also `http://hub:8087` in compose) does the same for the model gateway's
 bindings.
 
+```bash
+curl -s localhost:8087/v1/secrets -H "Authorization: Bearer $TOKEN" \
+    -d '{"name": "HA_TOKEN", "value": "the-token-of-the-home"}'
+```
+
+The actions service reads this the moment it reads devices and bindings from the hub: nothing more
+to set than `FACTOTUM_ACTIONS_HUB_URL`, already given above.
+
 ## Tests
 
 Unit tests with a store in memory; the same contract tests run again against a real Postgres
 (`pytest.mark.integration`), including that the administrator is made once and kept across a
 restart, that a device's `hardware_id` and a binding's device can only be each tenant's own, and
-that binding the same role again, for the same owner, replaces it instead of being refused.
-`factotum.common.tokens` and `factotum.common.hubauth` are tested on their own: a token round-trips
-to the same `Principal`, a tampered payload or signature is refused the same way as a token that is
-not one, and an expired one stops working at the second it says it would. `HubDeviceRegistry`
-(edge), `HubDeviceDirectory` (actions) and `HubBindingRepository` (the gateway) are each tested
-against a fake hub of their own, for what they need: a registry proves a device by its hashed
-credential; a directory also resolves bindings and the `enabled` and ownership filters the file-based
-ones already apply; a binding repository resolves a model binding by tenant, owner and role.
-`HubDelegation` (`factotum.model_client.gateway`) is tested on its own too: the token it mints for an
-owner decodes to a `Principal` of the right tenant, acting as that owner, and expires the same way.
+that binding the same role again, or setting the same secret name again, for the same owner,
+replaces it instead of being refused. `factotum.common.tokens` and `factotum.common.hubauth` are
+tested on their own: a token round-trips to the same `Principal`, a tampered payload or signature is
+refused the same way as a token that is not one, and an expired one stops working at the second it
+says it would. `HubDeviceRegistry` (edge), `HubDeviceDirectory` (actions), `HubBindingRepository`
+(the gateway) and `HubSecretResolver` (actions) are each tested against a fake hub of their own, for
+what they need: a registry proves a device by its hashed credential; a directory also resolves
+bindings and the `enabled` and ownership filters the file-based ones already apply; a binding
+repository resolves a model binding by tenant, owner and role; a secret resolver resolves a secret's
+value the same way `FileSecrets` already does, including that a skill of one owner never sees
+another's. `HubDelegation` (`factotum.model_client.gateway`) is tested on its own too: the token it
+mints for an owner decodes to a `Principal` of the right tenant, acting as that owner, and expires
+the same way.
 
 ## Known limits
 
@@ -185,14 +213,22 @@ owner decodes to a `Principal` of the right tenant, acting as that owner, and ex
 - **No sessions to see or revoke.** A token is good until it expires and nothing more: logging out,
   seeing who is logged in, or revoking one before it expires are not done (there is nowhere to do it
   from yet, either).
-- **Linked accounts and skill secrets are not here** (7d): a deployment still configures a skill's
-  secrets from a file, as before.
+- **Linked accounts are not here.** A skill that declares one still fails and says so; nothing
+  beyond the manifest's own declaration shape (`AccountRequirement`) exists for it yet, and it needs
+  its own design — an account is an OAuth-shaped problem (a flow, a token to refresh, a callback),
+  unlike a device's pairing or a secret's value, neither of which this slice's patterns answer.
 - **A device's credential cannot be rotated or revoked.** Pairing mints it once; a lost or
   compromised one means registering the device again, under a new name.
 - **A model binding never holds a provider's key**, not even encrypted: it only ever names an
   environment variable, as a file-based one already did
   ([ADR 0019](decisions/0019-model-bindings-in-the-hub-still-only-a-reference-to-a-key.md)). An
   administrator still sets the key itself on the machine that runs the gateway.
+- **A skill's secret is kept in plain text**, unlike a password or a device's credential (both
+  hashed) and unlike a model binding (never holding a value at all): there is nothing else for it to
+  be, since the actions service needs it back in the clear
+  ([ADR 0020](decisions/0020-skill-secrets-in-the-hub-plaintext-not-encrypted.md)). A stolen database
+  backup is a stolen secret; the same access control the rest of the hub's data already relies on is
+  what protects it.
 - **Fixed to one tenant, for proving an owner to the model gateway and the knowledge service.**
   `HubDelegation` (`factotum.model_client.gateway`), unlike `HubPrincipalDelegation`, is built for
   `SINGLE_TENANT_ID` rather than threading a caller's own tenant through: `Owner` alone does not
