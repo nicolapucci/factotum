@@ -274,12 +274,13 @@ request that only reads, with a key in a header).
 | Something else using the card (22 plans) | 4.8 s | 13.0 s |
 
 Eight messages said through both models (the reading model reads the message, the writing model writes
-the plan, the sandbox's program runs it): 7 were right. The eighth, *annuncia che la cena è pronta*,
-was read as *Cena pronta*, and that is what the device was told to say. A message took 4.2 s (median;
-the slowest 4.5 s) on the quiet card, and 8.8 s (13.5 s) a quarter of an hour later, the reading, the
-plan and the run together. Both runs are of the code before the example of one request that reads
-was added (below); the plans of the three skills that this test says were right 12 in 12 after it,
-and the message that failed is the reading model's.
+the plan, the sandbox's program runs it): 6 were right. The other two were both the announcement:
+*tell everyone that dinner is ready* was read back whole instead of said as an announcement, and
+*annuncia che la cena è pronta* was read as *cena è pronta*, dropping *la*. A message took 4.1 s
+(median; the slowest 4.3 s) on the quiet card, the reading, the plan and the run together. This is the
+final code — the example of one request that reads, the shape of a body, and the description shown to
+the reading model are all in it. The plans themselves are still right every time (12 of 12, 10 of 10,
+above); what the reading model does with the words of an announcement is what is still wrong.
 
 ### What the measurements found
 

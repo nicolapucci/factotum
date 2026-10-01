@@ -542,38 +542,42 @@ Slice 6 added three skills (a scene of two calls, a lookup of two requests, and 
 only tells a device something) and the 21 messages for them: **82 messages, 55 that ask for
 something and 27 that do not**, said to the speaker, the display and the phone, in English and
 Italian. The 8B model in the `chat.fast` role and `bge-m3`, on the same card with only the desktop
-on it (the whole live test took 2 minutes 12 seconds):
+on it (the whole live test took 1 minute 57 seconds):
 
 | | `llama3.1:8b-instruct-q4_K_M` |
 | --- | --- |
-| Commands read exactly as meant | 49 of 55 |
+| Commands read exactly as meant | 48 of 55 |
 | Commands with the right skill | 53 of 55 |
-| Questions left as questions | **27 of 27** |
-| A message that is acted on, median (90th percentile) | 1.24 s (1.40 s) |
-| A question that is passed over | 0.98 s |
-| A yes or a no read as it was meant | 22 of 22, 0.30 s |
+| Questions left as questions | 26 of 27 |
+| A message that is acted on, median (90th percentile) | 1.10 s (1.25 s) |
+| A question that is passed over | 0.87 s |
+| A yes or a no read as it was meant | 22 of 22, 0.25 s |
 
-By skill: air quality 6 of 6, announcement 4 of 6, garage door 7 of 7, lamp 11 of 13, scene 3 of 4,
-router 4 of 4, volume 7 of 8, weather 7 of 7. The 3B model was not measured again: it was the one that
+By skill: air quality 6 of 6, announcement 3 of 6, garage door 7 of 7, lamp 12 of 13, scene 3 of 4,
+router 4 of 4, volume 6 of 8, weather 7 of 7. The 3B model was not measured again: it was the one that
 took eight questions for requests with five skills, and it is not the model to bind to this role.
 The times are those of a card with nothing on it, and half of what slice 5a measured on the same card
 (2.5 s); the difference was not looked into.
 
-What went wrong, six times in 82:
+What went wrong, eight times in 82:
 
-* *metti la luce al 50 per cento* was *needs more* and *make the volume a bit lower* was **done** with
-  a level that nobody said: both as in slice 5a.
+* *turn it up* and *make the volume a bit lower* were both **done** with a level that nobody said,
+  instead of left as *needs more*: the same mistake as slice 5a, this time both on the volume skill.
 * *could you dim the lights to thirty percent* went to the scene (*dim the lights of the living room
   for watching a movie*) and not to the lamp, and *it is movie time* went to the announcement (*say
-  that it is time to go*) and not to the scene: **two skills whose words overlap are confused**. Two
-  of 55 commands went to the wrong skill, and none of 39 with five. The way out is in the skills
-  (what each says about itself and its examples), not in the code.
-* *annuncia che la cena è pronta* and *dì che è ora di andare* found the announcement, and the model
-  gave it *Cena pronta* and *It's time to go* (translated) as what to say. The description of the
-  value says *as the person said it*, and **it was not shown to the model**: no description of a
-  value was, until this was found (it is shown now, and the numbers above are of before).
+  that it is time to go*) and not to the scene: **the same two skills whose words overlap are still
+  confused**. Two of 55 commands went to the wrong skill, as before; showing the model what a value is
+  for does not touch this, because the confusion is over which skill applies, not over a value.
+* *tell everyone that dinner is ready*, *annuncia che la cena è pronta* and *dì che è ora di andare*
+  found the right skill (the announcement), but what the device was told to say was not what was asked
+  for: the whole sentence back, the Italian with *la* dropped (*cena è pronta*), and the Italian
+  translated to English (*it is time to go*). The description of the value (*what to say, as the
+  person said it*) **is shown to the model now** — it was not, before — and **this did not fix it**:
+  copying a value for the announcement word for word is still the weakest of the eight skills.
+* *tell me a joke* was treated as a command (**done**, skill *announce*) instead of being left as a
+  question: the one question of 27 that this run did not leave alone.
 
-Questions were better with more skills, not worse (27 of 27; 21 of 22 with five). The meaning search
+Questions were still almost all left alone with more skills (26 of 27; 21 of 22 with five). The meaning search
 does what it did: 55 of 55 commands go on to the model at a threshold of 0.45, the lowest at 0.69, and
 25 of 27 questions do (the nearest, 0.86, is *what is the weather usually like in Rome in August?*).
 
