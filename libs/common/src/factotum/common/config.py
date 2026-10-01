@@ -8,6 +8,7 @@ field must be documented in ``.env.example``: a test enforces it, so the example
 from enum import StrEnum
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from factotum.contracts.identity import TenantMode
@@ -36,6 +37,17 @@ class ServiceSettings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_json: bool = True
 
+    hub_token_secret: SecretStr | None = None
+    """What every service uses to mint and check a token that proves a ``Principal``
+    (``factotum.common.hubauth``). Unset, a service falls back to the development authenticator,
+    which does not exist outside development and test: production needs this set."""
+
     @property
     def is_production(self) -> bool:
         return self.environment is Environment.PRODUCTION
+
+    @property
+    def hub_secret_bytes(self) -> bytes | None:
+        if self.hub_token_secret is None:
+            return None
+        return self.hub_token_secret.get_secret_value().encode("utf-8")
