@@ -24,3 +24,4 @@ the old one instead of rewriting history.
 | [0016](0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md) | Skills that are instructions: a model writes a plan, the code decides, the sandbox runs it |
 | [0017](0017-hub-tokens-a-signed-principal-every-service-can-check.md) | The hub's tokens: a signed `Principal` every service can check |
 | [0018](0018-device-pairing-a-long-lived-credential-checked-without-the-hub.md) | Device pairing: a long-lived credential, checked without the hub |
+| [0019](0019-model-bindings-in-the-hub-still-only-a-reference-to-a-key.md) | Model bindings in the hub: still only a reference to a key |

@@ -347,9 +347,11 @@ using the index (now analyzed after the index is made); and the two points above
 ## Known limits
 
 * Scanned pages need OCR, which is not done. The message says so.
-* Until the hub issues service credentials (slice 7c), the service acts for a collection's owner through
-  the gateway's development authentication (a header), and, like the gateway, refuses to start in
-  production.
+* Once `FACTOTUM_HUB_TOKEN_SECRET` is set, the service acts for a collection's owner through a real
+  token the gateway checks the same way as everything else (`HubDelegation`,
+  [`hub.md`](hub.md#known-limits)); without it, this is still the gateway's development
+  authentication (a header), and the service, like the gateway, refuses to start outside development
+  and test.
 * Query-side prefixes some embedding models want (`search_query:`) are not modelled: the gateway does
   not offer them yet (open question in the design).
 * The language of a document is one for the whole document; a bilingual book is read in its dominant

@@ -5,10 +5,10 @@ bindings and the secrets of skills (`docs/design.md#3-architecture-planned`). It
 the web app (slice 9), not a step in a conversation's turn: a speaker still talks to the edge, which
 asks the conversation service, exactly as before. **It knows no document and no plaintext key.**
 
-*Implemented* (slices 7a-7b): the service itself, a tenant and its administrator made once at the
+*Implemented* (slices 7a-7c): the service itself, a tenant and its administrator made once at the
 first start, logging in, changing a password, adding a user to a tenant, the tokens that prove who a
-request is for to every other service, and now pairing a device and binding a skill to one. *Not
-yet*: spaces, linked accounts and model bindings (7c), skill secrets (7d), and any web app to use
+request is for to every other service, pairing a device and binding a skill to one, and now binding
+a role to a model. *Not yet*: spaces, linked accounts, skill secrets (7d), and any web app to use
 this from (slice 9: today it is an HTTP API only, tried with `curl` below).
 
 ## Tokens, and how every service learns to check them
@@ -59,6 +59,19 @@ how the edge and the actions service, which act for the tenant and not for a per
 reasons for this shape are in
 [ADR 0018](decisions/0018-device-pairing-a-long-lived-credential-checked-without-the-hub.md).
 
+## Models
+
+`POST /v1/models` binds a role (`chat.main`, `embedding`...) to a model at a provider, for the
+tenant or for the caller's own use — the same shape `config/bindings.example.yaml` already has, now
+kept by the hub instead of a file. Binding a role that the same owner already bound **replaces it**:
+unlike a device or a binding of a skill, choosing a different model for a role is routine, not a
+conflict to refuse. **The hub never holds a provider's key**: a binding only ever names an
+environment variable (`secret_ref: env:OPENAI_API_KEY`), exactly as a file-based one does, resolved
+where the gateway already resolves it
+([ADR 0019](decisions/0019-model-bindings-in-the-hub-still-only-a-reference-to-a-key.md) says why).
+The gateway fetches its tenant's bindings once, in its own lifespan (`GET /v1/models`), the same way
+the edge and the actions service fetch devices.
+
 ## The HTTP API
 
 | | |
@@ -72,6 +85,8 @@ reasons for this shape are in
 | `GET /v1/devices` | The tenant's devices, system and external (any authenticated caller) |
 | `POST /v1/bindings` | Bind a skill, by name, to a device (an administrator): `{skill, device_id, params, enabled}` → `201` |
 | `GET /v1/bindings` | The tenant's bindings (any authenticated caller) |
+| `POST /v1/models` | Bind a role to a model, for the tenant or the caller's own use (an administrator): `{role, provider, model, ...}` → `200`, replacing any binding the same owner already had for the role |
+| `GET /v1/models` | The tenant's model bindings (any authenticated caller) |
 | `GET /healthz`, `GET /readyz` | Liveness; readiness (the database answers) |
 
 Errors have the shape of the other services, `{"error": {"code", "message", "details"}}`. Logging in
@@ -131,17 +146,30 @@ Give `FACTOTUM_EDGE_HUB_URL` and `FACTOTUM_ACTIONS_HUB_URL` to the edge and the 
 default to `http://hub:8087` in compose) and the hub's devices and bindings replace the file, the
 moment `FACTOTUM_HUB_TOKEN_SECRET` is also set.
 
+```bash
+curl -s localhost:8087/v1/models -H "Authorization: Bearer $TOKEN" -d '{
+    "role": "chat.main", "provider": "ollama", "model": "llama3.1:8b",
+    "base_url": "http://host.docker.internal:11434"}'
+```
+
+`FACTOTUM_GATEWAY_HUB_URL` (also `http://hub:8087` in compose) does the same for the model gateway's
+bindings.
+
 ## Tests
 
 Unit tests with a store in memory; the same contract tests run again against a real Postgres
 (`pytest.mark.integration`), including that the administrator is made once and kept across a
-restart, and that a device's `hardware_id` and a binding's device can only be each tenant's own.
+restart, that a device's `hardware_id` and a binding's device can only be each tenant's own, and
+that binding the same role again, for the same owner, replaces it instead of being refused.
 `factotum.common.tokens` and `factotum.common.hubauth` are tested on their own: a token round-trips
 to the same `Principal`, a tampered payload or signature is refused the same way as a token that is
 not one, and an expired one stops working at the second it says it would. `HubDeviceRegistry`
-(edge) and `HubDeviceDirectory` (actions) are tested against a fake hub of their own, for what each
-needs: a registry proves a device by its hashed credential; a directory also resolves bindings and
-the `enabled` and ownership filters that the file-based ones already apply.
+(edge), `HubDeviceDirectory` (actions) and `HubBindingRepository` (the gateway) are each tested
+against a fake hub of their own, for what they need: a registry proves a device by its hashed
+credential; a directory also resolves bindings and the `enabled` and ownership filters the file-based
+ones already apply; a binding repository resolves a model binding by tenant, owner and role.
+`HubDelegation` (`factotum.model_client.gateway`) is tested on its own too: the token it mints for an
+owner decodes to a `Principal` of the right tenant, acting as that owner, and expires the same way.
 
 ## Known limits
 
@@ -157,12 +185,15 @@ the `enabled` and ownership filters that the file-based ones already apply.
 - **No sessions to see or revoke.** A token is good until it expires and nothing more: logging out,
   seeing who is logged in, or revoking one before it expires are not done (there is nowhere to do it
   from yet, either).
-- **Linked accounts, model bindings and skill secrets are not here** (7c, 7d): a deployment still
-  configures the gateway and a skill's secrets from files, as before.
+- **Linked accounts and skill secrets are not here** (7d): a deployment still configures a skill's
+  secrets from a file, as before.
 - **A device's credential cannot be rotated or revoked.** Pairing mints it once; a lost or
   compromised one means registering the device again, under a new name.
-- **The model gateway is still asked for with the development delegation**, in the actions,
-  conversation and knowledge services (`factotum.model_client.gateway.DevDelegation`): unlike the
-  principal of a caller, the owner of a model binding is not yet proven to the gateway by a hub
-  token, so none of the three starts in production yet, hub or not. Likely 7c, once the gateway's
-  bindings themselves move to the hub.
+- **A model binding never holds a provider's key**, not even encrypted: it only ever names an
+  environment variable, as a file-based one already did
+  ([ADR 0019](decisions/0019-model-bindings-in-the-hub-still-only-a-reference-to-a-key.md)). An
+  administrator still sets the key itself on the machine that runs the gateway.
+- **Fixed to one tenant, for proving an owner to the model gateway and the knowledge service.**
+  `HubDelegation` (`factotum.model_client.gateway`), unlike `HubPrincipalDelegation`, is built for
+  `SINGLE_TENANT_ID` rather than threading a caller's own tenant through: `Owner` alone does not
+  carry one. The same limit `HubDeviceRegistry` and `HubDeviceDirectory` already had for devices.

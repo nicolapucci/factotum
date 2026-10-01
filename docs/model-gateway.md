@@ -44,12 +44,17 @@ Binding options (all optional, all with prudent defaults):
 
 ## Configuring bindings
 
-Until the hub manages them (slice 7c), bindings come from a YAML file for the development tenant:
-`FACTOTUM_GATEWAY_BINDINGS_FILE=config/bindings.dev.yaml`. Start from
+In production, bindings are the hub's ([`hub.md`](hub.md)): `POST /v1/models` binds a role to a
+model, for the tenant or for the caller's own use, and `FACTOTUM_GATEWAY_HUB_URL` is where the
+gateway fetches the tenant's bindings from, once, in its own lifespan (`HubBindingRepository`), the
+same way it is built for devices in [`edge.md`](edge.md). **Without the hub this is a YAML file, for
+development**: `FACTOTUM_GATEWAY_BINDINGS_FILE=config/bindings.dev.yaml`. Start from
 [`config/bindings.example.yaml`](../config/bindings.example.yaml), which is tested to be valid.
-**A binding never contains a key**: `secret_ref: env:OPENAI_API_KEY` names an environment variable,
-and the variable holds the key. A key pasted where a reference belongs is refused, and the error
-does not repeat it.
+
+**A binding never contains a key, whichever source it comes from**: `secret_ref: env:OPENAI_API_KEY`
+names an environment variable, and the variable holds the key, on the machine that runs the gateway.
+The hub only ever holds this reference, never the key itself — pasting one where a reference belongs
+is refused, and the error does not repeat it.
 
 ```yaml
 bindings:
@@ -263,4 +268,12 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k
   calls a tenant may have in flight: quotas come with the cloud gates.
 - Asymmetric embedding models (a different prefix or task for a query and for a document) are not
   modelled yet; the knowledge service will decide how.
-- Keys come only from the environment. An encrypted store arrives with the hub.
+- **Keys come only from the environment, by design, even from the hub**: a binding the hub holds
+  still only ever names an environment variable (`secret_ref: env:...`), read where it always was.
+  Letting an administrator paste a provider's key into the hub instead, encrypted at rest, was on
+  the original plan for this slice ([ADR
+  0019](decisions/0019-model-bindings-in-the-hub-still-only-a-reference-to-a-key.md)); it is not
+  done, to avoid a store for secrets the platform does not otherwise need yet (no deployment here is
+  one where a shared environment variable does not already work). It would fit naturally with
+  wherever a skill's own secrets end up (a later slice), which needs the same answer to the same
+  question.

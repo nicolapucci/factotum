@@ -686,8 +686,3 @@ measured in `skills.md`.
 * **A file without the hub.** Once `FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_ACTIONS_HUB_URL` are
   set, the devices and the bindings of the tenant come from the hub, fetched once at startup; without
   either, this is still a development-only file.
-* **The model gateway is still asked for with the development delegation**
-  (`factotum.model_client.gateway.DevDelegation`), unlike every other call this service makes: the
-  owner of a model binding is not yet proven to the gateway by a hub token, so this service does not
-  start in production yet, hub or not ([`hub.md`](hub.md#known-limits)). Likely 7c, once the
-  gateway's own bindings move to the hub.
