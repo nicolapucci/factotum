@@ -32,13 +32,19 @@ services:
       start_period: 10s
 
   model-gateway:
-    # Not started by a plain `docker compose up`: it needs the "services" profile, and until the hub
-    # issues real credentials it only runs with FACTOTUM_ENVIRONMENT=development.
+    # Not started by a plain `docker compose up`: it needs the "services" profile. Without
+    # FACTOTUM_HUB_TOKEN_SECRET it only runs with FACTOTUM_ENVIRONMENT=development; with it, it
+    # runs anywhere, and its bindings come from the hub once FACTOTUM_GATEWAY_HUB_URL is also set.
     profiles: ["services"]
     build:
       context: .
       dockerfile: services/model_gateway/Dockerfile
     restart: unless-stopped
+    depends_on:
+      # Only reached once FACTOTUM_HUB_TOKEN_SECRET is set; the gateway does not need it otherwise.
+      hub:
+        condition: service_healthy
+        required: false
     environment:
       FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
@@ -46,6 +52,8 @@ services:
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
       FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
       FACTOTUM_GATEWAY_BINDINGS_FILE: /etc/factotum/bindings.dev.yaml
+      # Used only once FACTOTUM_HUB_TOKEN_SECRET is also set, in place of the file above.
+      FACTOTUM_GATEWAY_HUB_URL: http://hub:8087
       # Keys reach the container only through the environment, and only the ones named here.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -61,8 +69,8 @@ services:
 
   knowledge:
     # Documents in, passages out. Like the gateway it is not started by a plain `docker compose up`:
-    # it needs the "services" profile, and until the hub issues real credentials it only runs with
-    # FACTOTUM_ENVIRONMENT=development.
+    # it needs the "services" profile. Without FACTOTUM_HUB_TOKEN_SECRET it only runs with
+    # FACTOTUM_ENVIRONMENT=development; with it, it runs anywhere.
     profiles: ["services"]
     build:
       context: .
@@ -71,6 +79,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Only reached once FACTOTUM_HUB_TOKEN_SECRET is set; the service does not need it otherwise.
+      hub:
+        condition: service_healthy
+        required: false
     environment:
       FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
@@ -96,8 +108,8 @@ services:
 
   conversation:
     # A message in, an answer streamed out. Like the others it is not started by a plain
-    # `docker compose up`: it needs the "services" profile, and until the hub issues real credentials
-    # it only runs with FACTOTUM_ENVIRONMENT=development.
+    # `docker compose up`: it needs the "services" profile. Without FACTOTUM_HUB_TOKEN_SECRET it
+    # only runs with FACTOTUM_ENVIRONMENT=development; with it, it runs anywhere.
     profiles: ["services"]
     build:
       context: .
@@ -109,6 +121,10 @@ services:
       # It asks the actions service, before the documents, whether a message asks for something
       # to be done. It does not need it: without it every message is a question, and it says so.
       actions:
+        condition: service_healthy
+        required: false
+      # Only reached once FACTOTUM_HUB_TOKEN_SECRET is set; the service does not need it otherwise.
+      hub:
         condition: service_healthy
         required: false
     environment:
@@ -187,10 +203,10 @@ services:
     # yes when it must, and audits it. Like the others it is not started by a plain
     # `docker compose up`: it needs the "services" profile. Without FACTOTUM_HUB_TOKEN_SECRET it
     # reads devices and secrets from config/devices.dev.yaml and config/secrets.dev.yaml (copy the
-    # example files) and only runs with FACTOTUM_ENVIRONMENT=development; with it, the hub registers
-    # devices and bindings instead (secrets are still a file, until a later slice). It runs the
-    # script of a skill in the runner and has a device do what it answers with through the edge; it
-    # is given neither an engine nor a device connection itself.
+    # example files) and only runs with FACTOTUM_ENVIRONMENT=development; with it, it runs anywhere,
+    # and the hub registers devices and bindings instead (secrets are still a file, until a later
+    # slice). It runs the script of a skill in the runner and has a device do what it answers with
+    # through the edge; it is given neither an engine nor a device connection itself.
     profiles: ["services"]
     build:
       context: .
@@ -303,8 +319,8 @@ services:
     # it. It is the only service that is given the socket of the engine to make them with, which is
     # as much as being root on this machine: the reason it does nothing but run jobs, and cannot be
     # told what a container is like (see docs/runner.md). Like the others it needs the "services"
-    # profile, and until the hub issues real credentials it only runs with
-    # FACTOTUM_ENVIRONMENT=development.
+    # profile. Without FACTOTUM_HUB_TOKEN_SECRET it only runs with FACTOTUM_ENVIRONMENT=development;
+    # with it, it runs anywhere.
     profiles: ["services"]
     build:
       context: .
@@ -315,6 +331,10 @@ services:
         condition: service_healthy
       sandbox-image:
         condition: service_completed_successfully
+      # Only reached once FACTOTUM_HUB_TOKEN_SECRET is set; the runner does not need it otherwise.
+      hub:
+        condition: service_healthy
+        required: false
     # The socket belongs to a group of the engine's, and the runner does not run as root: this is
     # that group (`stat -c %g /var/run/docker.sock`, 0 on Docker Desktop).
     group_add: ["${FACTOTUM_DOCKER_GID:-0}"]
@@ -352,9 +372,9 @@ services:
       - "127.0.0.1:${FACTOTUM_RUNNER_PORT:-8086}:8086"
 
   hub:
-    # Tenants, users, the tokens above, and now devices and their bindings (see docs/hub.md). A
-    # tenant's spaces, its linked accounts, its model bindings and the secrets of its skills are
-    # later slices. Like the others it needs the "services" profile. Unlike them it always needs
+    # Tenants, users, the tokens above, devices and their bindings, and now the models bound to a
+    # role (see docs/hub.md). A tenant's spaces, its linked accounts and the secrets of its skills
+    # are later slices. Like the others it needs the "services" profile. Unlike them it always needs
     # FACTOTUM_HUB_TOKEN_SECRET set, in every environment: it is the one that mints every token.
     profiles: ["services"]
     build:

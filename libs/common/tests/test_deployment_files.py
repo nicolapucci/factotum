@@ -159,15 +159,19 @@ def test_the_conversation_service_finds_the_actions_service_by_name_and_does_not
     assert dependency["required"] is False
 
 
-def test_the_edge_and_the_actions_service_find_the_hub_by_name_and_do_not_need_it() -> None:
+def test_the_edge_the_actions_service_and_the_gateway_find_the_hub_by_name() -> None:
     for name, url_key in (
         ("edge", "FACTOTUM_EDGE_HUB_URL"),
         ("actions", "FACTOTUM_ACTIONS_HUB_URL"),
+        ("model-gateway", "FACTOTUM_GATEWAY_HUB_URL"),
     ):
-        service = SERVICES[name]
-        dependency = service["depends_on"]["hub"]
+        assert SERVICES[name]["environment"][url_key] == "http://hub:8087"
 
-        assert service["environment"][url_key] == "http://hub:8087"
+
+def test_every_service_that_holds_the_token_secret_may_reach_the_hub_but_need_not() -> None:
+    for name in ("model-gateway", "knowledge", "conversation", "edge", "actions", "runner"):
+        dependency = SERVICES[name]["depends_on"]["hub"]
+
         assert dependency["condition"] == "service_healthy"
         assert dependency["required"] is False
 
