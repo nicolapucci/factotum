@@ -30,6 +30,7 @@ src = [
   "services/edge/src",
   "services/egress/src",
   "services/runner/src",
+  "services/hub/src",
   "clients/terminal/src",
 ]
 
@@ -78,6 +79,7 @@ mypy_path = [
   "services/edge/src",
   "services/egress/src",
   "services/runner/src",
+  "services/hub/src",
   "clients/terminal/src",
 ]
 explicit_package_bases = true
@@ -122,6 +124,7 @@ source = [
   "services/edge/src",
   "services/egress/src",
   "services/runner/src",
+  "services/hub/src",
   "clients/terminal/src",
 ]
 

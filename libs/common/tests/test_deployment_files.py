@@ -51,6 +51,7 @@ def test_the_database_starts_by_default_and_the_services_only_on_request() -> No
     assert SERVICES["egress"]["profiles"] == ["services"]
     assert SERVICES["sandbox-image"]["profiles"] == ["services"]
     assert SERVICES["runner"]["profiles"] == ["services"]
+    assert SERVICES["hub"]["profiles"] == ["services"]
 
 
 def test_the_database_has_the_shared_memory_a_large_collection_needs() -> None:
@@ -102,6 +103,32 @@ def test_the_actions_service_waits_for_its_database_and_finds_the_gateway_by_nam
     assert actions["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert environment["FACTOTUM_POSTGRES_HOST"] == "postgres"
     assert environment["FACTOTUM_ACTIONS_GATEWAY_URL"] == "http://model-gateway:8081"
+
+
+def test_the_hub_waits_for_its_database_and_needs_nothing_else() -> None:
+    hub = SERVICES["hub"]
+
+    assert hub["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert hub["environment"]["FACTOTUM_POSTGRES_HOST"] == "postgres"
+    assert set(hub["depends_on"]) == {"postgres"}
+
+
+def test_the_token_secret_reaches_every_service_that_authenticates_a_caller() -> None:
+    holders = {
+        name
+        for name, spec in SERVICES.items()
+        if "${FACTOTUM_HUB_TOKEN_SECRET" in str(spec.get("environment", {}))
+    }
+
+    assert holders == {
+        "model-gateway",
+        "knowledge",
+        "conversation",
+        "edge",
+        "actions",
+        "runner",
+        "hub",
+    }
 
 
 def test_the_actions_service_reads_its_devices_and_its_skills_from_read_only_mounts() -> None:
@@ -169,7 +196,8 @@ def test_the_provider_keys_compose_passes_on_are_documented_in_the_env_example()
 
 
 @pytest.mark.parametrize(
-    "service", ["model_gateway", "knowledge", "conversation", "edge", "actions", "egress", "runner"]
+    "service",
+    ["model_gateway", "knowledge", "conversation", "edge", "actions", "egress", "runner", "hub"],
 )
 def test_the_image_does_not_run_as_root(service: str) -> None:
     dockerfile = (REPO_ROOT / "services" / service / "Dockerfile").read_text("utf-8")
@@ -216,11 +244,11 @@ def test_the_actions_service_reads_its_secrets_from_the_folder_that_is_mounted_r
     assert f"./config:{folder}:ro" in actions["volumes"]
 
 
-def test_the_actions_service_has_no_secret_but_its_database_password_and_no_socket() -> None:
+def test_the_actions_service_has_no_secret_but_the_hub_token_its_database_and_no_socket() -> None:
     environment = SERVICES["actions"]["environment"]
     secret_like = [key for key in environment if re.search(r"TOKEN|KEY|PASSWORD", key)]
 
-    assert secret_like == ["FACTOTUM_POSTGRES_PASSWORD"]
+    assert secret_like == ["FACTOTUM_HUB_TOKEN_SECRET", "FACTOTUM_POSTGRES_PASSWORD"]
     assert SOCKET not in " ".join(mounts_of("actions"))
 
 

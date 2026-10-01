@@ -17,6 +17,7 @@ members = [
     "factotum-devices",
     "factotum-edge",
     "factotum-egress",
+    "factotum-hub",
     "factotum-knowledge",
     "factotum-model-client",
     "factotum-model-gateway",
@@ -646,6 +647,31 @@ requires-dist = [
     { name = "factotum-common", editable = "libs/common" },
     { name = "factotum-contracts", editable = "libs/contracts" },
     { name = "pydantic", specifier = ">=2.11" },
+]
+
+[[package]]
+name = "factotum-hub"
+version = "0.0.0"
+source = { editable = "services/hub" }
+dependencies = [
+    { name = "factotum-common" },
+    { name = "factotum-contracts" },
+    { name = "factotum-db" },
+    { name = "factotum-web" },
+    { name = "fastapi" },
+    { name = "pydantic" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-common", editable = "libs/common" },
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "factotum-db", editable = "libs/db" },
+    { name = "factotum-web", editable = "libs/web" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "uvicorn", specifier = ">=0.32" },
 ]
 
 [[package]]

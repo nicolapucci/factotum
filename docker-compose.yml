@@ -44,6 +44,7 @@ services:
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
       FACTOTUM_GATEWAY_BINDINGS_FILE: /etc/factotum/bindings.dev.yaml
       # Keys reach the container only through the environment, and only the ones named here.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -75,6 +76,7 @@ services:
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
       # The database of this deployment, by its name on the compose network.
       FACTOTUM_POSTGRES_HOST: postgres
       FACTOTUM_POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
@@ -114,6 +116,7 @@ services:
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
       # The database of this deployment, by its name on the compose network.
       FACTOTUM_POSTGRES_HOST: postgres
       FACTOTUM_POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
@@ -154,6 +157,7 @@ services:
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
       # It asks the conversation service for every answer and knows nothing else: no database, no
       # model, no key, no document.
       FACTOTUM_EDGE_CONVERSATION_URL: http://conversation:8083
@@ -197,6 +201,7 @@ services:
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
       # The database of this deployment, by its name on the compose network.
       FACTOTUM_POSTGRES_HOST: postgres
       FACTOTUM_POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
@@ -309,6 +314,7 @@ services:
       FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
       FACTOTUM_RUNNER_DOCKER_HOST: unix:///var/run/docker.sock
       FACTOTUM_RUNNER_IMAGE: ${FACTOTUM_RUNNER_IMAGE:-python:3.13-slim}
       # What a script that was granted hosts is given to go out through: the proxy, by its name on
@@ -330,6 +336,38 @@ services:
     ports:
       # Loopback only, for development. Services reach it by name on the compose network.
       - "127.0.0.1:${FACTOTUM_RUNNER_PORT:-8086}:8086"
+
+  hub:
+    # Tenants, users and the tokens above (see docs/hub.md). Slice 7a only: a device's pairing, a
+    # tenant's spaces, its linked accounts, its model bindings and the secrets of its skills are
+    # later. Like the others it needs the "services" profile. Unlike them it always needs
+    # FACTOTUM_HUB_TOKEN_SECRET set, in every environment: it is the one that mints every token.
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/hub/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FACTOTUM_ENVIRONMENT: ${FACTOTUM_ENVIRONMENT:-production}
+      FACTOTUM_TENANT_MODE: ${FACTOTUM_TENANT_MODE:-single_tenant}
+      FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
+      FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
+      FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
+      # The database of this deployment, by its name on the compose network.
+      FACTOTUM_POSTGRES_HOST: postgres
+      FACTOTUM_POSTGRES_USER: ${FACTOTUM_POSTGRES_USER:-factotum}
+      FACTOTUM_POSTGRES_PASSWORD: ${FACTOTUM_POSTGRES_PASSWORD:?set FACTOTUM_POSTGRES_PASSWORD in .env}
+      FACTOTUM_POSTGRES_DB: ${FACTOTUM_POSTGRES_DB:-factotum}
+      # The administrator of the tenant created at the first start (single-tenant mode only).
+      FACTOTUM_HUB_ADMIN_USERNAME: ${FACTOTUM_HUB_ADMIN_USERNAME:-admin}
+      FACTOTUM_HUB_ADMIN_PASSWORD: ${FACTOTUM_HUB_ADMIN_PASSWORD:-admin}
+      FACTOTUM_HUB_SESSION_HOURS: ${FACTOTUM_HUB_SESSION_HOURS:-12}
+    ports:
+      # Loopback only, for development. Services reach it by name on the compose network.
+      - "127.0.0.1:${FACTOTUM_HUB_PORT:-8087}:8087"
 
 networks:
   sandbox:
