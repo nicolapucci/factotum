@@ -1,19 +1,26 @@
 """The store in Postgres, in the schema ``hub``."""
 
+import json
 from pathlib import Path
 
 import asyncpg
+from pydantic import TypeAdapter
 
+from factotum.contracts.devices import DeviceRecord, ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.identity import Role
-from factotum.contracts.ids import TenantId, UserId
+from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
 from factotum.db.migrations import load_migrations, migrate
 from factotum.db.pool import Database
-from factotum.hub.store.base import StoredUser
+from factotum.hub.store.base import StoredBinding, StoredDevice, StoredUser
 
 SCHEMA = "hub"
 MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
 
 _USER_COLUMNS = "id, tenant_id, username, password_hash, roles, must_change_password, created_at"
+_DEVICE_COLUMNS = "id, tenant_id, kind, name, hardware_id, record, credential_hash, created_at"
+_BINDING_COLUMNS = "id, tenant_id, skill, device_id, params, enabled, created_at"
+
+_device_adapter: TypeAdapter[SystemDeviceRecord | ExternalDeviceRecord] = TypeAdapter(DeviceRecord)
 
 
 async def prepare(database: Database) -> list[int]:
@@ -30,6 +37,26 @@ def _user(row: "asyncpg.Record") -> StoredUser:
         password_hash=row["password_hash"],
         roles=frozenset(Role(value) for value in row["roles"]),
         must_change_password=row["must_change_password"],
+        created_at=row["created_at"],
+    )
+
+
+def _device(row: "asyncpg.Record") -> StoredDevice:
+    return StoredDevice(
+        record=_device_adapter.validate_json(row["record"]),
+        credential_hash=row["credential_hash"],
+        created_at=row["created_at"],
+    )
+
+
+def _binding(row: "asyncpg.Record") -> StoredBinding:
+    return StoredBinding(
+        id=BindingId(row["id"]),
+        tenant_id=TenantId(row["tenant_id"]),
+        skill=row["skill"],
+        device_id=DeviceId(row["device_id"]),
+        params=json.loads(row["params"]),
+        enabled=row["enabled"],
         created_at=row["created_at"],
     )
 
@@ -130,3 +157,76 @@ class PostgresStore:
                 user_id,
             )
         return result == "UPDATE 1"
+
+    # ---- devices
+
+    async def create_device(self, device: StoredDevice) -> bool:
+        tenant_id = device.record.tenant_id
+        hardware_id = (
+            device.record.hardware_id if isinstance(device.record, SystemDeviceRecord) else None
+        )
+        try:
+            async with self._db.transaction(tenant_id) as connection:
+                row = await connection.fetchrow(
+                    f"INSERT INTO hub.devices ({_DEVICE_COLUMNS}) "  # noqa: S608 - a constant
+                    "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) "
+                    "ON CONFLICT (tenant_id, name) DO NOTHING RETURNING id",
+                    device.record.id,
+                    tenant_id,
+                    device.record.kind.value,
+                    device.record.name,
+                    hardware_id,
+                    device.record.model_dump_json(),
+                    device.credential_hash,
+                    device.created_at,
+                )
+        except asyncpg.UniqueViolationError:
+            # The name was free, but the hardware id (the other way two devices collide) was not.
+            return False
+        return row is not None
+
+    async def get_device(self, tenant_id: TenantId, device_id: DeviceId) -> StoredDevice | None:
+        async with self._db.transaction(tenant_id) as connection:
+            row = await connection.fetchrow(
+                f"SELECT {_DEVICE_COLUMNS} FROM hub.devices "  # noqa: S608 - a constant
+                "WHERE tenant_id = $1 AND id = $2",
+                tenant_id,
+                device_id,
+            )
+        return None if row is None else _device(row)
+
+    async def list_devices(self, tenant_id: TenantId) -> list[StoredDevice]:
+        async with self._db.transaction(tenant_id) as connection:
+            rows = await connection.fetch(
+                f"SELECT {_DEVICE_COLUMNS} FROM hub.devices "  # noqa: S608 - a constant
+                "WHERE tenant_id = $1 ORDER BY created_at",
+                tenant_id,
+            )
+        return [_device(row) for row in rows]
+
+    # ---- bindings
+
+    async def create_binding(self, binding: StoredBinding) -> bool:
+        async with self._db.transaction(binding.tenant_id) as connection:
+            row = await connection.fetchrow(
+                f"INSERT INTO hub.bindings ({_BINDING_COLUMNS}) "  # noqa: S608 - a constant
+                "VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) "
+                "ON CONFLICT (tenant_id, skill, device_id) DO NOTHING RETURNING id",
+                binding.id,
+                binding.tenant_id,
+                binding.skill,
+                binding.device_id,
+                json.dumps(binding.params),
+                binding.enabled,
+                binding.created_at,
+            )
+        return row is not None
+
+    async def list_bindings(self, tenant_id: TenantId) -> list[StoredBinding]:
+        async with self._db.transaction(tenant_id) as connection:
+            rows = await connection.fetch(
+                f"SELECT {_BINDING_COLUMNS} FROM hub.bindings "  # noqa: S608 - a constant
+                "WHERE tenant_id = $1 ORDER BY created_at",
+                tenant_id,
+            )
+        return [_binding(row) for row in rows]

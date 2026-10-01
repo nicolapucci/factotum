@@ -3,14 +3,17 @@ Postgres store has to do (the same tests run against both)."""
 
 from dataclasses import replace
 
-from factotum.contracts.ids import TenantId, UserId
-from factotum.hub.store.base import StoredUser
+from factotum.contracts.devices import SystemDeviceRecord
+from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
+from factotum.hub.store.base import StoredBinding, StoredDevice, StoredUser
 
 
 class InMemoryStore:
     def __init__(self) -> None:
         self._tenants: set[TenantId] = set()
         self._users: dict[UserId, StoredUser] = {}
+        self._devices: dict[DeviceId, StoredDevice] = {}
+        self._bindings: dict[BindingId, StoredBinding] = {}
 
     async def tenant_count(self) -> int:
         return len(self._tenants)
@@ -56,3 +59,54 @@ class InMemoryStore:
             user, password_hash=password_hash, must_change_password=False
         )
         return True
+
+    # ---- devices
+
+    async def create_device(self, device: StoredDevice) -> bool:
+        tenant_id, name = device.record.tenant_id, device.record.name
+        hardware_id = (
+            device.record.hardware_id if isinstance(device.record, SystemDeviceRecord) else None
+        )
+        for stored in self._devices.values():
+            if stored.record.tenant_id != tenant_id:
+                continue
+            if stored.record.name == name:
+                return False
+            if (
+                hardware_id is not None
+                and isinstance(stored.record, SystemDeviceRecord)
+                and stored.record.hardware_id == hardware_id
+            ):
+                return False
+        self._devices[device.record.id] = device
+        return True
+
+    async def get_device(self, tenant_id: TenantId, device_id: DeviceId) -> StoredDevice | None:
+        device = self._devices.get(device_id)
+        return device if device is not None and device.record.tenant_id == tenant_id else None
+
+    async def list_devices(self, tenant_id: TenantId) -> list[StoredDevice]:
+        return sorted(
+            (d for d in self._devices.values() if d.record.tenant_id == tenant_id),
+            key=lambda d: d.created_at,
+        )
+
+    # ---- bindings
+
+    async def create_binding(self, binding: StoredBinding) -> bool:
+        taken = any(
+            stored.tenant_id == binding.tenant_id
+            and stored.skill == binding.skill
+            and stored.device_id == binding.device_id
+            for stored in self._bindings.values()
+        )
+        if taken:
+            return False
+        self._bindings[binding.id] = binding
+        return True
+
+    async def list_bindings(self, tenant_id: TenantId) -> list[StoredBinding]:
+        return sorted(
+            (b for b in self._bindings.values() if b.tenant_id == tenant_id),
+            key=lambda b: b.created_at,
+        )

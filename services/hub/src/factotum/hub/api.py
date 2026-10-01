@@ -13,11 +13,18 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.types import Lifespan
 
+from factotum.contracts.devices import ExternalDeviceRecord
 from factotum.contracts.hub import (
+    BindingList,
+    BindingView,
     ChangePasswordRequest,
+    CreateBindingRequest,
+    CreateDeviceRequest,
     CreateUserRequest,
+    DeviceList,
     LoginRequest,
     LoginResult,
+    PairedDevice,
     UserList,
     UserView,
 )
@@ -101,5 +108,33 @@ def create_app(
     @app.get("/v1/users", summary="The users of the caller's tenant (an administrator only)")
     async def list_users(principal: Caller, ops: Ops) -> UserList:
         return await ops.service.list_users(principal)
+
+    @app.post(
+        "/v1/devices",
+        status_code=201,
+        summary="Register (pair) a device, system or external (an administrator only)",
+    )
+    async def create_device(
+        body: CreateDeviceRequest, principal: Caller, ops: Ops
+    ) -> PairedDevice | ExternalDeviceRecord:
+        return await ops.service.create_device(principal, body)
+
+    @app.get("/v1/devices", summary="Every device of the caller's tenant")
+    async def list_devices(principal: Caller, ops: Ops) -> DeviceList:
+        return await ops.service.list_devices(principal)
+
+    @app.post(
+        "/v1/bindings",
+        status_code=201,
+        summary="Bind a skill to a device, with its own parameters (an administrator only)",
+    )
+    async def create_binding(
+        body: CreateBindingRequest, principal: Caller, ops: Ops
+    ) -> BindingView:
+        return await ops.service.create_binding(principal, body)
+
+    @app.get("/v1/bindings", summary="Every binding of the caller's tenant")
+    async def list_bindings(principal: Caller, ops: Ops) -> BindingList:
+        return await ops.service.list_bindings(principal)
 
     return app

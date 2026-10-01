@@ -1,18 +1,26 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from factotum.contracts.hub import (
+    BindingList,
     ChangePasswordRequest,
+    CreateBindingRequest,
+    CreateDeviceRequest,
+    CreateExternalDeviceRequest,
+    CreateSystemDeviceRequest,
     CreateUserRequest,
+    DeviceList,
+    DeviceOwner,
     LoginRequest,
     LoginResult,
+    PairedDevice,
     UserList,
     UserView,
 )
 from factotum.contracts.identity import Role
-from factotum.contracts.testing import make_user_id
+from factotum.contracts.testing import make_device_id, make_system_device, make_user_id
 
 
 def test_a_created_user_defaults_to_a_member_with_no_roles_named() -> None:
@@ -60,3 +68,41 @@ def test_the_contracts_are_immutable_and_reject_unknown_fields() -> None:
         result.token = "other"  # type: ignore[misc]
     with pytest.raises(ValidationError):
         LoginRequest.model_validate({"username": "a", "password": "b", "extra": 1})
+
+
+_CREATE_DEVICE: TypeAdapter[CreateSystemDeviceRequest | CreateExternalDeviceRequest] = TypeAdapter(
+    CreateDeviceRequest
+)
+
+
+def test_a_device_request_is_routed_by_its_kind() -> None:
+    system = _CREATE_DEVICE.validate_python(
+        {"kind": "system", "name": "a", "hardware_id": "hw-1", "capabilities": ["audio_out"]}
+    )
+    external = _CREATE_DEVICE.validate_python({"kind": "external", "name": "a lamp"})
+
+    assert isinstance(system, CreateSystemDeviceRequest)
+    assert isinstance(external, CreateExternalDeviceRequest)
+
+
+def test_a_device_of_ones_own_defaults_to_the_tenant() -> None:
+    request = CreateExternalDeviceRequest(name="a lamp")
+
+    assert request.owner is DeviceOwner.TENANT
+
+
+def test_a_binding_needs_a_valid_skill_name() -> None:
+    with pytest.raises(ValidationError):
+        CreateBindingRequest(skill="Not Valid!", device_id=make_device_id())
+
+
+def test_a_paired_device_round_trips_through_json() -> None:
+    paired = PairedDevice(device=make_system_device(), token="a-token")
+
+    assert PairedDevice.model_validate_json(paired.model_dump_json()) == paired
+
+
+def test_a_device_list_and_a_binding_list_default_to_empty() -> None:
+    assert DeviceList().system == ()
+    assert DeviceList().external == ()
+    assert BindingList().bindings == ()

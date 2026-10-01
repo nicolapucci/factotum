@@ -1,37 +1,94 @@
-"""Logging in, changing a password, and the users of a tenant.
+"""Logging in, changing a password, the users of a tenant, its devices and the skills bound to them.
 
-Slice 7a of the hub: a device's pairing, a tenant's spaces, its linked accounts, its model bindings
-and the secrets of its skills are later slices. A single tenant is created, with its administrator,
-the first time the hub starts (single-tenant mode only); nothing here makes a second one.
+A tenant's spaces, linked accounts, model bindings and the secrets of its skills are later slices.
+A single tenant is created, with its administrator, the first time the hub starts (single-tenant
+mode only); nothing here makes a second one.
 """
 
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from factotum.common.credentials import hash_credential, new_credential
 from factotum.common.passwords import hash_password, verify_password
 from factotum.common.tokens import encode_token
+from factotum.contracts.devices import (
+    DevicePolicy,
+    ExternalDeviceRecord,
+    SystemDeviceRecord,
+)
 from factotum.contracts.errors import (
     AuthError,
     ConflictError,
+    NotFoundError,
     PasswordChangeRequiredError,
     PolicyViolationError,
 )
 from factotum.contracts.hub import (
+    BindingList,
+    BindingView,
     ChangePasswordRequest,
+    CreateBindingRequest,
+    CreateExternalDeviceRequest,
+    CreateSystemDeviceRequest,
     CreateUserRequest,
+    DeviceList,
+    DeviceOwner,
     LoginRequest,
     LoginResult,
+    PairedDevice,
+    SystemDeviceWithCredential,
     UserList,
     UserView,
 )
-from factotum.contracts.identity import Principal, Role, Subject, SubjectKind
-from factotum.contracts.ids import TenantId, UserId
-from factotum.hub.store.base import HubStore, StoredUser
+from factotum.contracts.identity import Owner, Principal, Role, Subject, SubjectKind
+from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
+from factotum.hub.store.base import HubStore, StoredBinding, StoredDevice, StoredUser
 
 logger = logging.getLogger("factotum.hub")
 
 _WRONG_CREDENTIALS = "the username or the password is wrong"
+
+
+def _owner_of(principal: Principal, choice: DeviceOwner) -> Owner:
+    """Only called after ``_admin``, which has already made sure ``principal`` is a person: a
+    device of one's own is always that person's."""
+    if choice is DeviceOwner.TENANT:
+        return Owner.of_subject(Subject.tenant(principal.tenant_id))
+    return Owner.of_subject(principal.acts_as)
+
+
+def _default_policy(choice: DeviceOwner) -> DevicePolicy:
+    kind = SubjectKind.TENANT if choice is DeviceOwner.TENANT else SubjectKind.USER
+    return DevicePolicy.default_for(kind)
+
+
+def _device_list(devices: Sequence[StoredDevice]) -> DeviceList:
+    system: list[SystemDeviceWithCredential] = []
+    external: list[ExternalDeviceRecord] = []
+    for stored in devices:
+        if isinstance(stored.record, SystemDeviceRecord):
+            if stored.credential_hash is None:
+                raise ValueError("a system device always has a credential hash")  # pragma: no cover
+            system.append(
+                SystemDeviceWithCredential(
+                    device=stored.record, credential_hash=stored.credential_hash
+                )
+            )
+        else:
+            external.append(stored.record)
+    return DeviceList(system=tuple(system), external=tuple(external))
+
+
+def _binding_view(binding: StoredBinding) -> BindingView:
+    return BindingView(
+        id=binding.id,
+        skill=binding.skill,
+        device_id=binding.device_id,
+        params=binding.params,
+        enabled=binding.enabled,
+    )
 
 
 def _view(user: StoredUser) -> UserView:
@@ -120,6 +177,79 @@ class HubService:
         await self._admin(principal)
         users = await self._store.list_users(principal.tenant_id)
         return UserList(users=tuple(_view(user) for user in users))
+
+    async def create_device(
+        self, principal: Principal, body: CreateSystemDeviceRequest | CreateExternalDeviceRequest
+    ) -> PairedDevice | ExternalDeviceRecord:
+        await self._admin(principal)
+        owner = _owner_of(principal, body.owner)
+        policy = body.policy or _default_policy(body.owner)
+        now = datetime.now(UTC)
+        if isinstance(body, CreateSystemDeviceRequest):
+            system = SystemDeviceRecord(
+                id=DeviceId(uuid4()),
+                tenant_id=principal.tenant_id,
+                name=body.name,
+                hardware_id=body.hardware_id,
+                owner=owner,
+                policy=policy,
+                capabilities=body.capabilities,
+                display=body.display,
+                aliases=body.aliases,
+                tags=body.tags,
+            )
+            token = new_credential()
+            added = await self._store.create_device(
+                StoredDevice(record=system, credential_hash=hash_credential(token), created_at=now)
+            )
+            if not added:
+                raise ConflictError(f"{body.name!r} is already a device of this tenant")
+            return PairedDevice(device=system, token=token)
+        external = ExternalDeviceRecord(
+            id=DeviceId(uuid4()),
+            tenant_id=principal.tenant_id,
+            name=body.name,
+            owner=owner,
+            policy=policy,
+            aliases=body.aliases,
+            tags=body.tags,
+            sensitivity=body.sensitivity,
+            external_refs=body.external_refs,
+        )
+        added = await self._store.create_device(
+            StoredDevice(record=external, credential_hash=None, created_at=now)
+        )
+        if not added:
+            raise ConflictError(f"{body.name!r} is already a device of this tenant")
+        return external
+
+    async def list_devices(self, principal: Principal) -> DeviceList:
+        """Every device of the caller's tenant: a registry or a directory built from this does not
+        need to ask the hub again for every device it looks for."""
+        return _device_list(await self._store.list_devices(principal.tenant_id))
+
+    async def create_binding(self, principal: Principal, body: CreateBindingRequest) -> BindingView:
+        await self._admin(principal)
+        device = await self._store.get_device(principal.tenant_id, body.device_id)
+        if device is None:
+            raise NotFoundError(f"there is no device {body.device_id} in this tenant")
+        binding = StoredBinding(
+            id=BindingId(uuid4()),
+            tenant_id=principal.tenant_id,
+            skill=body.skill,
+            device_id=body.device_id,
+            params=body.params,
+            enabled=body.enabled,
+            created_at=datetime.now(UTC),
+        )
+        if not await self._store.create_binding(binding):
+            raise ConflictError(f"{body.skill!r} is already bound to this device")
+        return _binding_view(binding)
+
+    async def list_bindings(self, principal: Principal) -> BindingList:
+        """Every binding of the caller's tenant, the same way as ``list_devices``."""
+        bindings = await self._store.list_bindings(principal.tenant_id)
+        return BindingList(bindings=tuple(_binding_view(binding) for binding in bindings))
 
     async def _user_of(self, principal: Principal) -> StoredUser:
         if principal.acts_as.kind is not SubjectKind.USER:

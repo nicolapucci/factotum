@@ -1,15 +1,17 @@
 """What the hub keeps, and the interface it is kept behind.
 
-Slice 7a only: tenants and their users. A device's pairing, a tenant's spaces, its linked accounts,
-its model bindings and the secrets of its skills are later slices of the hub.
+Tenants and their users, their devices (with a system device's credential, as a hash) and the
+bindings of a skill to a device. A tenant's spaces, linked accounts, model bindings and the secrets
+of its skills are later slices of the hub.
 """
 
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from factotum.contracts.devices import ExternalDeviceRecord, JsonScalar, SystemDeviceRecord
 from factotum.contracts.identity import Role
-from factotum.contracts.ids import TenantId, UserId
+from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +22,26 @@ class StoredUser:
     password_hash: str
     roles: frozenset[Role]
     must_change_password: bool
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDevice:
+    record: SystemDeviceRecord | ExternalDeviceRecord
+    credential_hash: str | None
+    """Only a system device has one: what it presents is checked against this, never kept in the
+    clear."""
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoredBinding:
+    id: BindingId
+    tenant_id: TenantId
+    skill: str
+    device_id: DeviceId
+    params: dict[str, JsonScalar]
+    enabled: bool
     created_at: datetime
 
 
@@ -56,4 +78,26 @@ class HubStore(Protocol):
     async def set_password(self, tenant_id: TenantId, user_id: UserId, password_hash: str) -> bool:
         """The new hash, and the user no longer has to change it. False when there is no such
         user."""
+        ...
+
+    # ---- devices
+
+    async def create_device(self, device: StoredDevice) -> bool:
+        """False when the tenant already has a device of this name: nothing was added."""
+        ...
+
+    async def get_device(self, tenant_id: TenantId, device_id: DeviceId) -> StoredDevice | None: ...
+
+    async def list_devices(self, tenant_id: TenantId) -> list[StoredDevice]:
+        """By when they were registered, the earliest first."""
+        ...
+
+    # ---- bindings
+
+    async def create_binding(self, binding: StoredBinding) -> bool:
+        """False when the skill is already bound to this device: nothing was added."""
+        ...
+
+    async def list_bindings(self, tenant_id: TenantId) -> list[StoredBinding]:
+        """By when they were made, the earliest first."""
         ...

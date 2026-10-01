@@ -1,6 +1,7 @@
 """The HTTP interface of the hub, with the service behind it made of a store in memory."""
 
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI
@@ -36,6 +37,17 @@ async def _login(http: httpx.AsyncClient, username: str, password: str) -> dict[
     response = await http.post("/v1/auth/login", json={"username": username, "password": password})
     token: str = response.json()["token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _admin_headers(http: httpx.AsyncClient) -> dict[str, str]:
+    """An administrator past the forced password change, who may do anything an admin can."""
+    headers = await _login(http, USERNAME, PASSWORD)
+    await http.post(
+        "/v1/auth/change-password",
+        json={"current_password": PASSWORD, "new_password": "a new password"},
+        headers=headers,
+    )
+    return await _login(http, USERNAME, "a new password")
 
 
 class TestLiveness:
@@ -183,6 +195,126 @@ class TestAddingAUser:
 
             response = await http.post(
                 "/v1/users", json={"username": USERNAME, "password": "x" * 10}, headers=headers
+            )
+
+        assert (response.status_code, error_code(response)) == (409, "conflict")
+
+
+SPEAKER_BODY = {
+    "kind": "system",
+    "name": "Kitchen speaker",
+    "hardware_id": "kitchen-01",
+    "capabilities": ["audio_out"],
+}
+LAMP_BODY = {"kind": "external", "name": "Living room lamp"}
+
+
+class TestRegisteringADevice:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _login(http, USERNAME, PASSWORD)
+
+            response = await http.post("/v1/devices", json=SPEAKER_BODY, headers=headers)
+
+        assert (response.status_code, error_code(response)) == (403, "password_change_required")
+
+    async def test_a_system_device_is_paired_with_a_token(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+
+            response = await http.post("/v1/devices", json=SPEAKER_BODY, headers=headers)
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["device"]["name"] == "Kitchen speaker"
+        assert body["token"]
+
+    async def test_an_external_device_has_no_token(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+
+            response = await http.post("/v1/devices", json=LAMP_BODY, headers=headers)
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["name"] == "Living room lamp"
+        assert "token" not in body
+
+    async def test_a_member_may_not_register_a_device_but_may_list_them(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            await http.post("/v1/devices", json=LAMP_BODY, headers=headers)
+            await http.post(
+                "/v1/users", json={"username": "member", "password": "x" * 10}, headers=headers
+            )
+            member_headers = await _login(http, "member", "x" * 10)
+
+            refused = await http.post("/v1/devices", json=LAMP_BODY, headers=member_headers)
+            listed = await http.get("/v1/devices", headers=member_headers)
+
+        assert (refused.status_code, error_code(refused)) == (403, "policy_violation")
+        assert (listed.status_code, len(listed.json()["external"])) == (200, 1)
+
+    async def test_a_duplicate_name_is_a_conflict(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            await http.post("/v1/devices", json=LAMP_BODY, headers=headers)
+
+            response = await http.post("/v1/devices", json=LAMP_BODY, headers=headers)
+
+        assert (response.status_code, error_code(response)) == (409, "conflict")
+
+
+class TestBindingASkill:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _login(http, USERNAME, PASSWORD)
+
+            response = await http.post(
+                "/v1/bindings", json={"skill": "lamp", "device_id": str(uuid4())}, headers=headers
+            )
+
+        assert (response.status_code, error_code(response)) == (403, "password_change_required")
+
+    async def test_binding_an_unknown_device_is_not_found(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+
+            response = await http.post(
+                "/v1/bindings", json={"skill": "lamp", "device_id": str(uuid4())}, headers=headers
+            )
+
+        assert (response.status_code, error_code(response)) == (404, "not_found")
+
+    async def test_a_binding_is_made_and_listed(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            lamp = (await http.post("/v1/devices", json=LAMP_BODY, headers=headers)).json()
+
+            created = await http.post(
+                "/v1/bindings",
+                json={
+                    "skill": "lamp",
+                    "device_id": lamp["id"],
+                    "params": {"entity_id": "light.living_room"},
+                },
+                headers=headers,
+            )
+            listed = await http.get("/v1/bindings", headers=headers)
+
+        assert (created.status_code, created.json()["skill"]) == (201, "lamp")
+        assert len(listed.json()["bindings"]) == 1
+
+    async def test_the_same_skill_bound_twice_is_a_conflict(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            lamp = (await http.post("/v1/devices", json=LAMP_BODY, headers=headers)).json()
+            await http.post(
+                "/v1/bindings", json={"skill": "lamp", "device_id": lamp["id"]}, headers=headers
+            )
+
+            response = await http.post(
+                "/v1/bindings", json={"skill": "lamp", "device_id": lamp["id"]}, headers=headers
             )
 
         assert (response.status_code, error_code(response)) == (409, "conflict")

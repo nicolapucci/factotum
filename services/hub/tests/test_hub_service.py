@@ -1,15 +1,28 @@
 import pytest
 
+from factotum.common.credentials import verify_credential
 from factotum.common.tokens import MIN_SECRET_BYTES, decode_token
+from factotum.contracts.capabilities import Capability
+from factotum.contracts.devices import ExternalDeviceRecord
 from factotum.contracts.errors import (
     AuthError,
     ConflictError,
+    NotFoundError,
     PasswordChangeRequiredError,
     PolicyViolationError,
 )
-from factotum.contracts.hub import ChangePasswordRequest, CreateUserRequest, LoginRequest
-from factotum.contracts.identity import Principal, Role, Subject, SubjectKind
-from factotum.contracts.testing import make_tenant_id, make_user_id
+from factotum.contracts.hub import (
+    ChangePasswordRequest,
+    CreateBindingRequest,
+    CreateExternalDeviceRequest,
+    CreateSystemDeviceRequest,
+    CreateUserRequest,
+    DeviceOwner,
+    LoginRequest,
+    PairedDevice,
+)
+from factotum.contracts.identity import Owner, Principal, Role, Subject, SubjectKind
+from factotum.contracts.testing import make_device_id, make_tenant_id, make_user_id
 from factotum.hub.service import HubService
 from factotum.hub.store.memory import InMemoryStore
 
@@ -186,3 +199,140 @@ class TestCreateUserAndListUsers:
 
         with pytest.raises(ConflictError):
             await svc.create_user(admin, CreateUserRequest(username=USERNAME, password="x" * 10))
+
+
+async def _ready_admin(svc: HubService) -> Principal:
+    """An administrator past the forced password change, who may do anything an admin can."""
+    admin = await _admin_principal(svc)
+    await svc.change_password(
+        admin, ChangePasswordRequest(current_password=PASSWORD, new_password="a new password")
+    )
+    return admin
+
+
+async def _member(svc: HubService, admin: Principal) -> Principal:
+    await svc.create_user(admin, CreateUserRequest(username="member", password="x" * 10))
+    login = await svc.login(LoginRequest(username="member", password="x" * 10))
+    return decode_token(login.token, secret=SECRET)
+
+
+SPEAKER = CreateSystemDeviceRequest(
+    name="Kitchen speaker",
+    hardware_id="kitchen-01",
+    capabilities=frozenset({Capability.AUDIO_OUT}),
+)
+LAMP = CreateExternalDeviceRequest(name="Living room lamp")
+
+
+class TestCreateDeviceAndListDevices:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        svc = await bootstrapped()
+        principal = await _admin_principal(svc)
+
+        with pytest.raises(PasswordChangeRequiredError):
+            await svc.create_device(principal, SPEAKER)
+
+    async def test_a_member_may_not_register_a_device_but_may_list_them(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        await svc.create_device(admin, LAMP)
+        member = await _member(svc, admin)
+
+        with pytest.raises(PolicyViolationError):
+            await svc.create_device(member, LAMP)
+        assert len((await svc.list_devices(member)).external) == 1
+
+    async def test_a_system_device_is_paired_with_a_token_that_verifies(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        paired = await svc.create_device(admin, SPEAKER)
+
+        assert isinstance(paired, PairedDevice)
+        [system] = (await svc.list_devices(admin)).system
+        assert verify_credential(paired.token, system.credential_hash)
+
+    async def test_an_external_device_has_no_credential_and_is_listed(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        registered = await svc.create_device(admin, LAMP)
+
+        assert isinstance(registered, ExternalDeviceRecord)
+        assert (await svc.list_devices(admin)).external == (registered,)
+
+    async def test_a_device_of_ones_own_belongs_to_the_registering_administrator(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        registered = await svc.create_device(
+            admin, CreateExternalDeviceRequest(name="My lamp", owner=DeviceOwner.USER)
+        )
+
+        assert isinstance(registered, ExternalDeviceRecord)
+        assert registered.owner == Owner.of_subject(admin.acts_as)
+
+    async def test_a_duplicate_name_is_a_conflict(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        await svc.create_device(admin, LAMP)
+
+        with pytest.raises(ConflictError):
+            await svc.create_device(admin, LAMP)
+
+
+class TestCreateBindingAndListBindings:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        svc = await bootstrapped()
+        principal = await _admin_principal(svc)
+
+        with pytest.raises(PasswordChangeRequiredError):
+            await svc.create_binding(
+                principal, CreateBindingRequest(skill="lamp", device_id=make_device_id())
+            )
+
+    async def test_binding_an_unknown_device_is_not_found(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        with pytest.raises(NotFoundError):
+            await svc.create_binding(
+                admin, CreateBindingRequest(skill="lamp", device_id=make_device_id())
+            )
+
+    async def test_a_binding_is_made_and_listed(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        lamp = await svc.create_device(admin, LAMP)
+        assert isinstance(lamp, ExternalDeviceRecord)
+
+        created = await svc.create_binding(
+            admin,
+            CreateBindingRequest(
+                skill="lamp", device_id=lamp.id, params={"entity_id": "light.living_room"}
+            ),
+        )
+
+        assert (created.skill, created.device_id) == ("lamp", lamp.id)
+        assert (await svc.list_bindings(admin)).bindings == (created,)
+
+    async def test_a_member_may_not_bind_but_may_list(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        lamp = await svc.create_device(admin, LAMP)
+        assert isinstance(lamp, ExternalDeviceRecord)
+        member = await _member(svc, admin)
+
+        with pytest.raises(PolicyViolationError):
+            await svc.create_binding(member, CreateBindingRequest(skill="lamp", device_id=lamp.id))
+        assert (await svc.list_bindings(member)).bindings == ()
+
+    async def test_the_same_skill_bound_twice_to_a_device_is_a_conflict(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        lamp = await svc.create_device(admin, LAMP)
+        assert isinstance(lamp, ExternalDeviceRecord)
+        await svc.create_binding(admin, CreateBindingRequest(skill="lamp", device_id=lamp.id))
+
+        with pytest.raises(ConflictError):
+            await svc.create_binding(admin, CreateBindingRequest(skill="lamp", device_id=lamp.id))
