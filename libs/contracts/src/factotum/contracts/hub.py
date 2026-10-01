@@ -1,13 +1,14 @@
-"""What the hub's own API says: logging in, the users of a tenant, its devices and the skills
-bound to them.
+"""What the hub's own API says: logging in, the users of a tenant, its devices, the skills bound to
+them, and now the models bound to a role.
 
-A tenant's spaces, linked accounts, model bindings and skill secrets are later slices of the hub.
+A tenant's spaces, linked accounts and skill secrets are later slices of the hub.
 """
 
+import re
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability, DisplayInfo
@@ -19,8 +20,15 @@ from factotum.contracts.devices import (
     SystemDeviceRecord,
 )
 from factotum.contracts.effects import Effect
-from factotum.contracts.identity import Role
-from factotum.contracts.ids import BindingId, DeviceId, UserId
+from factotum.contracts.identity import Owner, Role
+from factotum.contracts.ids import BindingId, DeviceId, ModelBindingId, UserId
+from factotum.contracts.models import (
+    ADDRESS_REQUIRED,
+    HOSTED_PROVIDERS,
+    BindingOptions,
+    ModelRole,
+    ProviderKind,
+)
 
 _Username = Field(min_length=1, max_length=64)
 _Password = Field(min_length=1, max_length=256)
@@ -138,3 +146,62 @@ class BindingView(Contract):
 
 class BindingList(Contract):
     bindings: tuple[BindingView, ...] = ()
+
+
+class ModelBindingOwner(StrEnum):
+    """Who a model binding serves: the tenant (everybody), or the administrator who makes it, for
+    their own (an administrator is always a person; bringing one's own subscription is theirs to
+    bind, not a member's to bind on their behalf)."""
+
+    TENANT = "tenant"
+    USER = "user"
+
+
+_SECRET_REF = re.compile(r"^env:[A-Z][A-Z0-9_]{0,63}$")
+
+
+class CreateModelBindingRequest(Contract):
+    """What ``ModelBinding`` needs, minus what the hub itself supplies (its id, the tenant, and the
+    real ``Owner`` behind ``owner``): the same fields, under the same constraints, so that what is
+    accepted here is exactly what a binding may be."""
+
+    role: ModelRole
+    provider: ProviderKind
+    model: str = Field(min_length=1, max_length=200)
+    base_url: str | None = Field(default=None, max_length=500)
+    owner: ModelBindingOwner = ModelBindingOwner.TENANT
+    secret_ref: str | None = None
+    """Where the key lives (``env:OPENAI_API_KEY``), never the key itself: the hub does not hold a
+    provider's key, only this reference, resolved where the gateway already resolves it."""
+
+    options: BindingOptions = Field(default_factory=BindingOptions)
+
+    @field_validator("secret_ref")
+    @classmethod
+    def _secret_ref_has_a_known_shape(cls, secret_ref: str | None) -> str | None:
+        if secret_ref is not None and not _SECRET_REF.fullmatch(secret_ref):
+            raise ValueError("secret_ref must look like env:VARIABLE_NAME")
+        return secret_ref
+
+    @model_validator(mode="after")
+    def _has_what_the_provider_needs(self) -> Self:
+        if self.provider in ADDRESS_REQUIRED and self.base_url is None:
+            raise ValueError(f"{self.provider.value} needs a base_url")
+        if self.provider in HOSTED_PROVIDERS and self.secret_ref is None:
+            raise ValueError(f"{self.provider.value} needs a secret_ref")
+        return self
+
+
+class ModelBindingView(Contract):
+    id: ModelBindingId
+    role: ModelRole
+    provider: ProviderKind
+    model: str
+    base_url: str | None
+    owner: Owner
+    secret_ref: str | None
+    options: BindingOptions
+
+
+class ModelBindingList(Contract):
+    bindings: tuple[ModelBindingView, ...] = ()

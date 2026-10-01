@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -9,18 +10,29 @@ from factotum.contracts.hub import (
     CreateBindingRequest,
     CreateDeviceRequest,
     CreateExternalDeviceRequest,
+    CreateModelBindingRequest,
     CreateSystemDeviceRequest,
     CreateUserRequest,
     DeviceList,
     DeviceOwner,
     LoginRequest,
     LoginResult,
+    ModelBindingList,
+    ModelBindingOwner,
+    ModelBindingView,
     PairedDevice,
     UserList,
     UserView,
 )
-from factotum.contracts.identity import Role
-from factotum.contracts.testing import make_device_id, make_system_device, make_user_id
+from factotum.contracts.identity import Owner, Role, Subject
+from factotum.contracts.ids import ModelBindingId
+from factotum.contracts.models import BindingOptions, ModelRole, ProviderKind
+from factotum.contracts.testing import (
+    make_device_id,
+    make_system_device,
+    make_tenant_id,
+    make_user_id,
+)
 
 
 def test_a_created_user_defaults_to_a_member_with_no_roles_named() -> None:
@@ -106,3 +118,53 @@ def test_a_device_list_and_a_binding_list_default_to_empty() -> None:
     assert DeviceList().system == ()
     assert DeviceList().external == ()
     assert BindingList().bindings == ()
+
+
+def _model_binding_request(**changes: object) -> CreateModelBindingRequest:
+    fields: dict[str, object] = {
+        "role": ModelRole.CHAT_MAIN,
+        "provider": ProviderKind.OLLAMA,
+        "model": "llama3.1:8b",
+        "base_url": "http://localhost:11434",
+    }
+    return CreateModelBindingRequest.model_validate({**fields, **changes})
+
+
+def test_a_model_binding_of_ones_own_defaults_to_the_tenant() -> None:
+    assert _model_binding_request().owner is ModelBindingOwner.TENANT
+
+
+def test_a_model_binding_needs_a_secret_ref_that_looks_like_an_env_reference() -> None:
+    with pytest.raises(ValidationError, match="env:VARIABLE_NAME"):
+        _model_binding_request(
+            provider=ProviderKind.OPENAI, secret_ref="the-key-itself", base_url=None
+        )
+
+
+def test_a_provider_with_no_fixed_address_needs_a_base_url() -> None:
+    with pytest.raises(ValidationError, match="needs a base_url"):
+        _model_binding_request(base_url=None)
+
+
+def test_a_hosted_provider_needs_a_secret_ref() -> None:
+    with pytest.raises(ValidationError, match="needs a secret_ref"):
+        _model_binding_request(provider=ProviderKind.OPENAI, model="gpt-4o", base_url=None)
+
+
+def test_a_model_binding_view_round_trips_through_json() -> None:
+    view = ModelBindingView(
+        id=ModelBindingId(uuid4()),
+        role=ModelRole.CHAT_MAIN,
+        provider=ProviderKind.OLLAMA,
+        model="llama3.1:8b",
+        base_url="http://localhost:11434",
+        owner=Owner.of_subject(Subject.tenant(make_tenant_id())),
+        secret_ref=None,
+        options=BindingOptions(),
+    )
+
+    assert ModelBindingView.model_validate_json(view.model_dump_json()) == view
+
+
+def test_a_model_binding_list_defaults_to_empty() -> None:
+    assert ModelBindingList().bindings == ()

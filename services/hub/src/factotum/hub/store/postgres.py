@@ -9,9 +9,10 @@ from pydantic import TypeAdapter
 from factotum.contracts.devices import DeviceRecord, ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.identity import Role
 from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
+from factotum.contracts.models import ModelBinding
 from factotum.db.migrations import load_migrations, migrate
 from factotum.db.pool import Database
-from factotum.hub.store.base import StoredBinding, StoredDevice, StoredUser
+from factotum.hub.store.base import StoredBinding, StoredDevice, StoredModelBinding, StoredUser
 
 SCHEMA = "hub"
 MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
@@ -19,6 +20,7 @@ MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
 _USER_COLUMNS = "id, tenant_id, username, password_hash, roles, must_change_password, created_at"
 _DEVICE_COLUMNS = "id, tenant_id, kind, name, hardware_id, record, credential_hash, created_at"
 _BINDING_COLUMNS = "id, tenant_id, skill, device_id, params, enabled, created_at"
+_MODEL_BINDING_COLUMNS = "id, tenant_id, owner_kind, owner_id, role, binding, created_at"
 
 _device_adapter: TypeAdapter[SystemDeviceRecord | ExternalDeviceRecord] = TypeAdapter(DeviceRecord)
 
@@ -58,6 +60,12 @@ def _binding(row: "asyncpg.Record") -> StoredBinding:
         params=json.loads(row["params"]),
         enabled=row["enabled"],
         created_at=row["created_at"],
+    )
+
+
+def _model_binding(row: "asyncpg.Record") -> StoredModelBinding:
+    return StoredModelBinding(
+        binding=ModelBinding.model_validate_json(row["binding"]), created_at=row["created_at"]
     )
 
 
@@ -230,3 +238,32 @@ class PostgresStore:
                 tenant_id,
             )
         return [_binding(row) for row in rows]
+
+    # ---- model bindings
+
+    async def upsert_model_binding(self, binding: StoredModelBinding) -> None:
+        owner = binding.binding.owner
+        async with self._db.transaction(binding.binding.tenant_id) as connection:
+            await connection.execute(
+                f"INSERT INTO hub.model_bindings ({_MODEL_BINDING_COLUMNS}) "  # noqa: S608
+                "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7) "
+                "ON CONFLICT (tenant_id, owner_kind, owner_id, role) "
+                "DO UPDATE SET id = EXCLUDED.id, binding = EXCLUDED.binding, "
+                "created_at = EXCLUDED.created_at",
+                binding.binding.id,
+                binding.binding.tenant_id,
+                owner.kind.value,
+                owner.id,
+                binding.binding.role.value,
+                binding.binding.model_dump_json(),
+                binding.created_at,
+            )
+
+    async def list_model_bindings(self, tenant_id: TenantId) -> list[StoredModelBinding]:
+        async with self._db.transaction(tenant_id) as connection:
+            rows = await connection.fetch(
+                f"SELECT {_MODEL_BINDING_COLUMNS} FROM hub.model_bindings "  # noqa: S608
+                "WHERE tenant_id = $1 ORDER BY created_at",
+                tenant_id,
+            )
+        return [_model_binding(row) for row in rows]

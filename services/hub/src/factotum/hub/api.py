@@ -20,10 +20,13 @@ from factotum.contracts.hub import (
     ChangePasswordRequest,
     CreateBindingRequest,
     CreateDeviceRequest,
+    CreateModelBindingRequest,
     CreateUserRequest,
     DeviceList,
     LoginRequest,
     LoginResult,
+    ModelBindingList,
+    ModelBindingView,
     PairedDevice,
     UserList,
     UserView,
@@ -136,5 +139,19 @@ def create_app(
     @app.get("/v1/bindings", summary="Every binding of the caller's tenant")
     async def list_bindings(principal: Caller, ops: Ops) -> BindingList:
         return await ops.service.list_bindings(principal)
+
+    @app.post(
+        "/v1/models",
+        summary="Bind a role to a model, for the tenant or for the caller's own use "
+        "(an administrator only)",
+    )
+    async def upsert_model_binding(
+        body: CreateModelBindingRequest, principal: Caller, ops: Ops
+    ) -> ModelBindingView:
+        return await ops.service.upsert_model_binding(principal, body)
+
+    @app.get("/v1/models", summary="Every model binding of the caller's tenant")
+    async def list_model_bindings(principal: Caller, ops: Ops) -> ModelBindingList:
+        return await ops.service.list_model_bindings(principal)
 
     return app

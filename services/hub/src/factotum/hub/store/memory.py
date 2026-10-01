@@ -2,10 +2,20 @@
 Postgres store has to do (the same tests run against both)."""
 
 from dataclasses import replace
+from uuid import UUID
 
 from factotum.contracts.devices import SystemDeviceRecord
+from factotum.contracts.identity import OwnerKind
 from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
-from factotum.hub.store.base import StoredBinding, StoredDevice, StoredUser
+from factotum.contracts.models import ModelRole
+from factotum.hub.store.base import StoredBinding, StoredDevice, StoredModelBinding, StoredUser
+
+_ModelBindingKey = tuple[TenantId, OwnerKind, UUID, ModelRole]
+
+
+def _model_binding_key(stored: StoredModelBinding) -> _ModelBindingKey:
+    binding = stored.binding
+    return (binding.tenant_id, binding.owner.kind, binding.owner.id, binding.role)
 
 
 class InMemoryStore:
@@ -14,6 +24,7 @@ class InMemoryStore:
         self._users: dict[UserId, StoredUser] = {}
         self._devices: dict[DeviceId, StoredDevice] = {}
         self._bindings: dict[BindingId, StoredBinding] = {}
+        self._model_bindings: dict[_ModelBindingKey, StoredModelBinding] = {}
 
     async def tenant_count(self) -> int:
         return len(self._tenants)
@@ -109,4 +120,15 @@ class InMemoryStore:
         return sorted(
             (b for b in self._bindings.values() if b.tenant_id == tenant_id),
             key=lambda b: b.created_at,
+        )
+
+    # ---- model bindings
+
+    async def upsert_model_binding(self, binding: StoredModelBinding) -> None:
+        self._model_bindings[_model_binding_key(binding)] = binding
+
+    async def list_model_bindings(self, tenant_id: TenantId) -> list[StoredModelBinding]:
+        return sorted(
+            (m for m in self._model_bindings.values() if m.binding.tenant_id == tenant_id),
+            key=lambda m: m.created_at,
         )

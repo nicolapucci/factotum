@@ -318,3 +318,71 @@ class TestBindingASkill:
             )
 
         assert (response.status_code, error_code(response)) == (409, "conflict")
+
+
+OLLAMA_CHAT_BODY = {
+    "role": "chat.main",
+    "provider": "ollama",
+    "model": "llama3.1:8b",
+    "base_url": "http://localhost:11434",
+}
+
+
+class TestBindingAModel:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _login(http, USERNAME, PASSWORD)
+
+            response = await http.post("/v1/models", json=OLLAMA_CHAT_BODY, headers=headers)
+
+        assert (response.status_code, error_code(response)) == (403, "password_change_required")
+
+    async def test_a_model_is_bound_and_listed(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+
+            created = await http.post("/v1/models", json=OLLAMA_CHAT_BODY, headers=headers)
+            listed = await http.get("/v1/models", headers=headers)
+
+        assert (created.status_code, created.json()["model"]) == (200, "llama3.1:8b")
+        assert len(listed.json()["bindings"]) == 1
+
+    async def test_binding_the_same_role_again_replaces_it(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            await http.post("/v1/models", json=OLLAMA_CHAT_BODY, headers=headers)
+
+            replaced = await http.post(
+                "/v1/models", json={**OLLAMA_CHAT_BODY, "model": "llama3.1:70b"}, headers=headers
+            )
+            listed = await http.get("/v1/models", headers=headers)
+
+        assert replaced.status_code == 200
+        assert [b["model"] for b in listed.json()["bindings"]] == ["llama3.1:70b"]
+
+    async def test_a_member_may_not_bind_a_model_but_may_list(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            await http.post("/v1/models", json=OLLAMA_CHAT_BODY, headers=headers)
+            await http.post(
+                "/v1/users", json={"username": "member", "password": "x" * 10}, headers=headers
+            )
+            member_headers = await _login(http, "member", "x" * 10)
+
+            refused = await http.post("/v1/models", json=OLLAMA_CHAT_BODY, headers=member_headers)
+            listed = await http.get("/v1/models", headers=member_headers)
+
+        assert (refused.status_code, error_code(refused)) == (403, "policy_violation")
+        assert (listed.status_code, len(listed.json()["bindings"])) == (200, 1)
+
+    async def test_a_hosted_provider_without_a_secret_ref_is_refused(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+
+            response = await http.post(
+                "/v1/models",
+                json={"role": "chat.main", "provider": "openai", "model": "gpt-4o"},
+                headers=headers,
+            )
+
+        assert response.status_code == 422

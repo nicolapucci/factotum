@@ -15,13 +15,16 @@ from factotum.contracts.hub import (
     ChangePasswordRequest,
     CreateBindingRequest,
     CreateExternalDeviceRequest,
+    CreateModelBindingRequest,
     CreateSystemDeviceRequest,
     CreateUserRequest,
     DeviceOwner,
     LoginRequest,
+    ModelBindingOwner,
     PairedDevice,
 )
 from factotum.contracts.identity import Owner, Principal, Role, Subject, SubjectKind
+from factotum.contracts.models import ModelRole, ProviderKind
 from factotum.contracts.testing import make_device_id, make_tenant_id, make_user_id
 from factotum.hub.service import HubService
 from factotum.hub.store.memory import InMemoryStore
@@ -336,3 +339,62 @@ class TestCreateBindingAndListBindings:
 
         with pytest.raises(ConflictError):
             await svc.create_binding(admin, CreateBindingRequest(skill="lamp", device_id=lamp.id))
+
+
+OLLAMA_CHAT = CreateModelBindingRequest(
+    role=ModelRole.CHAT_MAIN,
+    provider=ProviderKind.OLLAMA,
+    model="llama3.1:8b",
+    base_url="http://localhost:11434",
+)
+
+
+class TestUpsertModelBindingAndListModelBindings:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        svc = await bootstrapped()
+        principal = await _admin_principal(svc)
+
+        with pytest.raises(PasswordChangeRequiredError):
+            await svc.upsert_model_binding(principal, OLLAMA_CHAT)
+
+    async def test_a_member_may_not_bind_a_model_but_may_list(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        await svc.upsert_model_binding(admin, OLLAMA_CHAT)
+        member = await _member(svc, admin)
+
+        with pytest.raises(PolicyViolationError):
+            await svc.upsert_model_binding(member, OLLAMA_CHAT)
+        assert len((await svc.list_model_bindings(member)).bindings) == 1
+
+    async def test_a_binding_is_made_and_listed(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        created = await svc.upsert_model_binding(admin, OLLAMA_CHAT)
+
+        assert (created.role, created.model) == (ModelRole.CHAT_MAIN, "llama3.1:8b")
+        assert (await svc.list_model_bindings(admin)).bindings == (created,)
+
+    async def test_binding_the_same_role_again_replaces_it(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        await svc.upsert_model_binding(admin, OLLAMA_CHAT)
+
+        replaced = await svc.upsert_model_binding(
+            admin, OLLAMA_CHAT.model_copy(update={"model": "llama3.1:70b"})
+        )
+
+        listed = (await svc.list_model_bindings(admin)).bindings
+        assert [b.model for b in listed] == ["llama3.1:70b"]
+        assert replaced.model == "llama3.1:70b"
+
+    async def test_a_binding_of_ones_own_belongs_to_the_registering_administrator(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        created = await svc.upsert_model_binding(
+            admin, OLLAMA_CHAT.model_copy(update={"owner": ModelBindingOwner.USER})
+        )
+
+        assert created.owner == Owner.of_subject(admin.acts_as)

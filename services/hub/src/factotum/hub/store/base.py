@@ -1,8 +1,8 @@
 """What the hub keeps, and the interface it is kept behind.
 
-Tenants and their users, their devices (with a system device's credential, as a hash) and the
-bindings of a skill to a device. A tenant's spaces, linked accounts, model bindings and the secrets
-of its skills are later slices of the hub.
+Tenants and their users, their devices (with a system device's credential, as a hash), the bindings
+of a skill to a device, and the bindings of a role to a model. A tenant's spaces, linked accounts
+and the secrets of its skills are later slices of the hub.
 """
 
 from dataclasses import dataclass
@@ -12,6 +12,7 @@ from typing import Protocol
 from factotum.contracts.devices import ExternalDeviceRecord, JsonScalar, SystemDeviceRecord
 from factotum.contracts.identity import Role
 from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
+from factotum.contracts.models import ModelBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,12 @@ class StoredBinding:
     device_id: DeviceId
     params: dict[str, JsonScalar]
     enabled: bool
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoredModelBinding:
+    binding: ModelBinding
     created_at: datetime
 
 
@@ -100,4 +107,15 @@ class HubStore(Protocol):
 
     async def list_bindings(self, tenant_id: TenantId) -> list[StoredBinding]:
         """By when they were made, the earliest first."""
+        ...
+
+    # ---- model bindings
+
+    async def upsert_model_binding(self, binding: StoredModelBinding) -> None:
+        """Replaces whatever the same tenant, owner and role already had, if anything: changing
+        which model serves a role is routine, not a conflict to refuse."""
+        ...
+
+    async def list_model_bindings(self, tenant_id: TenantId) -> list[StoredModelBinding]:
+        """By when they were (last) bound, the earliest first."""
         ...

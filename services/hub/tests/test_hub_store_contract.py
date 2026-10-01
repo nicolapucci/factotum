@@ -10,16 +10,18 @@ from uuid import uuid4
 import pytest
 
 from factotum.contracts.devices import ExternalDeviceRecord, JsonScalar
-from factotum.contracts.identity import Role
+from factotum.contracts.identity import Owner, Role, Subject
 from factotum.contracts.ids import BindingId, DeviceId, TenantId
+from factotum.contracts.models import ModelRole
 from factotum.contracts.testing import (
     make_device_id,
     make_external_device,
+    make_model_binding,
     make_system_device,
     make_tenant_id,
     make_user_id,
 )
-from factotum.hub.store import HubStore, StoredBinding, StoredDevice, StoredUser
+from factotum.hub.store import HubStore, StoredBinding, StoredDevice, StoredModelBinding, StoredUser
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -355,3 +357,79 @@ async def test_listing_another_tenants_bindings_sees_nothing(store: HubStore) ->
     await store.create_binding(_binding(tenant_id, device.record.id))
 
     assert await store.list_bindings(make_tenant_id()) == []
+
+
+def _model_binding(
+    tenant_id: TenantId,
+    *,
+    role: ModelRole = ModelRole.CHAT_MAIN,
+    owner: Owner | None = None,
+    model: str = "llama3.1:8b",
+    created_at: datetime | None = None,
+) -> StoredModelBinding:
+    return StoredModelBinding(
+        binding=make_model_binding(tenant_id=tenant_id, role=role, owner=owner, model=model),
+        created_at=created_at or datetime.now(UTC),
+    )
+
+
+async def test_a_model_binding_is_upserted_and_listed(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    binding = _model_binding(tenant_id)
+
+    await store.upsert_model_binding(binding)
+
+    assert await store.list_model_bindings(tenant_id) == [binding]
+
+
+async def test_binding_the_same_role_again_for_the_same_owner_replaces_it(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    await store.upsert_model_binding(_model_binding(tenant_id, model="llama3.1:8b"))
+
+    await store.upsert_model_binding(_model_binding(tenant_id, model="llama3.1:70b"))
+
+    listed = await store.list_model_bindings(tenant_id)
+    assert [stored.binding.model for stored in listed] == ["llama3.1:70b"]
+
+
+async def test_different_roles_for_the_same_owner_coexist(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    await store.upsert_model_binding(_model_binding(tenant_id, role=ModelRole.CHAT_MAIN))
+
+    await store.upsert_model_binding(_model_binding(tenant_id, role=ModelRole.CHAT_FAST))
+
+    assert len(await store.list_model_bindings(tenant_id)) == 2
+
+
+async def test_the_same_role_for_different_owners_coexists(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    tenant_owner = Owner.of_subject(Subject.tenant(tenant_id))
+    user_owner = Owner.of_subject(Subject.user(make_user_id()))
+    await store.upsert_model_binding(_model_binding(tenant_id, owner=tenant_owner))
+
+    await store.upsert_model_binding(_model_binding(tenant_id, owner=user_owner))
+
+    assert len(await store.list_model_bindings(tenant_id)) == 2
+
+
+async def test_model_bindings_are_listed_earliest_first(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    first = _model_binding(
+        tenant_id, role=ModelRole.CHAT_MAIN, created_at=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    await store.upsert_model_binding(first)
+    second = _model_binding(
+        tenant_id, role=ModelRole.CHAT_FAST, created_at=datetime(2026, 1, 2, tzinfo=UTC)
+    )
+    await store.upsert_model_binding(second)
+
+    listed = await store.list_model_bindings(tenant_id)
+
+    assert [stored.binding.role for stored in listed] == [ModelRole.CHAT_MAIN, ModelRole.CHAT_FAST]
+
+
+async def test_listing_another_tenants_model_bindings_sees_nothing(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    await store.upsert_model_binding(_model_binding(tenant_id))
+
+    assert await store.list_model_bindings(make_tenant_id()) == []

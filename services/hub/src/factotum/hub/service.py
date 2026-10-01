@@ -1,8 +1,9 @@
-"""Logging in, changing a password, the users of a tenant, its devices and the skills bound to them.
+"""Logging in, changing a password, the users of a tenant, its devices, the skills bound to them,
+and the models bound to a role.
 
-A tenant's spaces, linked accounts, model bindings and the secrets of its skills are later slices.
-A single tenant is created, with its administrator, the first time the hub starts (single-tenant
-mode only); nothing here makes a second one.
+A tenant's spaces, linked accounts and the secrets of its skills are later slices. A single tenant
+is created, with its administrator, the first time the hub starts (single-tenant mode only); nothing
+here makes a second one.
 """
 
 import logging
@@ -31,20 +32,31 @@ from factotum.contracts.hub import (
     ChangePasswordRequest,
     CreateBindingRequest,
     CreateExternalDeviceRequest,
+    CreateModelBindingRequest,
     CreateSystemDeviceRequest,
     CreateUserRequest,
     DeviceList,
     DeviceOwner,
     LoginRequest,
     LoginResult,
+    ModelBindingList,
+    ModelBindingOwner,
+    ModelBindingView,
     PairedDevice,
     SystemDeviceWithCredential,
     UserList,
     UserView,
 )
 from factotum.contracts.identity import Owner, Principal, Role, Subject, SubjectKind
-from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
-from factotum.hub.store.base import HubStore, StoredBinding, StoredDevice, StoredUser
+from factotum.contracts.ids import BindingId, DeviceId, ModelBindingId, TenantId, UserId
+from factotum.contracts.models import ModelBinding
+from factotum.hub.store.base import (
+    HubStore,
+    StoredBinding,
+    StoredDevice,
+    StoredModelBinding,
+    StoredUser,
+)
 
 logger = logging.getLogger("factotum.hub")
 
@@ -88,6 +100,27 @@ def _binding_view(binding: StoredBinding) -> BindingView:
         device_id=binding.device_id,
         params=binding.params,
         enabled=binding.enabled,
+    )
+
+
+def _model_binding_owner_of(principal: Principal, choice: ModelBindingOwner) -> Owner:
+    """Only called after ``_admin``, which has already made sure ``principal`` is a person: bringing
+    one's own model is always that person's, never bound on a member's behalf."""
+    if choice is ModelBindingOwner.TENANT:
+        return Owner.of_subject(Subject.tenant(principal.tenant_id))
+    return Owner.of_subject(principal.acts_as)
+
+
+def _model_binding_view(binding: ModelBinding) -> ModelBindingView:
+    return ModelBindingView(
+        id=binding.id,
+        role=binding.role,
+        provider=binding.provider,
+        model=binding.model,
+        base_url=binding.base_url,
+        owner=binding.owner,
+        secret_ref=binding.secret_ref,
+        options=binding.options,
     )
 
 
@@ -250,6 +283,36 @@ class HubService:
         """Every binding of the caller's tenant, the same way as ``list_devices``."""
         bindings = await self._store.list_bindings(principal.tenant_id)
         return BindingList(bindings=tuple(_binding_view(binding) for binding in bindings))
+
+    async def upsert_model_binding(
+        self, principal: Principal, body: CreateModelBindingRequest
+    ) -> ModelBindingView:
+        """Binds a role to a model, for the tenant or for the caller's own use, replacing whatever
+        that owner already had bound to the role: changing a model is routine, not a conflict."""
+        await self._admin(principal)
+        binding = ModelBinding(
+            id=ModelBindingId(uuid4()),
+            tenant_id=principal.tenant_id,
+            owner=_model_binding_owner_of(principal, body.owner),
+            role=body.role,
+            provider=body.provider,
+            model=body.model,
+            base_url=body.base_url,
+            secret_ref=body.secret_ref,
+            options=body.options,
+        )
+        await self._store.upsert_model_binding(
+            StoredModelBinding(binding=binding, created_at=datetime.now(UTC))
+        )
+        return _model_binding_view(binding)
+
+    async def list_model_bindings(self, principal: Principal) -> ModelBindingList:
+        """Every model binding of the caller's tenant: the gateway reads this once, the same way the
+        edge and the actions service read devices and bindings."""
+        bindings = await self._store.list_model_bindings(principal.tenant_id)
+        return ModelBindingList(
+            bindings=tuple(_model_binding_view(stored.binding) for stored in bindings)
+        )
 
     async def _user_of(self, principal: Principal) -> StoredUser:
         if principal.acts_as.kind is not SubjectKind.USER:
