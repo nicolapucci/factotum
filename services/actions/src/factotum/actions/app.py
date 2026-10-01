@@ -22,7 +22,12 @@ from factotum.actions.api import Operations, create_app
 from factotum.actions.audit import AuditReader
 from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import ConfirmationReader
-from factotum.actions.directory import DeviceDirectory, FileDeviceDirectory, load_directory
+from factotum.actions.directory import (
+    DeviceDirectory,
+    FileDeviceDirectory,
+    HubDeviceDirectory,
+    load_directory,
+)
 from factotum.actions.edge_client import EdgeDispatcher
 from factotum.actions.execution import (
     CommandDispatcher,
@@ -40,6 +45,7 @@ from factotum.actions.settings import ActionsSettings
 from factotum.actions.store.postgres import PostgresStore, prepare
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
 from factotum.common.hubauth import authenticator_for, principal_delegation_for
+from factotum.contracts.identity import SINGLE_TENANT_ID
 from factotum.db.pool import Database
 from factotum.devices.home import Home
 from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder
@@ -51,7 +57,7 @@ RUNNER_MARGIN_S = 5.0
 service is the one that says a skill was too slow."""
 
 
-def _directory(settings: ActionsSettings) -> DeviceDirectory:
+def _file_directory(settings: ActionsSettings) -> DeviceDirectory:
     if settings.actions_devices_file is None:
         logger.warning("no file of devices is set: there are no devices to act on")
         return FileDeviceDirectory(settings, Home())
@@ -74,13 +80,22 @@ def build_app(settings: ActionsSettings) -> FastAPI:
 
     Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
     otherwise the development authenticator, which refuses to exist outside development and test,
-    so without one in production this raises and the service does not start. The devices are still
-    only a file (the hub registers them in slice 7b).
+    so without one in production this raises and the service does not start. The directory of
+    devices follows the same switch: the hub's, fetched once in the lifespan, once
+    ``FACTOTUM_ACTIONS_HUB_URL`` is also set; otherwise still a file, for development.
     """
     authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     delegation = DevDelegation(settings)
     principals = principal_delegation_for(settings)
-    directory = _directory(settings)
+    hub_client: httpx.AsyncClient | None = None
+    hub_directory: HubDeviceDirectory | None = None
+    directory: DeviceDirectory
+    if settings.hub_secret_bytes is not None and settings.actions_hub_url is not None:
+        hub_client = httpx.AsyncClient(base_url=str(settings.actions_hub_url))
+        hub_directory = HubDeviceDirectory(hub_client, principals, SINGLE_TENANT_ID)
+        directory = hub_directory
+    else:
+        directory = _file_directory(settings)
     secrets = _secrets(settings)
     if settings.actions_runner_url is None:
         logger.warning("no runner is set: skills are not run, they answer with what they would run")
@@ -103,6 +118,9 @@ def build_app(settings: ActionsSettings) -> FastAPI:
             await prepare(database)
             store = PostgresStore(database)
             async with AsyncExitStack() as clients:
+                if hub_client is not None and hub_directory is not None:
+                    clients.push_async_callback(hub_client.aclose)
+                    await hub_directory.reload()
                 gateway = await clients.enter_async_context(
                     httpx.AsyncClient(
                         base_url=str(settings.actions_gateway_url), timeout=model_timeout

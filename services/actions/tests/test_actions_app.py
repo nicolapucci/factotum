@@ -19,6 +19,7 @@ from factotum.actions.settings import ActionsSettings
 from factotum.actions.testing import DIMENSIONS, embed_words
 from factotum.common.config import Environment
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, dev_headers
+from factotum.common.tokens import MIN_SECRET_BYTES
 from factotum.contracts.errors import AuthError
 from factotum.contracts.runner import JobResult
 from factotum.db.settings import DatabaseSettings
@@ -27,6 +28,8 @@ from factotum.devices.home import parse_home
 GATEWAY = "http://gateway.test"
 RUNNER = "http://runner.test"
 EDGE = "http://edge.test"
+HUB = "http://hub.test"
+SECRET = "s" * MIN_SECRET_BYTES
 EXAMPLES = Path(__file__).resolve().parents[3] / "skills" / "examples"
 SECRETS = """\
 tenant:
@@ -118,6 +121,37 @@ class TestStartingUp:
     def test_it_does_not_start_in_production(self) -> None:
         with pytest.raises(AuthError, match="disabled"):
             build_app(ActionsSettings(_env_file=None, environment=Environment.PRODUCTION))
+
+    def test_the_hub_spares_it_the_file_of_devices_error_in_production(self) -> None:
+        # Configuring the hub does not yet start the service in production: the model gateway is
+        # still asked for with the development delegation (the owner of a model binding is not
+        # yet proven to it by a hub token). What this confirms is narrower: the earlier failure is
+        # no longer about the file of devices, which the hub now spares it from reading.
+        with pytest.raises(AuthError, match="development delegation"):
+            build_app(
+                ActionsSettings(
+                    _env_file=None,
+                    environment=Environment.PRODUCTION,
+                    hub_token_secret=SECRET,  # type: ignore[arg-type]
+                    actions_hub_url=HUB,  # type: ignore[arg-type]
+                )
+            )
+
+    def test_it_does_not_touch_the_file_of_devices_once_the_hub_is_configured(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="factotum.actions")
+
+        build_app(
+            ActionsSettings(
+                _env_file=None,
+                environment=Environment.TEST,
+                hub_token_secret=SECRET,  # type: ignore[arg-type]
+                actions_hub_url=HUB,  # type: ignore[arg-type]
+            )
+        )
+
+        assert "no file of devices is set" not in caplog.text
 
     @pytest.mark.parametrize("environment", [Environment.DEVELOPMENT, Environment.TEST])
     def test_it_starts_in_development_and_in_tests(self, environment: Environment) -> None:
