@@ -1,0 +1,105 @@
+"""The HTTP interface of the hub.
+
+``POST /v1/auth/login`` takes no authenticated caller: it is how one is made. Everything else is
+under ``/v1`` and needs one — a token this very hub minted, since the hub is the root of trust and
+there is nothing else to delegate the check to.
+"""
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.types import Lifespan
+
+from factotum.contracts.hub import (
+    ChangePasswordRequest,
+    CreateUserRequest,
+    LoginRequest,
+    LoginResult,
+    UserList,
+    UserView,
+)
+from factotum.hub.service import HubService
+from factotum.web import Authenticator, Caller, create_base_app
+
+MAX_BODY_BYTES = 16 * 1024
+"""A login, a password change or a new user: never more than a few short fields."""
+
+
+@dataclass(frozen=True, slots=True)
+class Operations:
+    """What the service does."""
+
+    service: HubService
+
+
+def _operations(request: Request) -> Operations:
+    operations: Operations = request.app.state.operations
+    return operations
+
+
+Ops = Annotated[Operations, Depends(_operations)]
+
+
+def create_app(
+    authenticator: Authenticator,
+    *,
+    operations: Operations | None = None,
+    docs: bool = False,
+    lifespan: Lifespan[FastAPI] | None = None,
+    ready: Callable[[], Awaitable[bool]] | None = None,
+) -> FastAPI:
+    """The hub as a web application. It is given the operations to serve (or, when it is put
+    together while it starts, ``lifespan`` sets ``app.state.operations``) and, for ``/readyz``, a
+    way to tell whether what it depends on answers."""
+    app = create_base_app(
+        "Factotum hub", authenticator, docs=docs, max_body_bytes=MAX_BODY_BYTES, lifespan=lifespan
+    )
+    app.state.operations = operations
+    app.state.ready = ready
+
+    @app.get("/healthz", summary="Liveness")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/readyz", summary="Readiness", response_model=None)
+    async def readyz(request: Request) -> Response:
+        check: Callable[[], Awaitable[bool]] | None = request.app.state.ready
+        answering = True if check is None else await check()
+        return JSONResponse(
+            {"status": "ok" if answering else "unavailable"}, status_code=200 if answering else 503
+        )
+
+    @app.post("/v1/auth/login", summary="Log in with a username and a password")
+    async def login(body: LoginRequest, ops: Ops) -> LoginResult:
+        return await ops.service.login(body)
+
+    @app.get("/v1/me", summary="The user of the caller's own token")
+    async def me(principal: Caller, ops: Ops) -> UserView:
+        return await ops.service.me(principal)
+
+    @app.post(
+        "/v1/auth/change-password",
+        status_code=204,
+        response_class=Response,
+        summary="Change the caller's own password",
+    )
+    async def change_password(body: ChangePasswordRequest, principal: Caller, ops: Ops) -> Response:
+        await ops.service.change_password(principal, body)
+        return Response(status_code=204)
+
+    @app.post(
+        "/v1/users",
+        status_code=201,
+        summary="Add a user to the caller's tenant (an administrator only)",
+    )
+    async def create_user(body: CreateUserRequest, principal: Caller, ops: Ops) -> UserView:
+        return await ops.service.create_user(principal, body)
+
+    @app.get("/v1/users", summary="The users of the caller's tenant (an administrator only)")
+    async def list_users(principal: Caller, ops: Ops) -> UserList:
+        return await ops.service.list_users(principal)
+
+    return app

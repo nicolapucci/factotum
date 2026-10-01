@@ -31,6 +31,13 @@ class PolicyViolationError(FactotumError):
     code = "policy_violation"
 
 
+class PasswordChangeRequiredError(FactotumError):
+    """The caller is authenticated, but the hub refuses everything but changing the password of a
+    bootstrap account until it has been changed."""
+
+    code = "password_change_required"
+
+
 class UrlNotAllowedError(FactotumError):
     """An outbound URL is refused by the SSRF guard."""
 

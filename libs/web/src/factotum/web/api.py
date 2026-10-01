@@ -40,6 +40,7 @@ from factotum.contracts.errors import (
     InvalidStructuredOutputError,
     KnowledgeUnavailableError,
     NotFoundError,
+    PasswordChangeRequiredError,
     PolicyViolationError,
     ProviderAuthError,
     ProviderError,
@@ -63,6 +64,7 @@ DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
 _STATUS: dict[type, int] = {
     AuthError: 401,
     PolicyViolationError: 403,
+    PasswordChangeRequiredError: 403,
     BindingNotFoundError: 404,
     NotFoundError: 404,
     CollectionNotFoundError: 404,

@@ -1,0 +1,27 @@
+[project]
+name = "factotum-hub"
+version = "0.0.0"
+description = "The Factotum hub: tenants, users and devices, and the tokens that prove who a request is for."
+requires-python = ">=3.13"
+dependencies = [
+  "factotum-contracts",
+  "factotum-common",
+  "factotum-db",
+  "factotum-web",
+  "fastapi>=0.115",
+  "pydantic>=2.11",
+  "uvicorn>=0.32",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/factotum"]
+
+[tool.uv.sources]
+factotum-contracts = { workspace = true }
+factotum-common = { workspace = true }
+factotum-db = { workspace = true }
+factotum-web = { workspace = true }
