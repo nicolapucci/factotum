@@ -347,7 +347,7 @@ using the index (now analyzed after the index is made); and the two points above
 ## Known limits
 
 * Scanned pages need OCR, which is not done. The message says so.
-* Until the hub issues service credentials (slice 7), the service acts for a collection's owner through
+* Until the hub issues service credentials (slice 7c), the service acts for a collection's owner through
   the gateway's development authentication (a header), and, like the gateway, refuses to start in
   production.
 * Query-side prefixes some embedding models want (`search_query:`) are not modelled: the gateway does

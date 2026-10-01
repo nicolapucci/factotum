@@ -20,7 +20,7 @@ may have and *what* to do with what it printed is the actions service's, on its 
 running scripts through the one and giving devices commands through the edge, and secrets for
 skills (a file, for development). *Since* (slice 6): a skill that is only instructions is run by
 this same runner with `executor.py`, the program that does what a plan says, as the one file of the
-job ([`skills.md`](skills.md)). *Not yet*: linked accounts (the hub, slice 7), any language but Python,
+job ([`skills.md`](skills.md)). *Not yet*: linked accounts (the hub, slice 7d), any language but Python,
 a stronger sandbox for a cloud (gVisor or Kata, ADR 0009).
 
 ## A run
@@ -169,7 +169,7 @@ grant) out of what the script wrote before it is answered, so a traceback that p
 token in it does not leak it. They are in no log, reply or audit record; an error names a secret
 (`the secret HA_TOKEN is not set`) and never says a value.
 
-Until the hub keeps them (slice 7) they are in a file for development,
+Until the hub keeps them (slice 7d) they are in a file for development,
 [`config/secrets.example.yaml`](../config/secrets.example.yaml) (copy it to `config/secrets.dev.yaml`,
 which git ignores): a `tenant` section, for the skills of the household, and a `user` section, for the
 development user's. The service refuses to read it outside development and tests. A skill that needs
@@ -208,8 +208,9 @@ What goes wrong, and what the person hears (the trail says which):
 | `POST /v1/jobs` | run a job (up to 8 MB) and answer what it did; a script that failed is an answer, what is an error is that nothing could run it (`503`) |
 | `GET /healthz`, `GET /readyz` | liveness, and readiness: the engine answers and has the image |
 
-The caller is authenticated like every service (development headers until the hub). The runner
-**does not start outside development and tests** until the hub issues real credentials.
+The caller is authenticated like every service: the hub's token once a secret is configured
+(`FACTOTUM_HUB_TOKEN_SECRET`, see [`hub.md`](hub.md)), development headers otherwise. The runner
+**does not start outside development and tests** without one set.
 
 ## Deploying it
 
@@ -286,11 +287,12 @@ is not there, and the service says so when it starts.
 * **A run costs a container**: about a second and a half where nothing else is going on (below). A
   pool of warm containers would take most of it and would break the rule that nothing is left between
   two runs, so it is not done.
-* **Who may ask the runner is the authentication of the service, which is a development one for
-  now**: anything that can reach it can run a job and *choose its hosts* (the runner signs the grant
-  for whatever the job lists), which is why it listens on loopback, does not start outside
-  development and tests, and waits for the hub to issue the credentials that say which service may
-  ask (slice 7).
+* **Who may ask the runner is any valid token, not only the actions service's own.** A token now
+  proves a tenant, a device and who it acts for (the hub's, once a secret is configured; development
+  headers otherwise), but nothing yet distinguishes one minted for the actions service from one
+  minted for a person or a device: whoever holds a valid one can run a job and *choose its hosts*
+  (the runner signs the grant for whatever the job lists). A service's own identity, separate from a
+  tenant's, is not modelled yet, which is also why it listens on loopback.
 * **`restart-router` still cannot be run**: it needs an approval (ADR 0007), and there is nobody to
   ask until the hub.
 

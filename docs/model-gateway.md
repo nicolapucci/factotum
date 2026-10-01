@@ -44,7 +44,7 @@ Binding options (all optional, all with prudent defaults):
 
 ## Configuring bindings
 
-Until the hub manages them (slice 7), bindings come from a YAML file for the development tenant:
+Until the hub manages them (slice 7c), bindings come from a YAML file for the development tenant:
 `FACTOTUM_GATEWAY_BINDINGS_FILE=config/bindings.dev.yaml`. Start from
 [`config/bindings.example.yaml`](../config/bindings.example.yaml), which is tested to be valid.
 **A binding never contains a key**: `secret_ref: env:OPENAI_API_KEY` names an environment variable,
@@ -172,9 +172,10 @@ closed to make room. The service closes them all when it stops (`ModelGateway.ac
 
 ## The HTTP API
 
-For the other services, never for the outside world. Authentication is the development
-authenticator for now (`x-factotum-dev-subject: user|tenant`), so **the gateway refuses to start
-outside `FACTOTUM_ENVIRONMENT=development` or `test`** until the hub issues real credentials.
+For the other services, never for the outside world. Authentication is the hub's once a token secret
+is configured (`FACTOTUM_HUB_TOKEN_SECRET`, see [`hub.md`](hub.md)); otherwise the development
+authenticator (`x-factotum-dev-subject: user|tenant`), so **the gateway refuses to start outside
+`FACTOTUM_ENVIRONMENT=development` or `test`** without one set.
 
 | Route | Body → answer |
 | --- | --- |

@@ -18,7 +18,8 @@ in the isolated `runner`, [`runner.md`](runner.md)), **doing what a skill answer
 checks it, and the platform runs it in the sandbox ([`skills.md`](skills.md), [ADR
 0016](decisions/0016-skills-that-are-instructions-a-model-writes-a-plan-the-code-decides.md)). *Not
 yet*: approvals have no way to be asked (ADR 0007), a skill that needs a linked account does not run,
-and the hub (slice 7) registers devices, keeps secrets and issues credentials.
+and the hub registers devices (slice 7b) and keeps secrets (slice 7d); it already issues the tokens
+every service checks (slice 7a, [`hub.md`](hub.md)).
 
 ## A message
 
@@ -277,7 +278,8 @@ wrote to ask for a yes, are said as they are.
 
 ## The HTTP API
 
-Everything is under `/v1` and needs an authenticated caller (development headers until the hub).
+Everything is under `/v1` and needs an authenticated caller: the hub's token once
+`FACTOTUM_HUB_TOKEN_SECRET` is set ([`hub.md`](hub.md)), development headers otherwise.
 
 | Route | What |
 | --- | --- |
@@ -645,7 +647,8 @@ measured in `skills.md`.
 * **No approvals**: a skill that needs one is refused until there is a way to ask (ADR 0007). The
   router example cannot be restarted until then.
 * **No linked accounts**: a skill that declares one fails and says so, until the hub links them
-  (slice 7). Secrets are in a file for development, refused anywhere else, until the hub keeps them.
+  (slice 7d). Secrets are in a file for development, refused anywhere else, until the hub keeps them
+  (slice 7d).
 * **Scripts are Python and the standard library**, in a container of the level of isolation that
   ADR 0015 describes: fine for code the household wrote or trusts, not for a stranger's.
 * **A skill installed as text has no scripts**, only instructions, which a model turns into a plan.
@@ -676,4 +679,4 @@ measured in `skills.md`.
   whichever the model picks, and the other is lost.
 * **The audit trail can be a record short** if it cannot be written after something was done; it
   says so in the log.
-* **The devices are a file** until the hub registers them.
+* **The devices are a file** until the hub registers them (slice 7b).

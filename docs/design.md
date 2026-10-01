@@ -1,14 +1,15 @@
 # Factotum: design (v1)
 
-Status: **Slices 0 to 5b are implemented**: the foundations and shared contracts, the
-`model-gateway`, `knowledge`, `conversation`, `edge`, `actions`, `runner` and `egress` services, and a
-terminal client that is a device. The other services are not started yet, and a skill that needs a
-linked account or an approval does not run until the hub (slice 7). Sections say whether something is
-*implemented* or *planned*. The reasons behind the biggest decisions live in
-[`decisions/`](decisions/README.md); the services have their own documents,
-[`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
-[`conversation.md`](conversation.md), [`edge.md`](edge.md), [`actions.md`](actions.md) and
-[`runner.md`](runner.md).
+Status: **Slices 0 to 6 are implemented, and slice 7a**: the foundations and shared contracts, the
+`model-gateway`, `knowledge`, `conversation`, `edge`, `actions`, `runner`, `egress` and `hub`
+services, and a terminal client that is a device. Of the hub, only its tenant, its users and the
+tokens every service checks are there: a device's pairing, its spaces, linked accounts, model
+bindings and skill secrets are slices 7b to 7d, and a skill that needs a linked account or an
+approval does not run until they are. Sections say whether something is *implemented* or *planned*.
+The reasons behind the biggest decisions live in [`decisions/`](decisions/README.md); the services
+have their own documents, [`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
+[`conversation.md`](conversation.md), [`edge.md`](edge.md), [`actions.md`](actions.md),
+[`runner.md`](runner.md) and [`hub.md`](hub.md).
 
 ## 1. What Factotum is
 
@@ -68,7 +69,7 @@ flowchart TD
 | `actions` (*implemented*) | Skills (validation, versions, matching by meaning), the catalog and its review, the planner and the checks on what it says, permissions and grants, the policy decision, confirmations, approvals, audit, the secrets a skill is given and whose they are, running a skill through the runner and giving a device its commands through the edge | how a model was chosen; how a container is made |
 | `runner` (*implemented*) | Runs the script of a skill in a container of its own, made for the run and thrown away after it; the only service given the socket of the engine | skills, tenants, devices, models |
 | `egress` (*implemented*) | The only way out of a script's container: lets a run reach the hosts its signed grant lists, and checks every address they resolve to | what a skill is, and anything but the key it shares with the runner |
-| `hub` | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
+| `hub` (*implemented* for tenants, users and tokens) | Tenants, users, devices and their pairing, spaces, linked accounts, provider bindings and skill secrets; backend of the web app; issues tokens | document content, plaintext keys |
 
 Infrastructure: Postgres with pgvector (one schema per service; *implemented in compose*), SearXNG
 or a keyed search API for the web.
@@ -80,7 +81,8 @@ or a keyed search API for the web.
 
 - A **tenant** is a household or an organization: the isolation boundary. A **user** is a person in
   exactly one tenant, with the role `admin` or `member`. A tenant is created together with its admin
-  and always has at least one (enforced by the hub, planned).
+  and always has at least one: *implemented* for `single_tenant` (the hub makes one at its first
+  start, slice 7a); a `multi_tenant` deployment making its own is still planned.
 - A **subject** is whoever a device acts for: a user *or the tenant itself*. The tenant has the same
   standing as a user: it can own skills, accounts, collections and model bindings, and permissions
   follow the same procedure for both.
@@ -163,8 +165,9 @@ shown, with its sources, by a screen), so the first sound is heard after the fir
 connection answers one utterance at a time and speaking over an answer interrupts it; the last
 connection of a device wins. Commands go over the same connection and come back with a result
 (`ok`, `failed`, `unsupported`, `timeout`, `offline`); inside the platform a connected device is a
-`SystemDevice`. Until the hub exists devices are registered in a YAML file and the edge only runs in
-development. `factotum-terminal` is a device in a terminal, with a profile for each kind of device.
+`SystemDevice`. Until the hub registers them (slice 7b) devices are registered in a YAML file and the
+edge only runs in development. `factotum-terminal` is a device in a terminal, with a profile for each
+kind of device.
 
 **External devices** (lights, a TV...) are registered by hand and have no built-in methods:
 everything they can do is supplied by skills the user explicitly binds to them. A **binding**
@@ -181,7 +184,7 @@ device defaults to `max_effect = reversible`; the tenant admin can raise it.
 [`skills.md`](skills.md)): the manifest (`factotum.contracts.skills`), loading and versioning, the
 catalog with review and enabling, matching by meaning, the planner and the checks on it, the decision
 and the confirmation, running a script in an isolated container and giving a device the commands it
-answers with, secrets for skills, and instructions mode. *Planned*: linked accounts (slice 7).
+answers with, secrets for skills, and instructions mode. *Planned*: linked accounts (slice 7d).
 
 A skill teaches Factotum to do something. It is a folder with a `SKILL.md` (YAML frontmatter plus
 markdown) and, optionally, scripts. The frontmatter is validated as a `SkillManifest`.
@@ -249,7 +252,7 @@ Markdown instructions for the model, or notes for humans.
 *Implemented* for chat and embeddings, in `services/model_gateway`: how it works, how to configure
 it and what each provider needs are in [`model-gateway.md`](model-gateway.md). What follows is the
 design it was built from. *Planned* still: speech, reranking and web search roles, encrypted secrets
-at rest and bindings managed by the hub.
+at rest and bindings managed by the hub (slice 7c).
 
 - Services ask for a **role**, never a model: `chat.main`, `chat.fast`, `embedding`, `stt`, `tts`,
   `rerank`, `web_search`. Each user (or the tenant) binds a role to a **binding**: provider kind,
@@ -356,7 +359,10 @@ answer and other things than actions, voice.
 | 5a | `actions`: skills, permissions, confirmations, approvals, audit (with a fake runner), asked first by the conversation service | done |
 | 5b | `runner` (a container for each run) and `egress` (a proxy with a signed grant), device command dispatch through the edge, secrets for skills | done |
 | 6 | Instructions-mode skills: a plan that a model writes, code that checks it, the sandbox that runs it | done |
-| 7 | `hub` | |
+| 7a | `hub`: a tenant and its administrator, logging in, and the signed tokens every service checks | done |
+| 7b | `hub`: a device's pairing, spaces, the external devices a skill is bound to | |
+| 7c | `hub`: model bindings, encrypted at rest | |
+| 7d | `hub`: skill secrets and linked accounts | |
 | 8 | Voice and the Raspberry Pi client | |
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |

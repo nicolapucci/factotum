@@ -5,7 +5,9 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 
 > Status: foundations (Slice 0), the model gateway (Slice 1), the knowledge service (Slice 2), the
 > conversation service (Slice 3), the edge with a terminal client (Slice 4), actions (Slice 5a),
-> the runner that runs them (Slice 5b) and skills that are only instructions (Slice 6) are done. The gateway talks to OpenAI, Anthropic, Gemini, Ollama and any
+> the runner that runs them (Slice 5b), skills that are only instructions (Slice 6), and the hub's
+> tenant, its users and the tokens every service checks (Slice 7a) are done. The gateway talks to
+> OpenAI, Anthropic, Gemini, Ollama and any
 > OpenAI-compatible server behind one API; the knowledge service reads your documents (text,
 > Markdown, HTML, PDF, Word) and answers with the passages that answer a question, by meaning and by
 > words; the conversation service answers a message from them, streamed, without carrying the
@@ -15,8 +17,8 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 > which skill does it and whether this device may have it done, asks for a yes when it must, runs the
 > skill (its script in a container of its own, that reaches only the hosts it was granted; or, for a
 > skill that is only words, a plan that a model writes and that code checks before the same container
-> runs it) and has a device do what it answers with, and keeps a trail of it. The other services are
-> not built yet. See
+> runs it) and has a device do what it answers with, and keeps a trail of it. A device's pairing, model
+> bindings, skill secrets and linked accounts, voice, and the web app are not built yet. See
 > the roadmap in [`docs/design.md`](docs/design.md).
 
 ## Principles
@@ -47,6 +49,7 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 | [`docs/actions.md`](docs/actions.md) | The actions service: skills, choosing one, deciding, confirmations and approvals, running them, the audit trail, API, what was measured |
 | [`docs/skills.md`](docs/skills.md) | Writing skills: the `SKILL.md`, scripts, and instructions that a model turns into a plan (the language of a plan, what is checked, what a small model does with it) |
 | [`docs/runner.md`](docs/runner.md) | The runner and the egress proxy: a container for each run, the grant that says where it may go, secrets, how it is deployed and tested, what was measured |
+| [`docs/hub.md`](docs/hub.md) | The hub: a tenant and its administrator, logging in, the tokens every service checks, API |
 | [`docs/decisions/`](docs/decisions/README.md) | Why the big decisions were taken |
 | [`docs/development.md`](docs/development.md) | Setup, the checks, layout, conventions |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreements for AI-assisted sessions |

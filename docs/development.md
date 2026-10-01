@@ -32,13 +32,14 @@ pre-push` (ruff and mypy on commit, the unit tests on push).
 
 ```
 libs/contracts/   pydantic contracts shared by every service: the single source of truth
-libs/common/      authorization, redaction and logging, settings, the SSRF guard, development auth
+libs/common/      authorization, redaction and logging, settings, the SSRF guard, development auth,
+                  and the hub's tokens and passwords, used by every service that checks one
 libs/devices/     the SystemDevice interface, a fake for tests, and the file of devices of a home (development)
 skills/           example skills (folders with a SKILL.md and their scripts)
 libs/web/         what the HTTP interfaces share: errors, authentication, body limits
 libs/db/          the Postgres pool, migrations and the harness for tests against a real database
 libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
-services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions, runner, egress)
+services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions, runner, egress, hub)
 clients/          the devices that talk to the edge (so far: terminal, a device in a terminal)
 config/           example configuration, such as the model bindings
 docs/             design.md, the decision records, one document per service
@@ -138,6 +139,21 @@ program that runs the plans of skills that are only instructions
 (`services/actions/tests/test_actions_executor_sandbox.py`); how to write such a skill, and what a
 small model makes of it, is in [`skills.md`](skills.md), and the live test that measures it is
 `FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s -k live_instructions`.
+
+## Trying the hub
+
+The hub needs a token secret of its own in every environment, including development: without one it
+does not start. [`hub.md`](hub.md#trying-it) has the commands (logging in as the administrator that
+is made at the first start, changing its password, adding a user).
+
+```bash
+FACTOTUM_HUB_TOKEN_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(32))") \
+FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_ENVIRONMENT=development \
+    docker compose --profile services up -d --build hub --wait
+```
+
+Giving the same secret to the other services (above) lets a token from here authenticate a call to
+any of them, in place of the development headers.
 
 ## Database
 

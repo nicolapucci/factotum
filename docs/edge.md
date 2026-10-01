@@ -12,7 +12,7 @@ API, a container image, a terminal client that is a device (`factotum-terminal`)
 `actions` service giving a device the commands a skill answers with, through the endpoint below, once
 it has decided that the device may have something done ([`actions.md`](actions.md)). *Not yet*: audio
 (voice is slice 8: the protocol carries text today) and devices registered and paired by the hub
-(slice 7).
+(slice 7b).
 
 The reasons behind the design are in
 [ADR 0013](decisions/0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md).
@@ -307,11 +307,12 @@ the conversation service drops from the citations but a screen shows as written 
 
 ## Known limits
 
-- **Development only.** The devices come from a file and the edge acts for a device towards the
-  conversation service by headers that only the development authentication reads. The hub (slice
-  7) registers and pairs devices, keeps only hashes of their credentials and issues what the edge
-  presents to the other services; until then the edge only runs with
-  `FACTOTUM_ENVIRONMENT=development`.
+- **Development only.** The devices still come from a file, and a device's own credential (what it
+  presents at `hello`) is only checked against it: the hub (slice 7b) is what will register and pair
+  devices instead, keeping only hashes of their credentials. What the edge presents *to the other
+  services* on a device's behalf is the hub's real, signed token once
+  `FACTOTUM_HUB_TOKEN_SECRET` is set ([`hub.md`](hub.md), slice 7a); without one this is still
+  development headers, and the edge only runs with `FACTOTUM_ENVIRONMENT=development`.
 - **Who may command a device is not decided here.** The command endpoint asks for an authenticated
   caller of the device's tenant and no more: grants, the device's policy (`max_effect`,
   `requires_approval`) and `authorize()` belong to the `actions` service, which decides whether the
