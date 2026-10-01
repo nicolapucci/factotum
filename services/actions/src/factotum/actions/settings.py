@@ -40,18 +40,20 @@ class ActionsSettings(DatabaseSettings):
     itself, for a time of its own (``FACTOTUM_EDGE_COMMAND_TIMEOUT_S``): this is longer."""
 
     actions_secrets_file: Path | None = None
-    """The secrets that skills are given (development only, until the hub keeps them): a file of
-    ``tenant`` and ``user`` secrets, by name. A file that is named and is not there stops the
-    service; without one a skill that needs a secret does not run."""
+    """The secrets that skills are given, for development: a file of ``tenant`` and ``user``
+    secrets, by name. A file that is named and is not there stops the service; without one a skill
+    that needs a secret does not run. Used only until a token secret and the hub's address (below)
+    are also set; otherwise still a file."""
 
     actions_devices_file: Path | None = None
-    """The devices, and which of them each skill drives, for development (until a token secret is
-    configured, below): the file the edge reads too. A file that is named and is not there stops the
-    service; without one there are no devices."""
+    """The devices, and which of them each skill drives, for development: the file the edge reads
+    too. A file that is named and is not there stops the service; without one there are no devices.
+    Used only until a token secret and the hub's address (below) are also set; otherwise still a
+    file."""
 
     actions_hub_url: AnyHttpUrl | None = None
-    """Where the hub is: once a token secret is configured, the devices and bindings it registered
-    for the tenant are fetched from here instead of the file above."""
+    """Where the hub is: once a token secret is configured, the devices, the bindings and the
+    secrets it holds for the tenant are fetched from here instead of the files above."""
 
     actions_skills_dir: Path | None = None
     """A folder of skills (each a folder with a ``SKILL.md`` and its scripts) that is read again on

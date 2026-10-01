@@ -39,7 +39,7 @@ from factotum.actions.instructions.writer import PlanWriter
 from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
 from factotum.actions.runner_client import RemoteRunner
-from factotum.actions.secrets import NoSecrets, SecretResolver, load_secrets
+from factotum.actions.secrets import HubSecretResolver, NoSecrets, SecretResolver, load_secrets
 from factotum.actions.service import ActionService
 from factotum.actions.settings import ActionsSettings
 from factotum.actions.store.postgres import PostgresStore, prepare
@@ -66,7 +66,7 @@ def _file_directory(settings: ActionsSettings) -> DeviceDirectory:
     )
 
 
-def _secrets(settings: ActionsSettings) -> SecretResolver:
+def _file_secrets(settings: ActionsSettings) -> SecretResolver:
     if settings.actions_secrets_file is None:
         logger.warning("no file of secrets is set: a skill that needs a secret will not run")
         return NoSecrets()
@@ -81,23 +81,27 @@ def build_app(settings: ActionsSettings) -> FastAPI:
     Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
     otherwise the development authenticator, which refuses to exist outside development and test,
     so without one in production this raises and the service does not start. Proving an owner to
-    the model gateway follows the same switch. The directory of devices follows it too: the hub's,
-    fetched once in the lifespan, once ``FACTOTUM_ACTIONS_HUB_URL`` is also set; otherwise still a
-    file, for development.
+    the model gateway follows the same switch. The directory of devices and the secrets a skill is
+    given follow it too: the hub's, fetched once in the lifespan, once ``FACTOTUM_ACTIONS_HUB_URL``
+    is also set; otherwise still a file, for development.
     """
     authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     delegation = delegation_for(settings, SINGLE_TENANT_ID)
     principals = principal_delegation_for(settings)
     hub_client: httpx.AsyncClient | None = None
     hub_directory: HubDeviceDirectory | None = None
+    hub_secrets: HubSecretResolver | None = None
     directory: DeviceDirectory
+    secrets: SecretResolver
     if settings.hub_secret_bytes is not None and settings.actions_hub_url is not None:
         hub_client = httpx.AsyncClient(base_url=str(settings.actions_hub_url))
         hub_directory = HubDeviceDirectory(hub_client, principals, SINGLE_TENANT_ID)
+        hub_secrets = HubSecretResolver(hub_client, principals, SINGLE_TENANT_ID)
         directory = hub_directory
+        secrets = hub_secrets
     else:
         directory = _file_directory(settings)
-    secrets = _secrets(settings)
+        secrets = _file_secrets(settings)
     if settings.actions_runner_url is None:
         logger.warning("no runner is set: skills are not run, they answer with what they would run")
     if settings.actions_edge_url is None:
@@ -119,9 +123,12 @@ def build_app(settings: ActionsSettings) -> FastAPI:
             await prepare(database)
             store = PostgresStore(database)
             async with AsyncExitStack() as clients:
-                if hub_client is not None and hub_directory is not None:
+                if hub_client is not None:
                     clients.push_async_callback(hub_client.aclose)
-                    await hub_directory.reload()
+                    if hub_directory is not None:
+                        await hub_directory.reload()
+                    if hub_secrets is not None:
+                        await hub_secrets.reload()
                 gateway = await clients.enter_async_context(
                     httpx.AsyncClient(
                         base_url=str(settings.actions_gateway_url), timeout=model_timeout

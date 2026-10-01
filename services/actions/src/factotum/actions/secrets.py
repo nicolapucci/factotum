@@ -7,21 +7,26 @@ the secrets of its own owner. A skill that a person wrote for themselves that as
 would otherwise be a way to have the tenant's token sent to a host of the person's choosing; with
 the owner in the way, it is refused a token that is not theirs, however it is granted.
 
-Where the values are kept is the hub's business (slice 7). Until then they are in a file, for
-development, which refuses to exist outside development and tests like the other development
-conveniences, and a service that has none gives a skill nothing: one that needs a secret then fails,
-and says which, never what it was.
+Once the hub keeps secrets (slice 7d), ``HubSecretResolver`` fetches its tenant's once, in the
+lifespan, and resolves from what it holds, like a device or a binding. Until a token secret is
+configured this is a file, for development, which refuses to exist outside development and tests
+like the other development conveniences, and a service that has none gives a skill nothing: one
+that needs a secret then fails, and says which, never what it was.
 """
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
+import httpx
 import yaml
 
 from factotum.common.config import Environment, ServiceSettings
+from factotum.common.devauth import PrincipalDelegation
 from factotum.contracts.errors import AuthError, SecretNotFoundError
-from factotum.contracts.identity import Owner, Subject
+from factotum.contracts.hub import SecretList
+from factotum.contracts.identity import Owner, OwnerKind, Principal, Subject
 from factotum.contracts.ids import TenantId, UserId
 from factotum.contracts.skills import is_reserved_env_name
 
@@ -123,3 +128,41 @@ def load_secrets(
         path.read_text(encoding="utf-8"), tenant_id=tenant_id, user_id=user_id, source=path.name
     )
     return FileSecrets(settings, held, tenant_id=tenant_id)
+
+
+class HubSecretResolver:
+    """The secrets of the hub's tenant: empty until ``reload`` is awaited once, in the lifespan,
+    before the service starts serving."""
+
+    def __init__(
+        self, client: httpx.AsyncClient, delegation: PrincipalDelegation, tenant_id: TenantId
+    ) -> None:
+        self._client = client
+        self._delegation = delegation
+        self._tenant_id = tenant_id
+        self._held: dict[tuple[OwnerKind, UUID, str], str] = {}
+
+    async def reload(self) -> None:
+        headers: Mapping[str, str] = self._delegation.headers(Principal.of_tenant(self._tenant_id))
+        response = await self._client.get("/v1/secrets", headers=headers)
+        response.raise_for_status()
+        secrets = SecretList.model_validate_json(response.content)
+        self._held = {
+            (secret.owner.kind, secret.owner.id, secret.name): secret.value
+            for secret in secrets.secrets
+        }
+
+    async def resolve(
+        self, tenant_id: TenantId, owner: Owner, names: Sequence[str]
+    ) -> dict[str, str]:
+        if tenant_id != self._tenant_id:
+            if names:
+                raise SecretNotFoundError(f"the secret {names[0]} is not set")
+            return {}
+        values: dict[str, str] = {}
+        for name in names:
+            key = (owner.kind, owner.id, name)
+            if key not in self._held:
+                raise SecretNotFoundError(f"the secret {name} is not set")
+            values[name] = self._held[key]
+        return values

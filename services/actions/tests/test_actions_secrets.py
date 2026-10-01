@@ -4,12 +4,21 @@ nothing of them ever appears in what is said about them."""
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 
-from factotum.actions.secrets import FileSecrets, NoSecrets, load_secrets, parse_secrets
+from factotum.actions.secrets import (
+    FileSecrets,
+    HubSecretResolver,
+    NoSecrets,
+    load_secrets,
+    parse_secrets,
+)
 from factotum.actions.skills import load_folder
 from factotum.common.config import Environment, ServiceSettings
+from factotum.common.devauth import DevPrincipalDelegation
 from factotum.contracts.errors import AuthError, SecretNotFoundError
+from factotum.contracts.hub import SecretList, SecretView
 from factotum.contracts.identity import Owner, OwnerKind, Subject
 from factotum.contracts.ids import TenantId
 from factotum.contracts.testing import make_tenant_id, make_user_id
@@ -196,3 +205,103 @@ class TestWhereTheyAreKept:
         assert await NoSecrets().resolve(TENANT, OF_THE_TENANT, ()) == {}
         with pytest.raises(SecretNotFoundError, match="HA_TOKEN"):
             await NoSecrets().resolve(TENANT, OF_THE_TENANT, ("HA_TOKEN",))
+
+
+class Hub:
+    """A hub that records what it is asked and answers with the secrets it is told to."""
+
+    def __init__(self) -> None:
+        self.sent: list[httpx.Request] = []
+        self.secrets = SecretList()
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.sent.append(request)
+        return httpx.Response(200, content=self.secrets.model_dump_json())
+
+    def resolver(self, tenant_id: TenantId = TENANT) -> HubSecretResolver:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(self), base_url="http://hub.test")
+        return HubSecretResolver(client, DevPrincipalDelegation(TEST), tenant_id)
+
+
+class TestTheHubResolver:
+    async def test_it_knows_nothing_before_it_is_loaded(self) -> None:
+        resolver = Hub().resolver()
+
+        with pytest.raises(SecretNotFoundError, match="HA_TOKEN"):
+            await resolver.resolve(TENANT, OF_THE_TENANT, ("HA_TOKEN",))
+
+    async def test_reload_asks_the_hub_for_the_tenants_secrets_as_the_tenant(self) -> None:
+        hub = Hub()
+        resolver = hub.resolver()
+
+        await resolver.reload()
+
+        [request] = hub.sent
+        assert request.url.path == "/v1/secrets"
+        assert request.headers["x-factotum-dev-subject"] == "tenant"
+
+    async def test_a_skill_of_the_tenant_is_given_the_secrets_of_the_tenant_once_loaded(
+        self,
+    ) -> None:
+        hub = Hub()
+        hub.secrets = SecretList(
+            secrets=(SecretView(name="HA_TOKEN", owner=OF_THE_TENANT, value="the-token-of-home"),)
+        )
+        resolver = hub.resolver()
+        await resolver.reload()
+
+        given = await resolver.resolve(TENANT, OF_THE_TENANT, ("HA_TOKEN",))
+
+        assert given == {"HA_TOKEN": "the-token-of-home"}
+
+    async def test_a_skill_of_a_person_cannot_have_a_secret_that_only_the_tenant_has(self) -> None:
+        hub = Hub()
+        hub.secrets = SecretList(
+            secrets=(SecretView(name="HA_TOKEN", owner=OF_THE_TENANT, value="x"),)
+        )
+        resolver = hub.resolver()
+        await resolver.reload()
+
+        with pytest.raises(SecretNotFoundError, match="HA_TOKEN"):
+            await resolver.resolve(TENANT, OF_THE_USER, ("HA_TOKEN",))
+
+    async def test_another_tenant_is_given_nothing_even_for_the_same_owner(self) -> None:
+        hub = Hub()
+        hub.secrets = SecretList(
+            secrets=(SecretView(name="HA_TOKEN", owner=OF_THE_TENANT, value="x"),)
+        )
+        resolver = hub.resolver()
+        await resolver.reload()
+
+        with pytest.raises(SecretNotFoundError, match="HA_TOKEN"):
+            await resolver.resolve(make_tenant_id(), OF_THE_TENANT, ("HA_TOKEN",))
+
+    async def test_reloading_again_replaces_what_was_there_before(self) -> None:
+        hub = Hub()
+        hub.secrets = SecretList(
+            secrets=(SecretView(name="HA_TOKEN", owner=OF_THE_TENANT, value="first"),)
+        )
+        resolver = hub.resolver()
+        await resolver.reload()
+
+        hub.secrets = SecretList(
+            secrets=(SecretView(name="ROUTER_PASSWORD", owner=OF_THE_TENANT, value="second"),)
+        )
+        await resolver.reload()
+
+        with pytest.raises(SecretNotFoundError, match="HA_TOKEN"):
+            await resolver.resolve(TENANT, OF_THE_TENANT, ("HA_TOKEN",))
+        given = await resolver.resolve(TENANT, OF_THE_TENANT, ("ROUTER_PASSWORD",))
+        assert given == {"ROUTER_PASSWORD": "second"}
+
+    async def test_a_hub_that_answers_with_an_error_is_not_swallowed(self) -> None:
+        def refuse(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503)
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(refuse), base_url="http://hub.test"
+        )
+        resolver = HubSecretResolver(client, DevPrincipalDelegation(TEST), TENANT)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await resolver.reload()
