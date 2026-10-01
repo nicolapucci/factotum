@@ -9,7 +9,7 @@ from factotum.contracts.errors import (
 )
 from factotum.contracts.hub import ChangePasswordRequest, CreateUserRequest, LoginRequest
 from factotum.contracts.identity import Principal, Role, Subject, SubjectKind
-from factotum.contracts.testing import make_user_id
+from factotum.contracts.testing import make_tenant_id, make_user_id
 from factotum.hub.service import HubService
 from factotum.hub.store.memory import InMemoryStore
 
@@ -24,7 +24,7 @@ def service() -> HubService:
 
 async def bootstrapped() -> HubService:
     svc = service()
-    made = await svc.bootstrap(username=USERNAME, password=PASSWORD)
+    made = await svc.bootstrap(tenant_id=make_tenant_id(), username=USERNAME, password=PASSWORD)
     assert made
     return svc
 
@@ -33,8 +33,12 @@ class TestBootstrap:
     async def test_it_creates_the_tenant_only_once(self) -> None:
         svc = service()
 
-        first = await svc.bootstrap(username=USERNAME, password=PASSWORD)
-        second = await svc.bootstrap(username="somebody-else", password="irrelevant")
+        first = await svc.bootstrap(
+            tenant_id=make_tenant_id(), username=USERNAME, password=PASSWORD
+        )
+        second = await svc.bootstrap(
+            tenant_id=make_tenant_id(), username="somebody-else", password="irrelevant"
+        )
 
         assert (first, second) == (True, False)
 

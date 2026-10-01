@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from factotum.common.hubauth import HubAuthenticator
 from factotum.common.tokens import MIN_SECRET_BYTES
+from factotum.contracts.testing import make_tenant_id
 from factotum.hub.api import Operations, create_app
 from factotum.hub.service import HubService
 from factotum.hub.store.memory import InMemoryStore
@@ -18,7 +19,7 @@ PASSWORD = "the-first-password"
 
 async def app_of(*, ready: Any = None) -> FastAPI:
     service = HubService(InMemoryStore(), secret=SECRET, session_hours=1)
-    await service.bootstrap(username=USERNAME, password=PASSWORD)
+    await service.bootstrap(tenant_id=make_tenant_id(), username=USERNAME, password=PASSWORD)
     return create_app(HubAuthenticator(SECRET), operations=Operations(service=service), ready=ready)
 
 

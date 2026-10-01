@@ -54,15 +54,18 @@ class HubService:
         self._secret = secret
         self._session_ttl_s = session_hours * 3600
 
-    async def bootstrap(self, *, username: str, password: str) -> bool:
-        """The tenant and its administrator, the first time the hub starts. Returns whether it was
-        made: false when a tenant already exists, which is the ordinary case after the first time.
+    async def bootstrap(self, *, tenant_id: TenantId, username: str, password: str) -> bool:
+        """The one tenant of a single-tenant deployment, and its administrator, the first time the
+        hub starts. Returns whether it was made: false when a tenant already exists, which is the
+        ordinary case after the first time. Multi-tenant mode has no first tenant to make here: a
+        deployment of its own calls this once, for its own first tenant, or not at all until it has
+        a sign-up of its own.
         """
         if await self._store.tenant_count() > 0:
             return False
         admin = StoredUser(
             id=UserId(uuid4()),
-            tenant_id=TenantId(uuid4()),
+            tenant_id=tenant_id,
             username=username,
             password_hash=hash_password(password),
             roles=frozenset({Role.ADMIN}),

@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from factotum.common.hubauth import HubAuthenticator
 from factotum.contracts.errors import AuthError
+from factotum.contracts.identity import SINGLE_TENANT_ID, TenantMode
 from factotum.db.pool import Database
 from factotum.hub.api import Operations, create_app
 from factotum.hub.service import HubService
@@ -42,15 +43,18 @@ def build_app(settings: HubSettings) -> FastAPI:
             await prepare(database)
             store = PostgresStore(database)
             service = HubService(store, secret=secret, session_hours=settings.hub_session_hours)
-            made = await service.bootstrap(
-                username=settings.hub_admin_username, password=settings.hub_admin_password
-            )
-            if made:
-                logger.warning(
-                    "a tenant was created with an administrator whose password must be changed "
-                    "at the first login",
-                    extra={"username": settings.hub_admin_username},
+            if settings.tenant_mode is TenantMode.SINGLE_TENANT:
+                made = await service.bootstrap(
+                    tenant_id=SINGLE_TENANT_ID,
+                    username=settings.hub_admin_username,
+                    password=settings.hub_admin_password,
                 )
+                if made:
+                    logger.warning(
+                        "the tenant was created with an administrator whose password must be "
+                        "changed at the first login",
+                        extra={"username": settings.hub_admin_username},
+                    )
             app.state.operations = Operations(service=service)
             yield
         finally:

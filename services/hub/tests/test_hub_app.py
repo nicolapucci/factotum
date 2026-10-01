@@ -7,6 +7,7 @@ import pytest
 from factotum.common.config import Environment
 from factotum.common.tokens import MIN_SECRET_BYTES
 from factotum.contracts.errors import AuthError
+from factotum.contracts.identity import TenantMode
 from factotum.db.settings import DatabaseSettings
 from factotum.hub.app import build_app
 from factotum.hub.settings import HubSettings
@@ -108,3 +109,23 @@ class TestAgainstARealDatabase:
             )
 
         assert second.status_code == 200
+
+    async def test_multi_tenant_mode_makes_no_tenant_by_itself(
+        self, database_settings: DatabaseSettings
+    ) -> None:
+        settings = settings_for(
+            database_settings, hub_token_secret=SECRET, tenant_mode=TenantMode.MULTI_TENANT
+        )
+        app = build_app(settings)
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://hub"
+            ) as http,
+        ):
+            response = await http.post(
+                "/v1/auth/login", json={"username": "admin", "password": "admin"}
+            )
+
+        assert response.status_code == 401

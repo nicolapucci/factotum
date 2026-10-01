@@ -23,6 +23,12 @@ class TenantMode(StrEnum):
     MULTI_TENANT = "multi_tenant"
 
 
+SINGLE_TENANT_ID = TenantId(UUID("00000000-0000-4000-8000-000000000001"))
+"""The one tenant of a ``single_tenant`` deployment (the hub makes it at its first start). Fixed, so
+that a service can address it without asking the hub which tenant there is: there is only ever this
+one. Not used in ``multi_tenant`` mode, where a tenant's id is its own."""
+
+
 class Role(StrEnum):
     """What a user may do inside a tenant. Administration happens only through authenticated
     hub sessions, never through a device."""
