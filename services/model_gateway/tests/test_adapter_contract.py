@@ -688,7 +688,12 @@ class TestAProviderWithoutEmbeddings:
         assert server.requests == []
 
 
+SPEECH_ONLY_PROVIDERS = frozenset({ProviderKind.WHISPER_LOCAL, ProviderKind.PIPER_LOCAL})
+"""These offer no chat and no embeddings at all: covered by test_speech_adapters.py, not the
+chat-and-embeddings contract this suite tests."""
+
+
 def test_every_provider_kind_has_an_adapter_in_this_suite() -> None:
     covered = {flavor.adapter.kind for flavor in PROVIDERS.values()}
 
-    assert covered == set(ProviderKind)
+    assert covered == set(ProviderKind) - SPEECH_ONLY_PROVIDERS

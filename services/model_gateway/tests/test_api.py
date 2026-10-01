@@ -8,6 +8,7 @@ import pytest
 
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEVICE_HEADER, SUBJECT_HEADER, DevAuthenticator
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import (
     ChatResult,
     ErrorEvent,
@@ -103,6 +104,10 @@ class Service:
 
 def chat_body(text: str = "Hello", **fields: Any) -> dict[str, Any]:
     return {"messages": [{"role": "user", "content": text}], **fields}
+
+
+def clip(data: bytes = b"wav-bytes", sample_rate: int = 16000) -> AudioPayload:
+    return AudioPayload(sample_rate=sample_rate, data=data)
 
 
 def reply(text: str = "Hi!", usage: Usage | None = None) -> ChatResult:
@@ -242,7 +247,13 @@ class TestAuthentication:
 
     @pytest.mark.parametrize(
         ("method", "path"),
-        [("post", "/v1/chat"), ("post", "/v1/embeddings"), ("get", "/v1/profiles/chat.main")],
+        [
+            ("post", "/v1/chat"),
+            ("post", "/v1/embeddings"),
+            ("post", "/v1/transcribe"),
+            ("post", "/v1/synthesize"),
+            ("get", "/v1/profiles/chat.main"),
+        ],
     )
     async def test_every_route_needs_it(self, method: str, path: str) -> None:
         async with Service(binding()).client() as client:
@@ -519,6 +530,73 @@ class TestEmbeddings:
 
         assert response.status_code == 404
         assert response.json()["error"]["details"] == {"role": "embedding"}
+
+
+class TestTranscription:
+    async def test_what_the_adapter_heard_comes_back(self) -> None:
+        service = Service(binding(ModelRole.STT, model="base"))
+        service.adapter.will_transcribe("how do I reset the router?")
+
+        async with service.client() as client:
+            response = await client.post(
+                "/v1/transcribe", json={"audio": clip().model_dump(mode="json")}
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"text": "how do I reset the router?"}
+
+    async def test_the_recording_reaches_the_adapter_byte_for_byte(self) -> None:
+        service = Service(binding(ModelRole.STT, model="base"))
+        service.adapter.will_transcribe("hi")
+        recording = clip(data=bytes(range(200)))
+
+        async with service.client() as client:
+            await client.post("/v1/transcribe", json={"audio": recording.model_dump(mode="json")})
+
+        assert service.adapter.transcriptions[0][1] == recording
+
+    async def test_no_stt_binding_is_a_404(self) -> None:
+        async with Service(binding()).client() as client:
+            response = await client.post(
+                "/v1/transcribe", json={"audio": clip().model_dump(mode="json")}
+            )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["details"] == {"role": "stt"}
+
+
+class TestSynthesis:
+    async def test_what_the_adapter_made_comes_back(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_synthesize(clip(data=b"spoken-aloud"))
+
+        async with service.client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "Dinner is ready"})
+
+        assert response.status_code == 200
+        assert AudioPayload.model_validate(response.json()["audio"]).data == b"spoken-aloud"
+
+    async def test_the_text_reaches_the_adapter_as_it_was(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_synthesize(clip())
+
+        async with service.client() as client:
+            await client.post("/v1/synthesize", json={"text": "Dinner is ready"})
+
+        assert service.adapter.syntheses[0][1] == "Dinner is ready"
+
+    async def test_blank_text_is_a_422(self) -> None:
+        async with Service(binding(ModelRole.TTS)).client() as client:
+            response = await client.post("/v1/synthesize", json={"text": ""})
+
+        assert response.status_code == 422
+
+    async def test_no_tts_binding_is_a_404(self) -> None:
+        async with Service(binding()).client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "hello"})
+
+        assert response.status_code == 404
+        assert response.json()["error"]["details"] == {"role": "tts"}
 
 
 class TestProfiles:

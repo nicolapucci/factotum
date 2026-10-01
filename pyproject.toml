@@ -87,7 +87,14 @@ namespace_packages = true
 files = ["libs", "services", "clients"]
 
 [[tool.mypy.overrides]]
-module = ["langdetect", "langdetect.*", "reportlab", "reportlab.*"]
+module = [
+  "langdetect",
+  "langdetect.*",
+  "reportlab",
+  "reportlab.*",
+  "faster_whisper",
+  "faster_whisper.*",
+]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

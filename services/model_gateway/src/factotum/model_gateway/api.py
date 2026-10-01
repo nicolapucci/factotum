@@ -13,6 +13,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from factotum.contracts.chat import ChatRequest, EventUnion
 from factotum.contracts.embeddings import EmbeddingRequest
 from factotum.contracts.models import ModelRole
+from factotum.contracts.speech import (
+    SynthesizeRequest,
+    SynthesizeResult,
+    TranscribeRequest,
+    TranscribeResult,
+)
 from factotum.model_gateway.core import ModelGateway
 from factotum.web import Authenticator, Caller, create_base_app
 
@@ -95,6 +101,16 @@ def create_app(
     async def embeddings(body: EmbeddingRequest, principal: Caller) -> Response:
         result = await gateway.embed(principal, body)
         return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/v1/transcribe", response_model=None, summary="Speech-to-text")
+    async def transcribe(body: TranscribeRequest, principal: Caller) -> Response:
+        text = await gateway.transcribe(principal, body.audio)
+        return JSONResponse(TranscribeResult(text=text).model_dump(mode="json"))
+
+    @app.post("/v1/synthesize", response_model=None, summary="Text-to-speech")
+    async def synthesize(body: SynthesizeRequest, principal: Caller) -> Response:
+        audio = await gateway.synthesize(principal, body.text)
+        return JSONResponse(SynthesizeResult(audio=audio).model_dump(mode="json"))
 
     @app.get("/v1/profiles/{role}", response_model=None, summary="What a role can do")
     async def profile(role: ModelRole, principal: Caller) -> Response:

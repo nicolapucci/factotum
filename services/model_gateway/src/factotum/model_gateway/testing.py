@@ -7,6 +7,7 @@ from typing import Any, Self
 import httpx
 from pydantic import SecretStr
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import ChatMessage, ChatRequest, ChatResult, EventUnion, MessageRole
 from factotum.contracts.errors import FactotumError
 from factotum.contracts.models import ModelBinding, ProviderKind
@@ -112,10 +113,14 @@ class ScriptedAdapter:
         self.chats: list[tuple[ResolvedBinding, ChatRequest]] = []
         self.streams: list[tuple[ResolvedBinding, ChatRequest]] = []
         self.embeds: list[tuple[ResolvedBinding, tuple[str, ...]]] = []
+        self.transcriptions: list[tuple[ResolvedBinding, AudioPayload]] = []
+        self.syntheses: list[tuple[ResolvedBinding, str]] = []
         self.stream_endings: list[str] = []
         self._chat_script: list[ChatResult | Exception] = []
         self._stream_script: list[Sequence[EventUnion | Exception]] = []
         self._embed_script: list[EmbeddingBatch | Exception] = []
+        self._transcribe_script: list[str | Exception] = []
+        self._synthesize_script: list[AudioPayload | Exception] = []
 
     def will_chat(self, *outcomes: ChatResult | Exception) -> Self:
         self._chat_script.extend(outcomes)
@@ -127,6 +132,14 @@ class ScriptedAdapter:
 
     def will_embed(self, *outcomes: EmbeddingBatch | Exception) -> Self:
         self._embed_script.extend(outcomes)
+        return self
+
+    def will_transcribe(self, *outcomes: str | Exception) -> Self:
+        self._transcribe_script.extend(outcomes)
+        return self
+
+    def will_synthesize(self, *outcomes: AudioPayload | Exception) -> Self:
+        self._synthesize_script.extend(outcomes)
         return self
 
     def native_structured_output(self, resolved: ResolvedBinding) -> bool:
@@ -161,6 +174,24 @@ class ScriptedAdapter:
     ) -> EmbeddingBatch:
         self.embeds.append((resolved, tuple(inputs)))
         outcome = self._embed_script.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def transcribe(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, audio: AudioPayload
+    ) -> str:
+        self.transcriptions.append((resolved, audio))
+        outcome = self._transcribe_script.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def synthesize(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AudioPayload:
+        self.syntheses.append((resolved, text))
+        outcome = self._synthesize_script.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome

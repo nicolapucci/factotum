@@ -17,6 +17,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
 
 from factotum.common.redaction import redact_text
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import ChatRequest, ChatResult, EventUnion, Usage
 from factotum.contracts.errors import (
     ContextTooLongError,
@@ -26,6 +27,7 @@ from factotum.contracts.errors import (
     ProviderTimeoutError,
     ProviderUnavailableError,
     RateLimitedError,
+    RoleNotSupportedError,
 )
 from factotum.contracts.models import BindingOptions, ModelBinding, ProviderKind
 
@@ -99,7 +101,9 @@ def usage_of(input_tokens: int | None, output_tokens: int | None) -> Usage | Non
 
 
 class ProviderAdapter(Protocol):
-    """The four things the gateway asks of a provider."""
+    """What the gateway asks of a provider: chat, embeddings, and speech. One adapter answers for
+    one ``ProviderKind``; a provider that offers none of these for a given call says so with
+    ``RoleNotSupportedError`` (``role_not_supported``, below) rather than pretending."""
 
     kind: ProviderKind
 
@@ -120,6 +124,27 @@ class ProviderAdapter(Protocol):
     async def embed(
         self, client: httpx.AsyncClient, resolved: ResolvedBinding, inputs: Sequence[str]
     ) -> EmbeddingBatch: ...
+
+    async def transcribe(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, audio: AudioPayload
+    ) -> str:
+        """What was said in ``audio``."""
+        ...
+
+    async def synthesize(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AudioPayload:
+        """``text``, spoken aloud."""
+        ...
+
+
+def role_not_supported(provider: ProviderKind, what: str) -> RoleNotSupportedError:
+    """The provider does not offer ``what`` (``"embeddings"``, ``"speech-to-text"``...) at all:
+    the role must be bound to another provider instead."""
+    return RoleNotSupportedError(
+        f"{provider.value} has no {what} API: bind the role to another provider",
+        details={"provider": provider.value},
+    )
 
 
 # --- errors ---

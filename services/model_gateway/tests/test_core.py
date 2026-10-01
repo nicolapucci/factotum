@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from factotum.common.urlguard import UrlPolicy
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import (
     ChatResult,
     ErrorEvent,
@@ -655,6 +656,93 @@ class TestEmbeddings:
 
         with pytest.raises(RoleNotSupportedError):
             await gateway.embed(TENANT_PRINCIPAL, EmbeddingRequest(inputs=("a",)))
+
+
+def clip(data: bytes = b"wav-bytes", sample_rate: int = 16000) -> AudioPayload:
+    return AudioPayload(sample_rate=sample_rate, data=data)
+
+
+class TestTranscribe:
+    async def test_what_the_adapter_heard_is_returned(self) -> None:
+        rig = Rig(local_binding(ModelRole.STT, model="base"))
+        rig.adapter.will_transcribe("how do I reset the router?")
+
+        text = await rig.gateway.transcribe(TENANT_PRINCIPAL, clip())
+
+        assert text == "how do I reset the router?"
+
+    async def test_the_adapter_gets_the_recording_as_it_was(self) -> None:
+        rig = Rig(local_binding(ModelRole.STT, model="base"))
+        rig.adapter.will_transcribe("hi")
+        recording = clip(data=b"the-actual-bytes")
+
+        await rig.gateway.transcribe(TENANT_PRINCIPAL, recording)
+
+        assert rig.adapter.transcriptions[0][1] == recording
+
+    async def test_no_binding_is_a_typed_error(self) -> None:
+        rig = Rig()
+
+        with pytest.raises(BindingNotFoundError):
+            await rig.gateway.transcribe(TENANT_PRINCIPAL, clip())
+
+    async def test_the_client_is_closed_after_the_call(self) -> None:
+        rig = Rig(local_binding(ModelRole.STT, model="base"))
+        rig.adapter.will_transcribe("hi")
+
+        await rig.gateway.transcribe(TENANT_PRINCIPAL, clip())
+
+        assert rig.all_clients_closed()
+
+    async def test_a_transient_failure_is_retried(self) -> None:
+        rig = Rig(local_binding(ModelRole.STT, model="base"))
+        rig.adapter.will_transcribe(ProviderUnavailableError("busy"), "second try")
+
+        text = await rig.gateway.transcribe(TENANT_PRINCIPAL, clip())
+
+        assert text == "second try"
+        assert rig.sleeps.delays == [1.0]
+
+
+class TestSynthesize:
+    async def test_what_the_adapter_made_of_the_text_is_returned(self) -> None:
+        rig = Rig(local_binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        rig.adapter.will_synthesize(clip(data=b"spoken-aloud"))
+
+        audio = await rig.gateway.synthesize(TENANT_PRINCIPAL, "Dinner is ready")
+
+        assert audio.data == b"spoken-aloud"
+
+    async def test_the_adapter_gets_the_text_as_it_was(self) -> None:
+        rig = Rig(local_binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        rig.adapter.will_synthesize(clip())
+
+        await rig.gateway.synthesize(TENANT_PRINCIPAL, "Dinner is ready")
+
+        assert rig.adapter.syntheses[0][1] == "Dinner is ready"
+
+    async def test_no_binding_is_a_typed_error(self) -> None:
+        rig = Rig()
+
+        with pytest.raises(BindingNotFoundError):
+            await rig.gateway.synthesize(TENANT_PRINCIPAL, "hello")
+
+    async def test_the_client_is_closed_after_the_call(self) -> None:
+        rig = Rig(local_binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        rig.adapter.will_synthesize(clip())
+
+        await rig.gateway.synthesize(TENANT_PRINCIPAL, "hello")
+
+        assert rig.all_clients_closed()
+
+    async def test_a_transient_failure_is_retried(self) -> None:
+        rig = Rig(local_binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        rig.adapter.will_synthesize(ProviderUnavailableError("busy"), clip(data=b"second try"))
+
+        audio = await rig.gateway.synthesize(TENANT_PRINCIPAL, "hello")
+
+        assert audio.data == b"second try"
+        assert rig.sleeps.delays == [1.0]
 
 
 class TestProfile:

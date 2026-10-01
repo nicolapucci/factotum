@@ -16,10 +16,12 @@ import random
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
 from factotum.common.urlguard import GuardedTransport, LentTransport, Resolver, UrlPolicy
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -49,6 +51,8 @@ from factotum.model_gateway.providers.base import EmbeddingBatch, ProviderAdapte
 from factotum.model_gateway.providers.gemini import GeminiAdapter
 from factotum.model_gateway.providers.ollama import OllamaAdapter
 from factotum.model_gateway.providers.openai import OpenAIAdapter
+from factotum.model_gateway.providers.piper_local import PiperLocalAdapter
+from factotum.model_gateway.providers.whisper_local import WhisperLocalAdapter
 from factotum.model_gateway.retry import RetryPolicy, with_retries
 from factotum.model_gateway.secrets import SecretResolver
 from factotum.model_gateway.structured import run_structured
@@ -67,13 +71,24 @@ _CONNECT_TIMEOUT_S = 10.0
 ClientFactory = Callable[[ResolvedBinding], httpx.AsyncClient]
 
 
-def default_adapters() -> dict[ProviderKind, ProviderAdapter]:
+def default_adapters(
+    *, speech_device: str = "cpu", speech_cache_dir: Path | None = None
+) -> dict[ProviderKind, ProviderAdapter]:
+    """One adapter per provider kind. The two local speech adapters do not load a model (and do
+    not need ``speech_device``/``speech_cache_dir`` to be right) until a binding actually asks one
+    of them to transcribe or to synthesize."""
     return {
         ProviderKind.OPENAI: OpenAIAdapter(ProviderKind.OPENAI),
         ProviderKind.OPENAI_COMPATIBLE: OpenAIAdapter(ProviderKind.OPENAI_COMPATIBLE),
         ProviderKind.OLLAMA: OllamaAdapter(),
         ProviderKind.ANTHROPIC: AnthropicAdapter(),
         ProviderKind.GEMINI: GeminiAdapter(),
+        ProviderKind.WHISPER_LOCAL: WhisperLocalAdapter(
+            device=speech_device, cache_dir=speech_cache_dir
+        ),
+        ProviderKind.PIPER_LOCAL: PiperLocalAdapter(
+            use_cuda=speech_device == "cuda", cache_dir=speech_cache_dir
+        ),
     }
 
 
@@ -230,6 +245,42 @@ class ModelGateway:
             raise
         finally:
             self._log(call, ModelRole.EMBEDDING, principal, outcome, started, usage)
+
+    async def transcribe(self, principal: Principal, audio: AudioPayload) -> str:
+        """What was said in ``audio``, with the ``stt`` role bound for the principal."""
+        started = time.monotonic()
+        call: _Call | None = None
+        outcome = "ok"
+        try:
+            call = prepared = await self._prepare(principal, ModelRole.STT)
+            async with prepared.client:
+                text = await self._retrying(
+                    lambda: prepared.adapter.transcribe(prepared.client, prepared.resolved, audio)
+                )
+            return text
+        except FactotumError as error:
+            outcome = error.code
+            raise
+        finally:
+            self._log(call, ModelRole.STT, principal, outcome, started, None)
+
+    async def synthesize(self, principal: Principal, text: str) -> AudioPayload:
+        """``text``, spoken aloud, with the ``tts`` role bound for the principal."""
+        started = time.monotonic()
+        call: _Call | None = None
+        outcome = "ok"
+        try:
+            call = prepared = await self._prepare(principal, ModelRole.TTS)
+            async with prepared.client:
+                audio = await self._retrying(
+                    lambda: prepared.adapter.synthesize(prepared.client, prepared.resolved, text)
+                )
+            return audio
+        except FactotumError as error:
+            outcome = error.code
+            raise
+        finally:
+            self._log(call, ModelRole.TTS, principal, outcome, started, None)
 
     async def profile(self, principal: Principal, role: ModelRole) -> Profile:
         """What ``role`` can do for this principal, without saying which model does it."""

@@ -22,3 +22,11 @@ class GatewaySettings(ServiceSettings):
     gateway_hub_url: AnyHttpUrl | None = None
     """Where the hub is: once a token secret is configured, the bindings it holds for the tenant are
     fetched from here instead of the file above."""
+
+    gateway_speech_device: str = "cpu"
+    """Where the local speech-to-text and text-to-speech providers (``whisper_local``,
+    ``piper_local``) run: "cpu" or "cuda". Unused until a binding names one of them."""
+
+    gateway_speech_cache_dir: Path | None = None
+    """Where the local speech providers cache (and look for) their downloaded models. None uses
+    each library's own default location in the user's home directory."""

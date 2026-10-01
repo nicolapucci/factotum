@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 from pydantic import Field
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -45,6 +46,7 @@ from factotum.model_gateway.providers.base import (
     parse_sse_json,
     parse_wire,
     post_json,
+    role_not_supported,
     stream_post,
     usage_of,
 )
@@ -328,6 +330,18 @@ class GeminiAdapter:
             parsed = parse_wire(_Embedded, body, self.kind)
             vectors.extend(tuple(vector.values) for vector in parsed.embeddings)
         return EmbeddingBatch(vectors=tuple(vectors))
+
+    # --- speech ---
+
+    async def transcribe(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, audio: AudioPayload
+    ) -> str:
+        raise role_not_supported(self.kind, "speech-to-text")
+
+    async def synthesize(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AudioPayload:
+        raise role_not_supported(self.kind, "text-to-speech")
 
     # --- errors ---
 

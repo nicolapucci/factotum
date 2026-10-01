@@ -26,6 +26,8 @@ from factotum.contracts.errors import (
     GatewayError,
     GatewayUnavailableError,
     RateLimitedError,
+    SttNotConfiguredError,
+    TtsNotConfiguredError,
 )
 from factotum.contracts.identity import Owner, OwnerKind, Principal, Role, Subject
 from factotum.contracts.ids import TenantId, UserId
@@ -136,6 +138,10 @@ def error_from(response: httpx.Response, role: ModelRole = ModelRole.EMBEDDING) 
     if code == BindingNotFoundError.code:
         if role is ModelRole.EMBEDDING:
             return EmbeddingNotConfiguredError("no embedding model is set up for the owner")
+        if role is ModelRole.STT:
+            return SttNotConfiguredError("no speech-to-text model is set up for the owner")
+        if role is ModelRole.TTS:
+            return TtsNotConfiguredError("no text-to-speech model is set up for the owner")
         return ChatNotConfiguredError("no chat model is set up for the owner")
     kind = _error_classes().get(code, GatewayError)
     return kind(message, details=details)

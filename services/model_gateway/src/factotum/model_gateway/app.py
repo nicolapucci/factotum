@@ -13,7 +13,7 @@ from factotum.model_gateway.bindings import (
     InMemoryBindingRepository,
     load_bindings_file,
 )
-from factotum.model_gateway.core import ModelGateway, guarded_clients
+from factotum.model_gateway.core import ModelGateway, default_adapters, guarded_clients
 from factotum.model_gateway.secrets import EnvSecretResolver
 from factotum.model_gateway.settings import GatewaySettings
 
@@ -38,6 +38,10 @@ def build_gateway(settings: GatewaySettings) -> ModelGateway:
     return ModelGateway(
         repository,
         EnvSecretResolver(),
+        adapters=default_adapters(
+            speech_device=settings.gateway_speech_device,
+            speech_cache_dir=settings.gateway_speech_cache_dir,
+        ),
         client_factory=guarded_clients(provider_url_policy(settings)),
     )
 
@@ -62,6 +66,10 @@ def build_app(settings: GatewaySettings) -> FastAPI:
         gateway = ModelGateway(
             hub_repository,
             EnvSecretResolver(),
+            adapters=default_adapters(
+                speech_device=settings.gateway_speech_device,
+                speech_cache_dir=settings.gateway_speech_cache_dir,
+            ),
             client_factory=guarded_clients(provider_url_policy(settings)),
         )
     else:

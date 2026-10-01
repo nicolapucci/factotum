@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from pydantic import Field
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -35,6 +36,7 @@ from factotum.model_gateway.providers.base import (
     iter_ndjson,
     parse_wire,
     post_json,
+    role_not_supported,
     stream_error,
     stream_post,
     usage_of,
@@ -204,6 +206,18 @@ class OllamaAdapter:
             vectors=tuple(tuple(vector) for vector in parsed.embeddings),
             usage=usage_of(parsed.prompt_eval_count, None),
         )
+
+    # --- speech ---
+
+    async def transcribe(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, audio: AudioPayload
+    ) -> str:
+        raise role_not_supported(self.kind, "speech-to-text")
+
+    async def synthesize(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AudioPayload:
+        raise role_not_supported(self.kind, "text-to-speech")
 
     # --- errors ---
 

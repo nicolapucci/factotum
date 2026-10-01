@@ -1,5 +1,5 @@
-"""How the Factotum services reach the model gateway: chat (whole or streamed), embeddings and the
-profile of a role, always acting for an owner."""
+"""How the Factotum services reach the model gateway: chat (whole or streamed), embeddings, speech
+and the profile of a role, always acting for an owner."""
 
 from factotum.model_client.chat import Chat, GatewayChat
 from factotum.model_client.embedder import (
@@ -16,6 +16,7 @@ from factotum.model_client.gateway import (
     delegation_for,
     error_from,
 )
+from factotum.model_client.speech import GatewaySpeech, Speech
 
 __all__ = [
     "DEFAULT_BATCH",
@@ -27,7 +28,9 @@ __all__ = [
     "Embedder",
     "GatewayChat",
     "GatewayEmbedder",
+    "GatewaySpeech",
     "HubDelegation",
+    "Speech",
     "delegation_for",
     "error_from",
 ]

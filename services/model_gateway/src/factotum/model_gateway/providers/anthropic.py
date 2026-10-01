@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -44,6 +45,7 @@ from factotum.model_gateway.providers.base import (
     parse_sse_json,
     parse_wire,
     post_json,
+    role_not_supported,
     stream_error,
     stream_post,
     usage_of,
@@ -270,6 +272,18 @@ class AnthropicAdapter:
             "anthropic has no embeddings API: bind the embedding role to another provider",
             details={"provider": self.kind.value},
         )
+
+    # --- speech ---
+
+    async def transcribe(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, audio: AudioPayload
+    ) -> str:
+        raise role_not_supported(self.kind, "speech-to-text")
+
+    async def synthesize(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AudioPayload:
+        raise role_not_supported(self.kind, "text-to-speech")
 
     # --- errors ---
 
