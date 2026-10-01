@@ -23,8 +23,12 @@ class EdgeSettings(ServiceSettings):
     """Where the conversation service is: it is asked for every answer."""
 
     edge_devices_file: Path | None = None
-    """The devices that may connect (development only, until the hub pairs and registers them). A
+    """The devices that may connect, for development (until a token secret is configured, below). A
     file that is named and is not there stops the edge; without one no device is known."""
+
+    edge_hub_url: AnyHttpUrl | None = None
+    """Where the hub is: once a token secret is configured, the system devices it registered for
+    the tenant are fetched from here instead of the file above."""
 
     edge_hello_timeout_s: float = Field(default=10.0, gt=0, le=120)
     """How long a connection may take to say who it is before it is closed."""

@@ -1,19 +1,27 @@
 """The devices the edge knows, and how it knows them.
 
-A system device authenticates with a credential issued when it was paired (ADR 0005), and the
-records of paired devices live in the hub (slice 7). Until then the registry is a file, for
-development: it lists the devices that may connect, with what each is registered to do and whom it
-acts for. It refuses to exist outside development and tests, like the other development
-conveniences, and a credential in it is a placeholder: the hub keeps only a hash of what it issues.
+A system device authenticates with a credential issued when it was paired (ADR 0005). Once the hub
+registers and pairs devices (slice 7b), ``HubDeviceRegistry`` fetches its tenant's system devices
+once, in the lifespan, and checks a presented credential against the hash the hub keeps, without
+asking the hub again for every connection. Until a token secret is configured the registry is a
+file, for development: it lists the devices that may connect, with what each is registered to do
+and whom it acts for, and a credential in it is a placeholder (a real one is never in the clear).
+It refuses to exist outside development and tests, like the other development conveniences.
 """
 
 import hmac
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
+import httpx
+
 from factotum.common.config import Environment, ServiceSettings
+from factotum.common.credentials import hash_credential
+from factotum.common.devauth import PrincipalDelegation
 from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.errors import AuthError
+from factotum.contracts.hub import DeviceList
 from factotum.contracts.identity import OwnerKind, Principal, Role, Subject
 from factotum.contracts.ids import DeviceId, TenantId, UserId
 from factotum.devices.home import MIN_TOKEN_CHARS, device_id_for, parse_home
@@ -22,11 +30,14 @@ __all__ = [
     "MIN_TOKEN_CHARS",
     "DeviceRegistry",
     "FileDeviceRegistry",
+    "HubDeviceRegistry",
     "device_id_for",
     "load_devices",
     "load_devices_file",
     "principal_of",
 ]
+
+_DUMMY_HASH = hash_credential("not a device's credential, only here to cost the same time")
 
 
 class DeviceRegistry(Protocol):
@@ -115,3 +126,52 @@ def load_devices_file(
         user_id=user_id,
         source=path.name,
     )
+
+
+class HubDeviceRegistry:
+    """The system devices of the hub's tenant: empty until ``reload`` is awaited once, in the
+    lifespan, before the edge starts serving; a connection is then checked against what was fetched,
+    never against the hub itself."""
+
+    def __init__(
+        self, client: httpx.AsyncClient, delegation: PrincipalDelegation, tenant_id: TenantId
+    ) -> None:
+        self._client = client
+        self._delegation = delegation
+        self._tenant_id = tenant_id
+        self._by_hardware_id: dict[str, list[tuple[SystemDeviceRecord, str]]] = {}
+        self._by_id: dict[tuple[TenantId, DeviceId], SystemDeviceRecord] = {}
+
+    async def reload(self) -> None:
+        """The device list of the tenant, asked for as the tenant itself: a service acts for the
+        household, not for a person, to ask the hub for this."""
+        headers: Mapping[str, str] = self._delegation.headers(Principal.of_tenant(self._tenant_id))
+        response = await self._client.get("/v1/devices", headers=headers)
+        response.raise_for_status()
+        devices = DeviceList.model_validate_json(response.content)
+        by_hardware_id: dict[str, list[tuple[SystemDeviceRecord, str]]] = {}
+        by_id: dict[tuple[TenantId, DeviceId], SystemDeviceRecord] = {}
+        for entry in devices.system:
+            record = entry.device
+            by_id[(record.tenant_id, record.id)] = record
+            by_hardware_id.setdefault(record.hardware_id, []).append(
+                (record, entry.credential_hash)
+            )
+        self._by_hardware_id, self._by_id = by_hardware_id, by_id
+
+    async def authenticate(self, hardware_id: str, token: str) -> SystemDeviceRecord | None:
+        computed = hash_credential(token)
+        found: SystemDeviceRecord | None = None
+        # The same work whether there is such a device or not, and whichever of the two is wrong: a
+        # device cannot be found out by how long it takes to be refused.
+        candidates: list[tuple[SystemDeviceRecord | None, str]] = [
+            *self._by_hardware_id.get(hardware_id, []),
+            (None, _DUMMY_HASH),
+        ]
+        for record, stored_hash in candidates:
+            if hmac.compare_digest(computed, stored_hash) and record is not None:
+                found = record
+        return found
+
+    async def get(self, tenant_id: TenantId, device_id: DeviceId) -> SystemDeviceRecord | None:
+        return self._by_id.get((tenant_id, device_id))

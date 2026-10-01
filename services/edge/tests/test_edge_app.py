@@ -11,6 +11,7 @@ import respx
 import uvicorn
 
 from factotum.common.config import Environment
+from factotum.common.tokens import MIN_SECRET_BYTES
 from factotum.contracts.edge import MAX_FRAME_BYTES
 from factotum.contracts.errors import AuthError
 from factotum.edge import __main__ as entry
@@ -25,6 +26,9 @@ devices:
     owner: tenant
     capabilities: [audio_in, audio_out]
 """
+
+SECRET = "s" * MIN_SECRET_BYTES
+HUB = "http://hub.test"
 
 
 def settings_for(**values: Any) -> EdgeSettings:
@@ -79,6 +83,29 @@ class TestStartingUp:
             build_app(settings_for())
 
         assert "no device can connect" in caplog.text
+
+    def test_it_starts_in_production_once_the_hub_is_configured(self) -> None:
+        app = build_app(
+            EdgeSettings(
+                _env_file=None,
+                environment=Environment.PRODUCTION,
+                hub_token_secret=SECRET,  # type: ignore[arg-type]
+                edge_hub_url=HUB,  # type: ignore[arg-type]
+            )
+        )
+
+        assert {"/v1/connect", "/v1/devices", "/healthz", "/readyz"} <= {
+            route.path  # type: ignore[attr-defined]
+            for route in app.routes
+        }
+
+    def test_it_does_not_touch_the_file_of_devices_once_the_hub_is_configured(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="factotum.edge"):
+            build_app(settings_for(hub_token_secret=SECRET, edge_hub_url=HUB))
+
+        assert "no device can connect" not in caplog.text
 
 
 class TestOnceItIsUp:

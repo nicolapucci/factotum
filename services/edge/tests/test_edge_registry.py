@@ -1,17 +1,27 @@
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from factotum.common.config import Environment, ServiceSettings
+from factotum.common.credentials import hash_credential, new_credential
+from factotum.common.devauth import DevPrincipalDelegation
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import AuthError
-from factotum.contracts.identity import OwnerKind, Role, SubjectKind
-from factotum.contracts.ids import DeviceId
-from factotum.contracts.testing import make_tenant_id, make_user_id
+from factotum.contracts.hub import DeviceList, SystemDeviceWithCredential
+from factotum.contracts.identity import Owner, OwnerKind, Role, Subject, SubjectKind
+from factotum.contracts.ids import DeviceId, TenantId
+from factotum.contracts.testing import (
+    make_device_id,
+    make_system_device,
+    make_tenant_id,
+    make_user_id,
+)
 from factotum.edge.registry import (
     FileDeviceRegistry,
+    HubDeviceRegistry,
     device_id_for,
     load_devices,
     load_devices_file,
@@ -286,3 +296,130 @@ class TestTheExampleFile:
         assert hallway is not None
         assert study is not None
         assert Capability.AUDIO_IN not in hallway.capabilities | study.capabilities
+
+
+HUB_TENANT: TenantId = make_tenant_id()
+
+
+class Hub:
+    """A hub that records what it is asked and answers with the devices it is told to."""
+
+    def __init__(self) -> None:
+        self.sent: list[httpx.Request] = []
+        self.devices = DeviceList()
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.sent.append(request)
+        return httpx.Response(200, content=self.devices.model_dump_json())
+
+    def registry(self, tenant_id: TenantId = HUB_TENANT) -> HubDeviceRegistry:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(self), base_url="http://hub.test")
+        return HubDeviceRegistry(client, DevPrincipalDelegation(TEST), tenant_id)
+
+
+def paired(token: str, **changes: object) -> SystemDeviceWithCredential:
+    device = make_system_device(tenant_id=HUB_TENANT, **changes)  # type: ignore[arg-type]
+    return SystemDeviceWithCredential(device=device, credential_hash=hash_credential(token))
+
+
+class TestTheHubRegistry:
+    async def test_it_knows_nobody_before_it_is_loaded(self) -> None:
+        registry = Hub().registry()
+
+        assert await registry.authenticate("kitchen-01", "whatever") is None
+
+    async def test_reload_asks_the_hub_for_the_tenants_devices_as_the_tenant(self) -> None:
+        hub = Hub()
+        registry = hub.registry()
+
+        await registry.reload()
+
+        [request] = hub.sent
+        assert request.url.path == "/v1/devices"
+        assert request.headers["x-factotum-dev-subject"] == "tenant"
+
+    async def test_a_device_is_known_by_its_hardware_id_and_its_credential_once_loaded(
+        self,
+    ) -> None:
+        token = new_credential()
+        hub = Hub()
+        hub.devices = DeviceList(system=(paired(token, hardware_id="kitchen-01"),))
+        registry = hub.registry()
+        await registry.reload()
+
+        found = await registry.authenticate("kitchen-01", token)
+
+        assert found is not None
+        assert found.hardware_id == "kitchen-01"
+
+    @pytest.mark.parametrize(
+        ("hardware_id", "wrong_token"),
+        [
+            ("kitchen-01", "not-the-credential"),
+            ("hallway-01", "kitchen-credential"),
+            ("nobody-01", "kitchen-credential"),
+            ("kitchen-01", ""),
+        ],
+    )
+    async def test_anything_else_is_nobody(self, hardware_id: str, wrong_token: str) -> None:
+        hub = Hub()
+        hub.devices = DeviceList(system=(paired("kitchen-credential", hardware_id="kitchen-01"),))
+        registry = hub.registry()
+        await registry.reload()
+
+        assert await registry.authenticate(hardware_id, wrong_token) is None
+
+    async def test_a_device_is_found_by_its_id_in_its_own_tenant_only(self) -> None:
+        hub = Hub()
+        hub.devices = DeviceList(system=(paired("kitchen-credential", hardware_id="kitchen-01"),))
+        registry = hub.registry()
+        await registry.reload()
+        kitchen = await registry.authenticate("kitchen-01", "kitchen-credential")
+        assert kitchen is not None
+
+        assert await registry.get(HUB_TENANT, kitchen.id) == kitchen
+        assert await registry.get(make_tenant_id(), kitchen.id) is None
+        assert await registry.get(HUB_TENANT, make_device_id()) is None
+
+    async def test_reloading_again_replaces_what_was_there_before(self) -> None:
+        hub = Hub()
+        hub.devices = DeviceList(system=(paired("first-credential", hardware_id="kitchen-01"),))
+        registry = hub.registry()
+        await registry.reload()
+
+        hub.devices = DeviceList(system=(paired("second-credential", hardware_id="hallway-01"),))
+        await registry.reload()
+
+        assert await registry.authenticate("kitchen-01", "first-credential") is None
+        assert await registry.authenticate("hallway-01", "second-credential") is not None
+
+    async def test_a_device_acts_for_its_kind_of_owner_once_fetched_from_the_hub(self) -> None:
+        hub = Hub()
+        hub.devices = DeviceList(
+            system=(
+                paired(
+                    "shared-credential",
+                    hardware_id="kitchen-01",
+                    owner=Owner.of_subject(Subject.tenant(HUB_TENANT)),
+                ),
+            )
+        )
+        registry = hub.registry()
+        await registry.reload()
+
+        kitchen = await registry.authenticate("kitchen-01", "shared-credential")
+
+        assert kitchen is not None
+        assert kitchen.owner.kind is OwnerKind.TENANT
+
+    async def test_a_hub_that_answers_with_an_error_is_not_swallowed(self) -> None:
+        def refuse(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503)
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(refuse), base_url="http://hub.test"
+        )
+        registry = HubDeviceRegistry(client, DevPrincipalDelegation(TEST), HUB_TENANT)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await registry.reload()
