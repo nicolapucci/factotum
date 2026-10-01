@@ -204,9 +204,9 @@ services:
     # `docker compose up`: it needs the "services" profile. Without FACTOTUM_HUB_TOKEN_SECRET it
     # reads devices and secrets from config/devices.dev.yaml and config/secrets.dev.yaml (copy the
     # example files) and only runs with FACTOTUM_ENVIRONMENT=development; with it, it runs anywhere,
-    # and the hub registers devices and bindings instead (secrets are still a file, until a later
-    # slice). It runs the script of a skill in the runner and has a device do what it answers with
-    # through the edge; it is given neither an engine nor a device connection itself.
+    # and the hub registers devices and bindings and keeps secrets instead. It runs the script of a
+    # skill in the runner and has a device do what it answers with through the edge; it is given
+    # neither an engine nor a device connection itself.
     profiles: ["services"]
     build:
       context: .
@@ -241,9 +241,9 @@ services:
       FACTOTUM_ACTIONS_RUNNER_URL: http://runner:8086
       FACTOTUM_ACTIONS_EDGE_URL: http://edge:8084
       FACTOTUM_ACTIONS_DEVICES_FILE: /etc/factotum/devices.dev.yaml
-      # Used only once FACTOTUM_HUB_TOKEN_SECRET is also set, in place of the file above.
-      FACTOTUM_ACTIONS_HUB_URL: http://hub:8087
       FACTOTUM_ACTIONS_SECRETS_FILE: /etc/factotum/secrets.dev.yaml
+      # Used only once FACTOTUM_HUB_TOKEN_SECRET is also set, in place of the two files above.
+      FACTOTUM_ACTIONS_HUB_URL: http://hub:8087
       FACTOTUM_ACTIONS_SKILLS_DIR: /skills
       FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR: ${FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR:-false}
       FACTOTUM_ACTIONS_MATCH_THRESHOLD: ${FACTOTUM_ACTIONS_MATCH_THRESHOLD:-0.45}
