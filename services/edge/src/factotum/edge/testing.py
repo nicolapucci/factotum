@@ -14,6 +14,7 @@ import uvicorn
 
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DevAuthenticator
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.conversation import (
@@ -203,6 +204,46 @@ class FakeConversation:
         return self.ready_answer
 
 
+DEFAULT_CLIP = AudioPayload(sample_rate=16000, data=b"spoken-aloud")
+DEFAULT_TRANSCRIPTION = "what was said"
+
+
+class FakeSpeech:
+    """The model gateway's speech roles, answering as told. Without a script, ``transcribe``
+    returns ``DEFAULT_TRANSCRIPTION`` and ``synthesize`` returns ``DEFAULT_CLIP``, so a test that
+    only cares that *something* was heard or spoken need not script either."""
+
+    def __init__(self) -> None:
+        self.transcriptions: list[tuple[Owner, AudioPayload]] = []
+        self.syntheses: list[tuple[Owner, str]] = []
+        self._transcribe_script: list[str | Exception] = []
+        self._synthesize_script: list[AudioPayload | Exception] = []
+
+    def will_transcribe(self, *outcomes: str | Exception) -> "FakeSpeech":
+        self._transcribe_script.extend(outcomes)
+        return self
+
+    def will_synthesize(self, *outcomes: AudioPayload | Exception) -> "FakeSpeech":
+        self._synthesize_script.extend(outcomes)
+        return self
+
+    async def transcribe(self, owner: Owner, audio: AudioPayload) -> str:
+        self.transcriptions.append((owner, audio))
+        outcome = (
+            self._transcribe_script.pop(0) if self._transcribe_script else DEFAULT_TRANSCRIPTION
+        )
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def synthesize(self, owner: Owner, text: str) -> AudioPayload:
+        self.syntheses.append((owner, text))
+        outcome = self._synthesize_script.pop(0) if self._synthesize_script else DEFAULT_CLIP
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 TEST = ServiceSettings(_env_file=None, environment=Environment.TEST)
 TENANT = make_tenant_id()
 USER = make_user_id()
@@ -282,12 +323,14 @@ class Rig:
         self,
         *devices: tuple[SystemDeviceRecord, str],
         settings: SessionSettings | None = None,
+        speech: FakeSpeech | None = None,
         new_id: Callable[[str], str] | None = None,
     ) -> None:
         self.devices = devices or (make_device(),)
         self.registry = FileDeviceRegistry(TEST, list(self.devices))
         self.sessions = Sessions()
         self.conversation = FakeConversation()
+        self.speech = speech
         self.settings = settings or quick_settings()
         self._new_id = new_id
         self._tasks: list[asyncio.Task[None]] = []
@@ -314,6 +357,7 @@ class Rig:
             registry=self.registry,
             directory=self.sessions,
             conversation=self.conversation,
+            speech=self.speech,
             settings=self.settings,
             **extra,
         )
@@ -379,6 +423,7 @@ async def serving(rig: Rig) -> AsyncIterator[Serving]:
         sessions=rig.sessions,
         registry=rig.registry,
         conversation=rig.conversation,
+        speech=rig.speech,
         session_settings=rig.settings,
     )
     server = ReportingServer(

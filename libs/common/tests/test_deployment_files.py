@@ -89,6 +89,15 @@ def test_the_edge_finds_the_conversation_service_by_name_and_has_no_database_of_
     assert not [key for key in environment if key.startswith("FACTOTUM_POSTGRES")]
 
 
+def test_the_edge_finds_the_model_gateway_by_name_but_does_not_depend_on_it() -> None:
+    edge = SERVICES["edge"]
+
+    assert edge["environment"]["FACTOTUM_EDGE_GATEWAY_URL"] == "http://model-gateway:8081"
+    # Unlike the conversation service, a device of text alone never needs it: no wait condition,
+    # the same way knowledge, conversation and actions name it without waiting for it either.
+    assert "model-gateway" not in edge["depends_on"]
+
+
 def test_the_edge_reads_its_devices_from_where_the_config_folder_is_mounted() -> None:
     edge = SERVICES["edge"]
     folder = edge["environment"]["FACTOTUM_EDGE_DEVICES_FILE"].rsplit("/", 1)[0]

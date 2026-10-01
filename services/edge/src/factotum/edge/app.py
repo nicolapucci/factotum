@@ -29,6 +29,7 @@ from factotum.edge.registry import (
 from factotum.edge.router import Sessions
 from factotum.edge.session import SessionSettings
 from factotum.edge.settings import EdgeSettings
+from factotum.model_client import GatewaySpeech, delegation_for
 
 logger = logging.getLogger("factotum.edge")
 
@@ -60,6 +61,12 @@ def build_app(settings: EdgeSettings) -> FastAPI:
     else:
         registry = _file_registry(settings)
 
+    gateway_client: httpx.AsyncClient | None = None
+    speech: GatewaySpeech | None = None
+    if settings.edge_gateway_url is not None:
+        gateway_client = httpx.AsyncClient(base_url=str(settings.edge_gateway_url))
+        speech = GatewaySpeech(gateway_client, delegation_for(settings, SINGLE_TENANT_ID))
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as stack:
@@ -68,6 +75,8 @@ def build_app(settings: EdgeSettings) -> FastAPI:
             if hub_client is not None and hub_registry is not None:
                 stack.push_async_callback(hub_client.aclose)
                 await hub_registry.reload()
+            if gateway_client is not None:
+                stack.push_async_callback(gateway_client.aclose)
             yield
 
     return create_app(
@@ -75,6 +84,7 @@ def build_app(settings: EdgeSettings) -> FastAPI:
         sessions=sessions,
         registry=registry,
         conversation=ConversationClient(client, delegation),
+        speech=speech,
         session_settings=SessionSettings.of(settings),
         docs=not settings.is_production,
         lifespan=lifespan,

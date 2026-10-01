@@ -20,7 +20,7 @@ from factotum.contracts.ids import DeviceId
 from factotum.edge.conversation import TurnSource
 from factotum.edge.registry import DeviceRegistry
 from factotum.edge.router import EdgeDevice, Sessions
-from factotum.edge.session import Disconnected, Session, SessionSettings
+from factotum.edge.session import Disconnected, Session, SessionSettings, SpeechSource
 from factotum.web import Authenticator, Caller, create_base_app
 
 MAX_BODY_BYTES = 64 * 1024
@@ -63,6 +63,7 @@ def create_app(
     sessions: Sessions,
     registry: DeviceRegistry,
     conversation: TurnSource,
+    speech: SpeechSource | None = None,
     session_settings: SessionSettings | None = None,
     docs: bool = False,
     lifespan: Lifespan[FastAPI] | None = None,
@@ -111,6 +112,7 @@ def create_app(
             registry=registry,
             directory=sessions,
             conversation=conversation,
+            speech=speech,
             settings=session_settings,
         ).run()
 

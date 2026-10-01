@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
@@ -27,6 +28,7 @@ from factotum.contracts.edge import (
     MAX_FRAME_BYTES,
     PROTOCOL_VERSION,
     Ack,
+    AudioUtterance,
     Bye,
     Cancel,
     CloseCode,
@@ -34,16 +36,23 @@ from factotum.contracts.edge import (
     TurnStatus,
     Utterance,
 )
-from factotum.contracts.errors import CapabilityNotSupportedError, ChatNotConfiguredError
+from factotum.contracts.errors import (
+    CapabilityNotSupportedError,
+    ChatNotConfiguredError,
+    SttNotConfiguredError,
+    TtsNotConfiguredError,
+)
 from factotum.contracts.identity import SubjectKind
 from factotum.contracts.ids import ConversationId, ExchangeId
 from factotum.contracts.response import CardPart, Speech, StatusPart, StatusState, Text
 from factotum.edge.session import Session
 from factotum.edge.testing import (
+    DEFAULT_CLIP,
     HANG,
     SPEAKER,
     TENANT,
     USER,
+    FakeSpeech,
     Rig,
     Step,
     answer,
@@ -52,6 +61,8 @@ from factotum.edge.testing import (
     make_device,
     quick_settings,
 )
+
+RECORDING = AudioPayload(sample_rate=16000, data=b"raw-microphone-bytes")
 
 LONG_ENOUGH = "Hold the reset button for ten seconds. "
 
@@ -412,6 +423,138 @@ class TestAnswering:
             await connected.wire.wait_for("pong")
 
             assert len(connected.wire.sent) == before + 1  # only the pong
+
+
+class TestAnAudioUtterance:
+    async def test_a_recording_is_transcribed_and_answered_like_an_utterance(self) -> None:
+        speech = FakeSpeech().will_transcribe("how do I reset the router?")
+        async with Rig(speech=speech) as rig:
+            connected = await rig.connect()
+
+            connected.wire.say(AudioUtterance(id="u1", audio=RECORDING))
+            [ended] = await connected.wire.wait_for("turn_ended")
+
+            assert [audio for _, audio in speech.transcriptions] == [RECORDING]
+            assert [text for _, text in rig.conversation.turns] == ["how do I reset the router?"]
+            assert (ended.utterance_id, ended.status) == ("u1", TurnStatus.FINISHED)
+
+    async def test_a_blank_transcription_ends_the_turn_without_asking_the_conversation(
+        self,
+    ) -> None:
+        speech = FakeSpeech().will_transcribe("   ")
+        async with Rig(speech=speech) as rig:
+            connected = await rig.connect()
+
+            connected.wire.say(AudioUtterance(id="u1", audio=RECORDING))
+            [ended] = await connected.wire.wait_for("turn_ended")
+
+            assert (ended.status, ended.code) == (TurnStatus.FAILED, "nothing_heard")
+            assert rig.conversation.turns == []
+
+    async def test_a_device_with_no_microphone_cannot_send_a_recording_either(self) -> None:
+        player = make_device(capabilities=[Capability.AUDIO_OUT])
+        async with Rig(player, speech=FakeSpeech()) as rig:
+            connected = await rig.connect()
+
+            connected.wire.say(AudioUtterance(id="u1", audio=RECORDING))
+            [error] = await connected.wire.wait_for("error")
+            connected.wire.say(Ping())
+            await connected.wire.wait_for("pong")
+
+            assert (error.code, error.fatal, error.ref) == ("capability_missing", False, "u1")
+            assert connected.wire.closed_with is None
+
+    async def test_without_a_speech_client_a_recording_is_refused_but_the_device_stays(
+        self,
+    ) -> None:
+        async with Rig() as rig:  # no speech= given
+            connected = await rig.connect()
+
+            connected.wire.say(AudioUtterance(id="u1", audio=RECORDING))
+            [error] = await connected.wire.wait_for("error")
+            connected.wire.say(Ping())
+            await connected.wire.wait_for("pong")
+
+            assert (error.code, error.fatal, error.ref) == ("speech_not_configured", False, "u1")
+            assert connected.wire.closed_with is None
+
+    async def test_a_failure_to_transcribe_ends_the_turn_with_its_code(self) -> None:
+        speech = FakeSpeech().will_transcribe(
+            SttNotConfiguredError("no speech-to-text model is set up for the owner")
+        )
+        async with Rig(speech=speech) as rig:
+            connected = await rig.connect()
+
+            connected.wire.say(AudioUtterance(id="u1", audio=RECORDING))
+            [ended] = await connected.wire.wait_for("turn_ended")
+
+            assert (ended.status, ended.code) == (TurnStatus.FAILED, "stt_not_configured")
+            assert rig.conversation.turns == []
+
+    async def test_a_recording_interrupts_the_answer_to_the_one_before(self) -> None:
+        speech = FakeSpeech().will_transcribe("never mind, what time is it?")
+        async with Rig(speech=speech) as rig:
+            connected = await rig.connect()
+            rig.conversation.scripts.append(going_on())
+
+            connected.wire.say(Utterance(id="u1", text="how do I reset the router?"))
+            await connected.wire.wait_for("part", count=2)
+            connected.wire.say(AudioUtterance(id="u2", audio=RECORDING))
+            ended = await connected.wire.wait_for("turn_ended", count=2)
+
+            assert [(e.utterance_id, e.status) for e in ended] == [
+                ("u1", TurnStatus.CANCELLED),
+                ("u2", TurnStatus.FINISHED),
+            ]
+
+
+class TestSpeakingTheAnswer:
+    async def test_a_speaker_gets_the_answer_synthesized_too(self) -> None:
+        speech = FakeSpeech()
+        async with Rig(speech=speech) as rig:
+            connected = await rig.connect()
+
+            connected.wire.say(Utterance(id="u1", text="hello"))
+            await connected.wire.wait_for("turn_ended")
+
+            [part] = [p for p in parts_of(connected.wire.frames("part")) if isinstance(p, Speech)]
+            assert part.audio == DEFAULT_CLIP
+            assert [text for _, text in speech.syntheses] == [part.text]
+
+    async def test_without_a_tts_binding_the_words_still_go_out(self) -> None:
+        speech = FakeSpeech().will_synthesize(
+            TtsNotConfiguredError("no text-to-speech model is set up for the owner")
+        )
+        async with Rig(speech=speech) as rig:
+            connected = await rig.connect()
+
+            connected.wire.say(Utterance(id="u1", text="hello"))
+            await connected.wire.wait_for("turn_ended")
+
+            [part] = [p for p in parts_of(connected.wire.frames("part")) if isinstance(p, Speech)]
+            assert part.audio is None
+            assert part.text  # the words are not lost for want of a voice
+
+    async def test_without_a_speech_client_the_words_still_go_out_as_text_alone(self) -> None:
+        async with Rig() as rig:  # no speech= given
+            connected = await rig.connect()
+
+            connected.wire.say(Utterance(id="u1", text="hello"))
+            await connected.wire.wait_for("turn_ended")
+
+            [part] = [p for p in parts_of(connected.wire.frames("part")) if isinstance(p, Speech)]
+            assert part.audio is None
+
+    async def test_a_screen_with_no_speaker_is_never_asked_to_synthesize_anything(self) -> None:
+        speech = FakeSpeech()
+        screen = make_device(capabilities=[Capability.AUDIO_IN, Capability.DISPLAY])
+        async with Rig(screen, speech=speech) as rig:
+            connected = await rig.connect()
+
+            connected.wire.say(Utterance(id="u1", text="hello"))
+            await connected.wire.wait_for("turn_ended")
+
+            assert speech.syntheses == []
 
 
 class TestWhenAnAnswerFails:

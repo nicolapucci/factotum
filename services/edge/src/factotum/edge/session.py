@@ -24,6 +24,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.commands import CommandResult, CommandStatus, DeviceCommand
 from factotum.contracts.conversation import Failed
@@ -31,6 +32,7 @@ from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
     Ack,
+    AudioUtterance,
     Bye,
     Cancel,
     CloseCode,
@@ -48,9 +50,9 @@ from factotum.contracts.edge import (
     encode_frame,
 )
 from factotum.contracts.errors import FactotumError, InvalidFrameError
-from factotum.contracts.identity import Principal, Role
+from factotum.contracts.identity import Owner, Principal, Role
 from factotum.contracts.ids import DeviceId, TenantId
-from factotum.contracts.response import ResponsePart
+from factotum.contracts.response import ResponsePart, Speech
 from factotum.edge.conversation import TurnSource
 from factotum.edge.parts import TurnParts
 from factotum.edge.registry import DeviceRegistry, principal_of
@@ -83,6 +85,16 @@ class SessionDirectory(Protocol):
     async def attach(self, session: "Session") -> None: ...
 
     def detach(self, session: "Session") -> None: ...
+
+
+class SpeechSource(Protocol):
+    """What a session needs to turn a recording into words, and words into one, for the owner the
+    principal acts as. ``None`` where a session is given none: an ``audio_utterance`` is then
+    refused, and a ``Speech`` part goes out as text alone."""
+
+    async def transcribe(self, owner: Owner, audio: AudioPayload) -> str: ...
+
+    async def synthesize(self, owner: Owner, text: str) -> AudioPayload: ...
 
 
 class SessionSettings:
@@ -130,6 +142,7 @@ class Session:
         registry: DeviceRegistry,
         directory: SessionDirectory,
         conversation: TurnSource,
+        speech: SpeechSource | None = None,
         settings: SessionSettings | None = None,
         now: Callable[[], datetime] = _utc_now,
         new_id: Callable[[str], str] = _new_id,
@@ -138,6 +151,7 @@ class Session:
         self._registry = registry
         self._directory = directory
         self._conversation = conversation
+        self._speech = speech
         self._settings = settings or SessionSettings()
         self._new_id = new_id
         self._send_lock = asyncio.Lock()
@@ -289,6 +303,8 @@ class Session:
                     await self._send(Pong())
                 case Utterance():
                     await self._on_utterance(frame)
+                case AudioUtterance():
+                    await self._on_audio_utterance(frame)
                 case Cancel():
                     await self._on_cancel(frame)
                 case Ack():
@@ -348,7 +364,33 @@ class Session:
             )
             return
         await self._stop_turn()  # the person spoke over the answer to the last one
-        task = asyncio.create_task(self._answer(utterance), name=f"turn-{utterance.id}")
+        task = asyncio.create_task(
+            self._answer(utterance.id, utterance.text), name=f"turn-{utterance.id}"
+        )
+        self._turn = (utterance.id, task)
+
+    async def _on_audio_utterance(self, utterance: AudioUtterance) -> None:
+        if Capability.AUDIO_IN not in self.capabilities:
+            await self._send(
+                ErrorFrame(
+                    code="capability_missing",
+                    message="the device did not declare a microphone, so it cannot start a "
+                    "conversation",
+                    ref=utterance.id,
+                )
+            )
+            return
+        if self._speech is None:
+            await self._send(
+                ErrorFrame(
+                    code="speech_not_configured",
+                    message="the edge cannot turn a recording into words",
+                    ref=utterance.id,
+                )
+            )
+            return
+        await self._stop_turn()  # the person spoke over the answer to the last one
+        task = asyncio.create_task(self._answer_audio(utterance), name=f"turn-{utterance.id}")
         self._turn = (utterance.id, task)
 
     async def _on_cancel(self, cancel: Cancel) -> None:
@@ -372,7 +414,59 @@ class Session:
 
     # ---- what the edge says ----
 
-    async def _answer(self, utterance: Utterance) -> None:
+    async def _answer_audio(self, utterance: AudioUtterance) -> None:
+        assert self.principal is not None  # noqa: S101 - a session that answers has said hello
+        assert self._speech is not None  # noqa: S101 - checked by _on_audio_utterance
+        try:
+            text = await self._speech.transcribe(
+                Owner.of_subject(self.principal.acts_as), utterance.audio
+            )
+        except asyncio.CancelledError:
+            raise
+        except FactotumError as error:
+            await self._end_unheard(utterance.id, error.code, error.message)
+            return
+        except Exception:
+            logger.exception(
+                "a recording could not be transcribed", extra={"session": self.session_id}
+            )
+            await self._end_unheard(utterance.id, "internal_error", "I could not hear that.")
+            return
+        if not text.strip():
+            await self._end_unheard(utterance.id, "nothing_heard", "I didn't catch that.")
+            return
+        await self._answer(utterance.id, text)
+
+    async def _end_unheard(self, utterance_id: str, code: str, message: str) -> None:
+        """A recording that was never turned into words ends its turn here and now: there is no
+        text to run through the conversation, and nothing was said yet to take back."""
+        with contextlib.suppress(Disconnected):
+            await self._send(
+                TurnEnded(
+                    utterance_id=utterance_id, status=TurnStatus.FAILED, code=code, message=message
+                )
+            )
+
+    async def _spoken(self, part: Speech) -> Speech:
+        """``part`` with ``audio`` filled in, when a text-to-speech model is bound; unchanged
+        otherwise, so a device without one still gets the words to show or to read out itself."""
+        if self._speech is None:
+            return part
+        assert self.principal is not None  # noqa: S101 - a session that answers has said hello
+        try:
+            audio = await self._speech.synthesize(
+                Owner.of_subject(self.principal.acts_as), part.text
+            )
+        except FactotumError:
+            return part
+        except Exception:
+            logger.exception(
+                "a sentence could not be synthesized", extra={"session": self.session_id}
+            )
+            return part
+        return part.model_copy(update={"audio": audio})
+
+    async def _answer(self, utterance_id: str, text: str) -> None:
         assert self.principal is not None  # noqa: S101 - a session that answers has said hello
         parts = TurnParts(self.capabilities)
         seq = 0
@@ -381,11 +475,13 @@ class Session:
         async def deliver(items: list[ResponsePart]) -> None:
             nonlocal seq
             for part in items:
-                await self._send(PartFrame(utterance_id=utterance.id, seq=seq, part=part))
+                if isinstance(part, Speech):
+                    part = await self._spoken(part)
+                await self._send(PartFrame(utterance_id=utterance_id, seq=seq, part=part))
                 seq += 1
 
         try:
-            events = self._conversation.turn(self.principal, utterance.text)
+            events = self._conversation.turn(self.principal, text)
             async with contextlib.aclosing(events):
                 async for event in events:
                     await deliver(parts.feed(event))
@@ -394,7 +490,7 @@ class Session:
             await deliver(parts.finish())
         except asyncio.CancelledError:
             with contextlib.suppress(Disconnected):
-                await self._send(TurnEnded(utterance_id=utterance.id, status=TurnStatus.CANCELLED))
+                await self._send(TurnEnded(utterance_id=utterance_id, status=TurnStatus.CANCELLED))
             raise
         except Disconnected:
             return
@@ -413,7 +509,7 @@ class Session:
                 return
         with contextlib.suppress(Disconnected):
             await self._send(
-                TurnEnded(utterance_id=utterance.id, status=status, code=code, message=message)
+                TurnEnded(utterance_id=utterance_id, status=status, code=code, message=message)
             )
 
     async def _send(

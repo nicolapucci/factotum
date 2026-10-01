@@ -54,12 +54,17 @@ services:
       FACTOTUM_GATEWAY_BINDINGS_FILE: /etc/factotum/bindings.dev.yaml
       # Used only once FACTOTUM_HUB_TOKEN_SECRET is also set, in place of the file above.
       FACTOTUM_GATEWAY_HUB_URL: http://hub:8087
+      # Where whisper_local and piper_local run, and where they keep what they downloaded so a
+      # restarted container does not fetch it again.
+      FACTOTUM_GATEWAY_SPEECH_DEVICE: ${FACTOTUM_GATEWAY_SPEECH_DEVICE:-cpu}
+      FACTOTUM_GATEWAY_SPEECH_CACHE_DIR: /data/speech-models
       # Keys reach the container only through the environment, and only the ones named here.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - ./config:/etc/factotum:ro
+      - speech_models:/data/speech-models
     extra_hosts:
       # A model on the host (Ollama, LM Studio) is reachable as host.docker.internal.
       - "host.docker.internal:host-gateway"
@@ -179,9 +184,10 @@ services:
       FACTOTUM_LOG_LEVEL: ${FACTOTUM_LOG_LEVEL:-INFO}
       FACTOTUM_LOG_JSON: ${FACTOTUM_LOG_JSON:-true}
       FACTOTUM_HUB_TOKEN_SECRET: ${FACTOTUM_HUB_TOKEN_SECRET:-}
-      # It asks the conversation service for every answer and knows nothing else: no database, no
-      # model, no key, no document.
+      # It asks the conversation service for every answer, and the model gateway to turn a
+      # recording into words and back. No database, no key, no document, and no model of its own.
       FACTOTUM_EDGE_CONVERSATION_URL: http://conversation:8083
+      FACTOTUM_EDGE_GATEWAY_URL: http://model-gateway:8081
       FACTOTUM_EDGE_DEVICES_FILE: /etc/factotum/devices.dev.yaml
       # Used only once FACTOTUM_HUB_TOKEN_SECRET is also set, in place of the file above.
       FACTOTUM_EDGE_HUB_URL: http://hub:8087
@@ -415,3 +421,4 @@ networks:
 
 volumes:
   postgres_data:
+  speech_models:

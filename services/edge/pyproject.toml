@@ -7,6 +7,7 @@ dependencies = [
   "factotum-contracts",
   "factotum-common",
   "factotum-devices",
+  "factotum-model-client",
   "factotum-web",
   "fastapi>=0.115",
   "httpx>=0.28",
@@ -26,4 +27,5 @@ packages = ["src/factotum"]
 factotum-contracts = { workspace = true }
 factotum-common = { workspace = true }
 factotum-devices = { workspace = true }
+factotum-model-client = { workspace = true }
 factotum-web = { workspace = true }

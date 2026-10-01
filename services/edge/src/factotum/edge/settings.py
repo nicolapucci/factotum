@@ -30,6 +30,11 @@ class EdgeSettings(ServiceSettings):
     """Where the hub is: once a token secret is configured, the system devices it registered for
     the tenant are fetched from here instead of the file above."""
 
+    edge_gateway_url: AnyHttpUrl | None = None
+    """Where the model gateway is: asked to turn a recording into words and words into one, for a
+    device that sends an audio_utterance or declares audio_out. Without one, a recording is
+    refused and a Speech part always goes out as text alone."""
+
     edge_hello_timeout_s: float = Field(default=10.0, gt=0, le=120)
     """How long a connection may take to say who it is before it is closed."""
 
