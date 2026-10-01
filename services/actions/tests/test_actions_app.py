@@ -122,20 +122,18 @@ class TestStartingUp:
         with pytest.raises(AuthError, match="disabled"):
             build_app(ActionsSettings(_env_file=None, environment=Environment.PRODUCTION))
 
-    def test_the_hub_spares_it_the_file_of_devices_error_in_production(self) -> None:
-        # Configuring the hub does not yet start the service in production: the model gateway is
-        # still asked for with the development delegation (the owner of a model binding is not
-        # yet proven to it by a hub token). What this confirms is narrower: the earlier failure is
-        # no longer about the file of devices, which the hub now spares it from reading.
-        with pytest.raises(AuthError, match="development delegation"):
-            build_app(
-                ActionsSettings(
-                    _env_file=None,
-                    environment=Environment.PRODUCTION,
-                    hub_token_secret=SECRET,  # type: ignore[arg-type]
-                    actions_hub_url=HUB,  # type: ignore[arg-type]
-                )
+    def test_it_starts_in_production_once_the_hub_is_configured(self) -> None:
+        app = build_app(
+            ActionsSettings(
+                _env_file=None,
+                environment=Environment.PRODUCTION,
+                hub_token_secret=SECRET,  # type: ignore[arg-type]
+                actions_hub_url=HUB,  # type: ignore[arg-type]
             )
+        )
+
+        paths = {route.path for route in app.routes}  # type: ignore[attr-defined]
+        assert {"/v1/act", "/v1/skills", "/v1/audit", "/healthz", "/readyz"} <= paths
 
     def test_it_does_not_touch_the_file_of_devices_once_the_hub_is_configured(
         self, caplog: pytest.LogCaptureFixture

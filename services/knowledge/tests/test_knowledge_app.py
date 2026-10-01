@@ -10,6 +10,7 @@ import respx
 from pydantic import AnyHttpUrl
 
 from factotum.common.config import Environment
+from factotum.common.tokens import MIN_SECRET_BYTES
 from factotum.contracts.errors import AuthError
 from factotum.db.pool import Database
 from factotum.db.settings import DatabaseSettings
@@ -18,6 +19,7 @@ from factotum.knowledge.settings import KnowledgeSettings
 from factotum.knowledge.testing import FakeEmbedder, wipe
 
 GATEWAY = "http://gateway.test"
+SECRET = "s" * MIN_SECRET_BYTES
 TEXT = (
     "To restore the factory settings of the router, hold the reset button for ten seconds "
     "until the light blinks. The warranty covers manufacturing defects for two years."
@@ -43,6 +45,17 @@ class TestStartingUp:
     def test_it_does_not_start_in_production(self) -> None:
         with pytest.raises(AuthError, match="disabled"):
             build_app(KnowledgeSettings(_env_file=None, environment=Environment.PRODUCTION))
+
+    def test_it_starts_in_production_once_the_hub_is_configured(self) -> None:
+        app = build_app(
+            KnowledgeSettings(
+                _env_file=None,
+                environment=Environment.PRODUCTION,
+                hub_token_secret=SECRET,  # type: ignore[arg-type]
+            )
+        )
+
+        assert {"/v1/search", "/healthz", "/readyz"} <= {route.path for route in app.routes}  # type: ignore[attr-defined]
 
     @pytest.mark.parametrize("environment", [Environment.DEVELOPMENT, Environment.TEST])
     def test_it_starts_in_development_and_in_tests(self, environment: Environment) -> None:

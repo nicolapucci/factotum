@@ -9,7 +9,13 @@ from factotum.model_client.embedder import (
     Embedder,
     GatewayEmbedder,
 )
-from factotum.model_client.gateway import Delegation, DevDelegation, error_from
+from factotum.model_client.gateway import (
+    Delegation,
+    DevDelegation,
+    HubDelegation,
+    delegation_for,
+    error_from,
+)
 
 __all__ = [
     "DEFAULT_BATCH",
@@ -21,5 +27,7 @@ __all__ = [
     "Embedder",
     "GatewayChat",
     "GatewayEmbedder",
+    "HubDelegation",
+    "delegation_for",
     "error_from",
 ]

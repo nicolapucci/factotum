@@ -48,7 +48,7 @@ from factotum.common.hubauth import authenticator_for, principal_delegation_for
 from factotum.contracts.identity import SINGLE_TENANT_ID
 from factotum.db.pool import Database
 from factotum.devices.home import Home
-from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder
+from factotum.model_client import GatewayChat, GatewayEmbedder, delegation_for
 
 logger = logging.getLogger("factotum.actions")
 
@@ -80,12 +80,13 @@ def build_app(settings: ActionsSettings) -> FastAPI:
 
     Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
     otherwise the development authenticator, which refuses to exist outside development and test,
-    so without one in production this raises and the service does not start. The directory of
-    devices follows the same switch: the hub's, fetched once in the lifespan, once
-    ``FACTOTUM_ACTIONS_HUB_URL`` is also set; otherwise still a file, for development.
+    so without one in production this raises and the service does not start. Proving an owner to
+    the model gateway follows the same switch. The directory of devices follows it too: the hub's,
+    fetched once in the lifespan, once ``FACTOTUM_ACTIONS_HUB_URL`` is also set; otherwise still a
+    file, for development.
     """
     authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
-    delegation = DevDelegation(settings)
+    delegation = delegation_for(settings, SINGLE_TENANT_ID)
     principals = principal_delegation_for(settings)
     hub_client: httpx.AsyncClient | None = None
     hub_directory: HubDeviceDirectory | None = None

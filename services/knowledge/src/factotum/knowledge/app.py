@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
 from factotum.common.hubauth import authenticator_for
+from factotum.contracts.identity import SINGLE_TENANT_ID
 from factotum.db.pool import Database
 from factotum.knowledge.api import create_app
 from factotum.knowledge.ingestion import Ingestor
@@ -21,7 +22,7 @@ from factotum.knowledge.service import KnowledgeService
 from factotum.knowledge.settings import KnowledgeSettings
 from factotum.knowledge.store.postgres import PostgresStore, prepare
 from factotum.knowledge.worker import Worker
-from factotum.model_client import DevDelegation, GatewayEmbedder
+from factotum.model_client import GatewayEmbedder, delegation_for
 
 _GATEWAY_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 """Embedding a batch with a model on the machine takes seconds; reaching the gateway does not."""
@@ -35,10 +36,11 @@ def build_app(settings: KnowledgeSettings) -> FastAPI:
 
     Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
     otherwise the development authenticator, which refuses to exist outside development and test,
-    so without one in production this raises and the service does not start.
+    so without one in production this raises and the service does not start. Proving an owner to
+    the model gateway follows the same switch.
     """
     authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
-    delegation = DevDelegation(settings)
+    delegation = delegation_for(settings, SINGLE_TENANT_ID)
     holder: dict[str, Database] = {}
 
     @asynccontextmanager

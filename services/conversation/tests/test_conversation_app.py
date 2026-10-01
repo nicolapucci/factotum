@@ -11,6 +11,7 @@ import respx
 from pydantic import AnyHttpUrl
 
 from factotum.common.config import Environment
+from factotum.common.tokens import MIN_SECRET_BYTES
 from factotum.contracts.actions import ActOutcome, ActStatus
 from factotum.contracts.chat import (
     ChatMessage,
@@ -31,6 +32,7 @@ from factotum.db.settings import DatabaseSettings
 GATEWAY = "http://gateway.test"
 KNOWLEDGE = "http://knowledge.test"
 ACTIONS = "http://actions.test"
+SECRET = "s" * MIN_SECRET_BYTES
 
 
 def settings_for(database: DatabaseSettings, **values: object) -> ConversationSettings:
@@ -53,6 +55,20 @@ class TestStartingUp:
     def test_it_does_not_start_in_production(self) -> None:
         with pytest.raises(AuthError, match="disabled"):
             build_app(ConversationSettings(_env_file=None, environment=Environment.PRODUCTION))
+
+    def test_it_starts_in_production_once_the_hub_is_configured(self) -> None:
+        app = build_app(
+            ConversationSettings(
+                _env_file=None,
+                environment=Environment.PRODUCTION,
+                hub_token_secret=SECRET,  # type: ignore[arg-type]
+            )
+        )
+
+        assert {"/v1/turns", "/healthz", "/readyz"} <= {
+            route.path  # type: ignore[attr-defined]
+            for route in app.routes
+        }
 
     @pytest.mark.parametrize("environment", [Environment.DEVELOPMENT, Environment.TEST])
     def test_it_starts_in_development_and_in_tests(self, environment: Environment) -> None:

@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
 from factotum.common.hubauth import authenticator_for, principal_delegation_for
+from factotum.contracts.identity import SINGLE_TENANT_ID
 from factotum.conversation.actions import Actions, ActionsClient
 from factotum.conversation.api import create_app
 from factotum.conversation.context import PromptBuilder
@@ -26,7 +27,7 @@ from factotum.conversation.settings import ConversationSettings
 from factotum.conversation.store.postgres import PostgresStore, prepare
 from factotum.conversation.turn import TurnEngine
 from factotum.db.pool import Database
-from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder
+from factotum.model_client import GatewayChat, GatewayEmbedder, delegation_for
 
 _KNOWLEDGE_TIMEOUT = httpx.Timeout(10.0, connect=3.0)
 
@@ -36,10 +37,11 @@ def build_app(settings: ConversationSettings) -> FastAPI:
 
     Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
     otherwise the development authenticator, which refuses to exist outside development and test,
-    so without one in production this raises and the service does not start.
+    so without one in production this raises and the service does not start. Proving an owner to
+    the model gateway and to the knowledge service follows the same switch.
     """
     authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
-    delegation = DevDelegation(settings)
+    delegation = delegation_for(settings, SINGLE_TENANT_ID)
     principals = principal_delegation_for(settings)
     holder: dict[str, Database] = {}
     model_timeout = httpx.Timeout(
