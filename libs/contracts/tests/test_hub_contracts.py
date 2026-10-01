@@ -21,6 +21,10 @@ from factotum.contracts.hub import (
     ModelBindingOwner,
     ModelBindingView,
     PairedDevice,
+    SecretList,
+    SecretOwner,
+    SecretView,
+    SetSecretRequest,
     UserList,
     UserView,
 )
@@ -168,3 +172,32 @@ def test_a_model_binding_view_round_trips_through_json() -> None:
 
 def test_a_model_binding_list_defaults_to_empty() -> None:
     assert ModelBindingList().bindings == ()
+
+
+def test_a_secret_of_ones_own_defaults_to_the_tenant() -> None:
+    assert SetSecretRequest(name="HA_TOKEN", value="x").owner is SecretOwner.TENANT
+
+
+@pytest.mark.parametrize(
+    "name", ["not_upper", "lower", "FACTOTUM_HUB_TOKEN_SECRET", "PATH", "PYTHONPATH", ""]
+)
+def test_a_secret_name_a_skill_could_not_ask_for_is_refused(name: str) -> None:
+    with pytest.raises(ValidationError, match="a skill's manifest could declare"):
+        SetSecretRequest(name=name, value="x")
+
+
+def test_a_secret_needs_a_value() -> None:
+    with pytest.raises(ValidationError):
+        SetSecretRequest(name="HA_TOKEN", value="")
+
+
+def test_a_secret_view_round_trips_through_json() -> None:
+    view = SecretView(
+        name="HA_TOKEN", owner=Owner.of_subject(Subject.tenant(make_tenant_id())), value="x"
+    )
+
+    assert SecretView.model_validate_json(view.model_dump_json()) == view
+
+
+def test_a_secret_list_defaults_to_empty() -> None:
+    assert SecretList().secrets == ()

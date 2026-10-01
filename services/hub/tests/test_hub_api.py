@@ -386,3 +386,66 @@ class TestBindingAModel:
             )
 
         assert response.status_code == 422
+
+
+HA_TOKEN_BODY = {"name": "HA_TOKEN", "value": "a-long-lived-token"}
+
+
+class TestSettingASecret:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _login(http, USERNAME, PASSWORD)
+
+            response = await http.post("/v1/secrets", json=HA_TOKEN_BODY, headers=headers)
+
+        assert (response.status_code, error_code(response)) == (403, "password_change_required")
+
+    async def test_a_secret_is_set_and_listed(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+
+            created = await http.post("/v1/secrets", json=HA_TOKEN_BODY, headers=headers)
+            listed = await http.get("/v1/secrets", headers=headers)
+
+        assert (created.status_code, created.json()["value"]) == (200, "a-long-lived-token")
+        assert len(listed.json()["secrets"]) == 1
+
+    async def test_setting_the_same_name_again_replaces_it(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            await http.post("/v1/secrets", json=HA_TOKEN_BODY, headers=headers)
+
+            replaced = await http.post(
+                "/v1/secrets", json={**HA_TOKEN_BODY, "value": "a-new-token"}, headers=headers
+            )
+            listed = await http.get("/v1/secrets", headers=headers)
+
+        assert replaced.status_code == 200
+        assert [s["value"] for s in listed.json()["secrets"]] == ["a-new-token"]
+
+    async def test_a_member_may_not_set_a_secret_but_may_list(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+            await http.post("/v1/secrets", json=HA_TOKEN_BODY, headers=headers)
+            await http.post(
+                "/v1/users", json={"username": "member", "password": "x" * 10}, headers=headers
+            )
+            member_headers = await _login(http, "member", "x" * 10)
+
+            refused = await http.post("/v1/secrets", json=HA_TOKEN_BODY, headers=member_headers)
+            listed = await http.get("/v1/secrets", headers=member_headers)
+
+        assert (refused.status_code, error_code(refused)) == (403, "policy_violation")
+        assert (listed.status_code, len(listed.json()["secrets"])) == (200, 1)
+
+    async def test_a_reserved_name_is_refused(self) -> None:
+        async with client_of(await app_of()) as http:
+            headers = await _admin_headers(http)
+
+            response = await http.post(
+                "/v1/secrets",
+                json={"name": "FACTOTUM_HUB_TOKEN_SECRET", "value": "whatever"},
+                headers=headers,
+            )
+
+        assert response.status_code == 422

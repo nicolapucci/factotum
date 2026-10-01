@@ -1,8 +1,8 @@
 """What the hub keeps, and the interface it is kept behind.
 
 Tenants and their users, their devices (with a system device's credential, as a hash), the bindings
-of a skill to a device, and the bindings of a role to a model. A tenant's spaces, linked accounts
-and the secrets of its skills are later slices of the hub.
+of a skill to a device, the bindings of a role to a model, and the secrets a skill is given. A
+tenant's spaces and linked accounts are later slices of the hub.
 """
 
 from dataclasses import dataclass
@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Protocol
 
 from factotum.contracts.devices import ExternalDeviceRecord, JsonScalar, SystemDeviceRecord
-from factotum.contracts.identity import Role
+from factotum.contracts.identity import Owner, Role
 from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
 from factotum.contracts.models import ModelBinding
 
@@ -49,6 +49,15 @@ class StoredBinding:
 @dataclass(frozen=True, slots=True)
 class StoredModelBinding:
     binding: ModelBinding
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoredSecret:
+    tenant_id: TenantId
+    name: str
+    owner: Owner
+    value: str
     created_at: datetime
 
 
@@ -118,4 +127,15 @@ class HubStore(Protocol):
 
     async def list_model_bindings(self, tenant_id: TenantId) -> list[StoredModelBinding]:
         """By when they were (last) bound, the earliest first."""
+        ...
+
+    # ---- secrets
+
+    async def upsert_secret(self, secret: StoredSecret) -> None:
+        """Replaces whatever the same tenant and owner already had under this name, if anything:
+        rotating a secret is routine, not a conflict to refuse."""
+        ...
+
+    async def list_secrets(self, tenant_id: TenantId) -> list[StoredSecret]:
+        """By when they were (last) set, the earliest first."""
         ...

@@ -1,7 +1,7 @@
 """What the hub's own API says: logging in, the users of a tenant, its devices, the skills bound to
-them, and now the models bound to a role.
+them, the models bound to a role, and now the secrets a skill is given.
 
-A tenant's spaces, linked accounts and skill secrets are later slices of the hub.
+A tenant's spaces and linked accounts are later slices of the hub.
 """
 
 import re
@@ -29,6 +29,7 @@ from factotum.contracts.models import (
     ModelRole,
     ProviderKind,
 )
+from factotum.contracts.skills import is_reserved_env_name
 
 _Username = Field(min_length=1, max_length=64)
 _Password = Field(min_length=1, max_length=256)
@@ -205,3 +206,44 @@ class ModelBindingView(Contract):
 
 class ModelBindingList(Contract):
     bindings: tuple[ModelBindingView, ...] = ()
+
+
+class SecretOwner(StrEnum):
+    """Whose secret it is: the tenant's (every skill of the household may be granted it), or the
+    administrator's own (an administrator is always a person; a secret of one's own is never set
+    on a member's behalf)."""
+
+    TENANT = "tenant"
+    USER = "user"
+
+
+_SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+
+
+class SetSecretRequest(Contract):
+    """Sets, or replaces, the value of a secret a skill may be granted. Unlike a model binding's
+    ``secret_ref``, this genuinely is the value: a skill's secret (a router's password, a long-lived
+    token) has no environment variable of a shared gateway to point at instead."""
+
+    name: str
+    value: str = Field(min_length=1)
+    owner: SecretOwner = SecretOwner.TENANT
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_one_a_skill_could_ask_for(cls, name: str) -> str:
+        if not _SECRET_NAME.fullmatch(name) or is_reserved_env_name(name):
+            raise ValueError(
+                "name must be an upper-snake-case name a skill's manifest could declare"
+            )
+        return name
+
+
+class SecretView(Contract):
+    name: str
+    owner: Owner
+    value: str
+
+
+class SecretList(Contract):
+    secrets: tuple[SecretView, ...] = ()

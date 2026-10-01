@@ -28,6 +28,9 @@ from factotum.contracts.hub import (
     ModelBindingList,
     ModelBindingView,
     PairedDevice,
+    SecretList,
+    SecretView,
+    SetSecretRequest,
     UserList,
     UserView,
 )
@@ -153,5 +156,17 @@ def create_app(
     @app.get("/v1/models", summary="Every model binding of the caller's tenant")
     async def list_model_bindings(principal: Caller, ops: Ops) -> ModelBindingList:
         return await ops.service.list_model_bindings(principal)
+
+    @app.post(
+        "/v1/secrets",
+        summary="Set the value of a secret, for the tenant or for the caller's own use "
+        "(an administrator only)",
+    )
+    async def set_secret(body: SetSecretRequest, principal: Caller, ops: Ops) -> SecretView:
+        return await ops.service.set_secret(principal, body)
+
+    @app.get("/v1/secrets", summary="Every secret of the caller's tenant, with its value")
+    async def list_secrets(principal: Caller, ops: Ops) -> SecretList:
+        return await ops.service.list_secrets(principal)
 
     return app

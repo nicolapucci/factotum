@@ -8,14 +8,25 @@ from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.identity import OwnerKind
 from factotum.contracts.ids import BindingId, DeviceId, TenantId, UserId
 from factotum.contracts.models import ModelRole
-from factotum.hub.store.base import StoredBinding, StoredDevice, StoredModelBinding, StoredUser
+from factotum.hub.store.base import (
+    StoredBinding,
+    StoredDevice,
+    StoredModelBinding,
+    StoredSecret,
+    StoredUser,
+)
 
 _ModelBindingKey = tuple[TenantId, OwnerKind, UUID, ModelRole]
+_SecretKey = tuple[TenantId, OwnerKind, UUID, str]
 
 
 def _model_binding_key(stored: StoredModelBinding) -> _ModelBindingKey:
     binding = stored.binding
     return (binding.tenant_id, binding.owner.kind, binding.owner.id, binding.role)
+
+
+def _secret_key(stored: StoredSecret) -> _SecretKey:
+    return (stored.tenant_id, stored.owner.kind, stored.owner.id, stored.name)
 
 
 class InMemoryStore:
@@ -25,6 +36,7 @@ class InMemoryStore:
         self._devices: dict[DeviceId, StoredDevice] = {}
         self._bindings: dict[BindingId, StoredBinding] = {}
         self._model_bindings: dict[_ModelBindingKey, StoredModelBinding] = {}
+        self._secrets: dict[_SecretKey, StoredSecret] = {}
 
     async def tenant_count(self) -> int:
         return len(self._tenants)
@@ -131,4 +143,15 @@ class InMemoryStore:
         return sorted(
             (m for m in self._model_bindings.values() if m.binding.tenant_id == tenant_id),
             key=lambda m: m.created_at,
+        )
+
+    # ---- secrets
+
+    async def upsert_secret(self, secret: StoredSecret) -> None:
+        self._secrets[_secret_key(secret)] = secret
+
+    async def list_secrets(self, tenant_id: TenantId) -> list[StoredSecret]:
+        return sorted(
+            (s for s in self._secrets.values() if s.tenant_id == tenant_id),
+            key=lambda s: s.created_at,
         )

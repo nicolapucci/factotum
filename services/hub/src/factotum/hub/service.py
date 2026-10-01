@@ -1,9 +1,9 @@
 """Logging in, changing a password, the users of a tenant, its devices, the skills bound to them,
-and the models bound to a role.
+the models bound to a role, and the secrets a skill is given.
 
-A tenant's spaces, linked accounts and the secrets of its skills are later slices. A single tenant
-is created, with its administrator, the first time the hub starts (single-tenant mode only); nothing
-here makes a second one.
+A tenant's spaces and linked accounts are later slices. A single tenant is created, with its
+administrator, the first time the hub starts (single-tenant mode only); nothing here makes a
+second one.
 """
 
 import logging
@@ -43,6 +43,10 @@ from factotum.contracts.hub import (
     ModelBindingOwner,
     ModelBindingView,
     PairedDevice,
+    SecretList,
+    SecretOwner,
+    SecretView,
+    SetSecretRequest,
     SystemDeviceWithCredential,
     UserList,
     UserView,
@@ -55,6 +59,7 @@ from factotum.hub.store.base import (
     StoredBinding,
     StoredDevice,
     StoredModelBinding,
+    StoredSecret,
     StoredUser,
 )
 
@@ -122,6 +127,18 @@ def _model_binding_view(binding: ModelBinding) -> ModelBindingView:
         secret_ref=binding.secret_ref,
         options=binding.options,
     )
+
+
+def _secret_owner_of(principal: Principal, choice: SecretOwner) -> Owner:
+    """Only called after ``_admin``, which has already made sure ``principal`` is a person: a
+    secret of one's own is always that person's, never set on a member's behalf."""
+    if choice is SecretOwner.TENANT:
+        return Owner.of_subject(Subject.tenant(principal.tenant_id))
+    return Owner.of_subject(principal.acts_as)
+
+
+def _secret_view(secret: StoredSecret) -> SecretView:
+    return SecretView(name=secret.name, owner=secret.owner, value=secret.value)
 
 
 def _view(user: StoredUser) -> UserView:
@@ -313,6 +330,26 @@ class HubService:
         return ModelBindingList(
             bindings=tuple(_model_binding_view(stored.binding) for stored in bindings)
         )
+
+    async def set_secret(self, principal: Principal, body: SetSecretRequest) -> SecretView:
+        """Sets, or replaces, the value of a secret for the tenant or for the caller's own use:
+        rotating one is routine, not a conflict."""
+        await self._admin(principal)
+        secret = StoredSecret(
+            tenant_id=principal.tenant_id,
+            name=body.name,
+            owner=_secret_owner_of(principal, body.owner),
+            value=body.value,
+            created_at=datetime.now(UTC),
+        )
+        await self._store.upsert_secret(secret)
+        return _secret_view(secret)
+
+    async def list_secrets(self, principal: Principal) -> SecretList:
+        """Every secret of the caller's tenant, with its value: the actions service reads this
+        once, the same way it reads devices and bindings, and resolves a skill's own from it."""
+        secrets = await self._store.list_secrets(principal.tenant_id)
+        return SecretList(secrets=tuple(_secret_view(secret) for secret in secrets))
 
     async def _user_of(self, principal: Principal) -> StoredUser:
         if principal.acts_as.kind is not SubjectKind.USER:

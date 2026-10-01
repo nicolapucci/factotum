@@ -22,6 +22,8 @@ from factotum.contracts.hub import (
     LoginRequest,
     ModelBindingOwner,
     PairedDevice,
+    SecretOwner,
+    SetSecretRequest,
 )
 from factotum.contracts.identity import Owner, Principal, Role, Subject, SubjectKind
 from factotum.contracts.models import ModelRole, ProviderKind
@@ -395,6 +397,58 @@ class TestUpsertModelBindingAndListModelBindings:
 
         created = await svc.upsert_model_binding(
             admin, OLLAMA_CHAT.model_copy(update={"owner": ModelBindingOwner.USER})
+        )
+
+        assert created.owner == Owner.of_subject(admin.acts_as)
+
+
+HA_TOKEN = SetSecretRequest(name="HA_TOKEN", value="a-long-lived-token")
+
+
+class TestSetSecretAndListSecrets:
+    async def test_the_pending_administrator_must_change_the_password_first(self) -> None:
+        svc = await bootstrapped()
+        principal = await _admin_principal(svc)
+
+        with pytest.raises(PasswordChangeRequiredError):
+            await svc.set_secret(principal, HA_TOKEN)
+
+    async def test_a_member_may_not_set_a_secret_but_may_list(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        await svc.set_secret(admin, HA_TOKEN)
+        member = await _member(svc, admin)
+
+        with pytest.raises(PolicyViolationError):
+            await svc.set_secret(member, HA_TOKEN)
+        assert len((await svc.list_secrets(member)).secrets) == 1
+
+    async def test_a_secret_is_set_and_listed(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        created = await svc.set_secret(admin, HA_TOKEN)
+
+        assert (created.name, created.value) == ("HA_TOKEN", "a-long-lived-token")
+        assert (await svc.list_secrets(admin)).secrets == (created,)
+
+    async def test_setting_the_same_name_again_replaces_it(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+        await svc.set_secret(admin, HA_TOKEN)
+
+        replaced = await svc.set_secret(admin, HA_TOKEN.model_copy(update={"value": "a-new-token"}))
+
+        listed = (await svc.list_secrets(admin)).secrets
+        assert [s.value for s in listed] == ["a-new-token"]
+        assert replaced.value == "a-new-token"
+
+    async def test_a_secret_of_ones_own_belongs_to_the_registering_administrator(self) -> None:
+        svc = await bootstrapped()
+        admin = await _ready_admin(svc)
+
+        created = await svc.set_secret(
+            admin, HA_TOKEN.model_copy(update={"owner": SecretOwner.USER})
         )
 
         assert created.owner == Owner.of_subject(admin.acts_as)

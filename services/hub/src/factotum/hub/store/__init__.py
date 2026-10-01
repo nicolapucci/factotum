@@ -5,6 +5,7 @@ from factotum.hub.store.base import (
     StoredBinding,
     StoredDevice,
     StoredModelBinding,
+    StoredSecret,
     StoredUser,
 )
 from factotum.hub.store.memory import InMemoryStore
@@ -15,5 +16,6 @@ __all__ = [
     "StoredBinding",
     "StoredDevice",
     "StoredModelBinding",
+    "StoredSecret",
     "StoredUser",
 ]

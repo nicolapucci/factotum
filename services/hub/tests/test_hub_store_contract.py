@@ -21,7 +21,14 @@ from factotum.contracts.testing import (
     make_tenant_id,
     make_user_id,
 )
-from factotum.hub.store import HubStore, StoredBinding, StoredDevice, StoredModelBinding, StoredUser
+from factotum.hub.store import (
+    HubStore,
+    StoredBinding,
+    StoredDevice,
+    StoredModelBinding,
+    StoredSecret,
+    StoredUser,
+)
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -433,3 +440,78 @@ async def test_listing_another_tenants_model_bindings_sees_nothing(store: HubSto
     await store.upsert_model_binding(_model_binding(tenant_id))
 
     assert await store.list_model_bindings(make_tenant_id()) == []
+
+
+def _secret(
+    tenant_id: TenantId,
+    *,
+    name: str = "HA_TOKEN",
+    owner: Owner | None = None,
+    value: str = "a-long-lived-token",
+    created_at: datetime | None = None,
+) -> StoredSecret:
+    return StoredSecret(
+        tenant_id=tenant_id,
+        name=name,
+        owner=owner or Owner.of_subject(Subject.tenant(tenant_id)),
+        value=value,
+        created_at=created_at or datetime.now(UTC),
+    )
+
+
+async def test_a_secret_is_upserted_and_listed(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    secret = _secret(tenant_id)
+
+    await store.upsert_secret(secret)
+
+    assert await store.list_secrets(tenant_id) == [secret]
+
+
+async def test_setting_the_same_name_again_for_the_same_owner_replaces_it(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    await store.upsert_secret(_secret(tenant_id, value="first-value"))
+
+    await store.upsert_secret(_secret(tenant_id, value="second-value"))
+
+    listed = await store.list_secrets(tenant_id)
+    assert [s.value for s in listed] == ["second-value"]
+
+
+async def test_different_names_for_the_same_owner_coexist(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    await store.upsert_secret(_secret(tenant_id, name="HA_TOKEN"))
+
+    await store.upsert_secret(_secret(tenant_id, name="ROUTER_PASSWORD"))
+
+    assert len(await store.list_secrets(tenant_id)) == 2
+
+
+async def test_the_same_name_for_different_owners_coexists(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    tenant_owner = Owner.of_subject(Subject.tenant(tenant_id))
+    user_owner = Owner.of_subject(Subject.user(make_user_id()))
+    await store.upsert_secret(_secret(tenant_id, owner=tenant_owner))
+
+    await store.upsert_secret(_secret(tenant_id, owner=user_owner))
+
+    assert len(await store.list_secrets(tenant_id)) == 2
+
+
+async def test_secrets_are_listed_earliest_first(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    first = _secret(tenant_id, name="FIRST", created_at=datetime(2026, 1, 1, tzinfo=UTC))
+    await store.upsert_secret(first)
+    second = _secret(tenant_id, name="SECOND", created_at=datetime(2026, 1, 2, tzinfo=UTC))
+    await store.upsert_secret(second)
+
+    listed = await store.list_secrets(tenant_id)
+
+    assert [s.name for s in listed] == ["FIRST", "SECOND"]
+
+
+async def test_listing_another_tenants_secrets_sees_nothing(store: HubStore) -> None:
+    tenant_id = await _tenant(store)
+    await store.upsert_secret(_secret(tenant_id))
+
+    assert await store.list_secrets(make_tenant_id()) == []
