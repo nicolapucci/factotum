@@ -4,7 +4,7 @@ Every route takes and returns the normalized contracts. Errors, authentication a
 are the ones every service shares (``factotum.web``).
 """
 
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
@@ -37,14 +37,28 @@ async def _server_sent(
 
 
 def create_app(
-    gateway: ModelGateway, authenticator: Authenticator, *, docs: bool = False
+    gateway: ModelGateway,
+    authenticator: Authenticator,
+    *,
+    docs: bool = False,
+    on_start: Callable[[], Awaitable[None]] | None = None,
+    on_stop: Callable[[], Awaitable[None]] | None = None,
 ) -> FastAPI:
+    """``on_start`` runs once, before the gateway serves anything: the hub-backed repository of
+    bindings uses it to fetch the tenant's bindings before the first request can miss them.
+    ``on_stop`` runs after the gateway has closed its own connections, for whatever ``on_start``
+    opened (the hub client is not the gateway's to close)."""
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if on_start is not None:
+            await on_start()
         try:
             yield
         finally:
             await gateway.aclose()  # the connections it keeps to the providers
+            if on_stop is not None:
+                await on_stop()
 
     app = create_base_app(
         "Factotum model gateway",

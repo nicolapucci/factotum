@@ -3,18 +3,26 @@
 A user may bind a role to a model of their own; the tenant may bind it for everybody. The user's
 choice wins over the tenant's, so a person who brings their own subscription is served by it. A
 device that acts for the tenant, like a speaker in the living room, is served by the tenant's.
+
+Once the hub registers bindings (slice 7c), ``HubBindingRepository`` fetches its tenant's once, in
+the lifespan. Until a token secret is configured this is a file, for development (the gateway still
+never holds a provider's key for them: a binding only ever names an environment variable, resolved
+the same way whichever source the binding came from).
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+import httpx
 import yaml
 from pydantic import ValidationError
 
+from factotum.common.devauth import PrincipalDelegation
 from factotum.contracts.errors import BindingNotFoundError
-from factotum.contracts.identity import Owner, OwnerKind, Subject, SubjectKind
+from factotum.contracts.hub import ModelBindingList, ModelBindingView
+from factotum.contracts.identity import Owner, OwnerKind, Principal, Subject, SubjectKind
 from factotum.contracts.ids import ModelBindingId, TenantId, UserId
 from factotum.contracts.models import ModelBinding, ModelRole
 
@@ -137,3 +145,45 @@ def _binding_from(entry: dict[str, Any], tenant_id: TenantId, where: str) -> Mod
             )
         )
         raise ValueError(f"{where}: {problems}") from None
+
+
+def _binding_from_view(view: ModelBindingView, tenant_id: TenantId) -> ModelBinding:
+    return ModelBinding(
+        id=view.id,
+        tenant_id=tenant_id,
+        owner=view.owner,
+        role=view.role,
+        provider=view.provider,
+        model=view.model,
+        base_url=view.base_url,
+        secret_ref=view.secret_ref,
+        options=view.options,
+    )
+
+
+class HubBindingRepository:
+    """The model bindings of the hub's tenant: empty until ``reload`` is awaited once, in the
+    lifespan, before the gateway starts serving."""
+
+    def __init__(
+        self, client: httpx.AsyncClient, delegation: PrincipalDelegation, tenant_id: TenantId
+    ) -> None:
+        self._client = client
+        self._delegation = delegation
+        self._tenant_id = tenant_id
+        self._bindings: dict[tuple[OwnerKind, UUID, ModelRole], ModelBinding] = {}
+
+    async def reload(self) -> None:
+        headers: Mapping[str, str] = self._delegation.headers(Principal.of_tenant(self._tenant_id))
+        response = await self._client.get("/v1/models", headers=headers)
+        response.raise_for_status()
+        bindings = ModelBindingList.model_validate_json(response.content)
+        self._bindings = {
+            (view.owner.kind, view.owner.id, view.role): _binding_from_view(view, self._tenant_id)
+            for view in bindings.bindings
+        }
+
+    async def find(self, tenant_id: TenantId, owner: Owner, role: ModelRole) -> ModelBinding | None:
+        if tenant_id != self._tenant_id:
+            return None
+        return self._bindings.get((owner.kind, owner.id, role))

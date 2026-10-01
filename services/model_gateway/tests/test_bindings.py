@@ -1,10 +1,14 @@
 from pathlib import Path
 
+import httpx
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from factotum.common.config import Environment, ServiceSettings
+from factotum.common.devauth import DevPrincipalDelegation
 from factotum.contracts.errors import BindingNotFoundError
+from factotum.contracts.hub import ModelBindingList, ModelBindingView
 from factotum.contracts.identity import Owner, OwnerKind, Subject
 from factotum.contracts.ids import TenantId, UserId
 from factotum.contracts.models import (
@@ -19,6 +23,7 @@ from factotum.contracts.testing import (
     make_user_id,
 )
 from factotum.model_gateway.bindings import (
+    HubBindingRepository,
     InMemoryBindingRepository,
     fallback_roles,
     load_bindings,
@@ -26,6 +31,8 @@ from factotum.model_gateway.bindings import (
     owners_for,
     select_binding,
 )
+
+TEST = ServiceSettings(_env_file=None, environment=Environment.TEST)
 
 TENANT = make_tenant_id()
 ALICE = make_user_id()
@@ -434,3 +441,101 @@ def test_the_example_bindings_file_of_the_repository_is_valid() -> None:
     }
     assert len(InMemoryBindingRepository(loaded)) == 3
     assert {binding.provider for binding in loaded} == {ProviderKind.OLLAMA}
+
+
+def _view(stored: ModelBinding) -> ModelBindingView:
+    return ModelBindingView(
+        id=stored.id,
+        role=stored.role,
+        provider=stored.provider,
+        model=stored.model,
+        base_url=stored.base_url,
+        owner=stored.owner,
+        secret_ref=stored.secret_ref,
+        options=stored.options,
+    )
+
+
+class Hub:
+    """A hub that records what it is asked and answers with the bindings it is told to."""
+
+    def __init__(self) -> None:
+        self.sent: list[httpx.Request] = []
+        self.bindings = ModelBindingList()
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.sent.append(request)
+        return httpx.Response(200, content=self.bindings.model_dump_json())
+
+    def repository(self, tenant_id: TenantId = TENANT) -> HubBindingRepository:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(self), base_url="http://hub.test")
+        return HubBindingRepository(client, DevPrincipalDelegation(TEST), tenant_id)
+
+
+TENANT_SUBJECT = Owner.of_subject(Subject.tenant(TENANT))
+
+
+class TestTheHubRepository:
+    async def test_it_knows_nothing_before_it_is_loaded(self) -> None:
+        repository = Hub().repository()
+
+        assert await repository.find(TENANT, TENANT_SUBJECT, ModelRole.CHAT_MAIN) is None
+
+    async def test_reload_asks_the_hub_for_the_tenants_bindings_as_the_tenant(self) -> None:
+        hub = Hub()
+        repository = hub.repository()
+
+        await repository.reload()
+
+        [request] = hub.sent
+        assert request.url.path == "/v1/models"
+        assert request.headers["x-factotum-dev-subject"] == "tenant"
+
+    async def test_a_binding_is_found_by_tenant_owner_and_role_once_loaded(self) -> None:
+        hub = Hub()
+        hub.bindings = ModelBindingList(bindings=(_view(binding(model="llama3.1:8b")),))
+        repository = hub.repository()
+        await repository.reload()
+
+        found = await repository.find(TENANT, TENANT_SUBJECT, ModelRole.CHAT_MAIN)
+
+        assert found is not None
+        assert found.model == "llama3.1:8b"
+
+    async def test_a_binding_is_not_found_through_another_tenant(self) -> None:
+        hub = Hub()
+        hub.bindings = ModelBindingList(bindings=(_view(binding()),))
+        repository = hub.repository()
+        await repository.reload()
+
+        found = await repository.find(make_tenant_id(), TENANT_SUBJECT, ModelRole.CHAT_MAIN)
+
+        assert found is None
+
+    async def test_reloading_again_replaces_what_was_there_before(self) -> None:
+        hub = Hub()
+        hub.bindings = ModelBindingList(bindings=(_view(binding(model="first")),))
+        repository = hub.repository()
+        await repository.reload()
+
+        hub.bindings = ModelBindingList(
+            bindings=(_view(binding(ModelRole.EMBEDDING, model="second")),)
+        )
+        await repository.reload()
+
+        assert await repository.find(TENANT, TENANT_SUBJECT, ModelRole.CHAT_MAIN) is None
+        found = await repository.find(TENANT, TENANT_SUBJECT, ModelRole.EMBEDDING)
+        assert found is not None
+        assert found.model == "second"
+
+    async def test_a_hub_that_answers_with_an_error_is_not_swallowed(self) -> None:
+        def refuse(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503)
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(refuse), base_url="http://hub.test"
+        )
+        repository = HubBindingRepository(client, DevPrincipalDelegation(TEST), TENANT)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await repository.reload()

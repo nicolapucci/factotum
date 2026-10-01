@@ -1,13 +1,18 @@
 """Putting the gateway together from its settings."""
 
+import httpx
 from fastapi import FastAPI
 
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID
-from factotum.common.hubauth import authenticator_for
+from factotum.common.hubauth import authenticator_for, principal_delegation_for
 from factotum.common.urlguard import UrlPolicy
-from factotum.contracts.identity import TenantMode
+from factotum.contracts.identity import SINGLE_TENANT_ID, TenantMode
 from factotum.model_gateway.api import create_app
-from factotum.model_gateway.bindings import InMemoryBindingRepository, load_bindings_file
+from factotum.model_gateway.bindings import (
+    HubBindingRepository,
+    InMemoryBindingRepository,
+    load_bindings_file,
+)
 from factotum.model_gateway.core import ModelGateway, guarded_clients
 from factotum.model_gateway.secrets import EnvSecretResolver
 from factotum.model_gateway.settings import GatewaySettings
@@ -42,7 +47,38 @@ def build_app(settings: GatewaySettings) -> FastAPI:
 
     Authentication is the hub's once a token secret is configured (``FACTOTUM_HUB_TOKEN_SECRET``);
     otherwise the development authenticator, which refuses to exist outside development and test,
-    so without one in production this raises and the service does not start.
+    so without one in production this raises and the service does not start. The bindings follow the
+    same switch: the hub's, fetched once in the lifespan, once ``FACTOTUM_GATEWAY_HUB_URL`` is also
+    set; otherwise still a file, for development.
     """
     authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
-    return create_app(build_gateway(settings), authenticator, docs=not settings.is_production)
+    hub_client: httpx.AsyncClient | None = None
+    hub_repository: HubBindingRepository | None = None
+    if settings.hub_secret_bytes is not None and settings.gateway_hub_url is not None:
+        hub_client = httpx.AsyncClient(base_url=str(settings.gateway_hub_url))
+        hub_repository = HubBindingRepository(
+            hub_client, principal_delegation_for(settings), SINGLE_TENANT_ID
+        )
+        gateway = ModelGateway(
+            hub_repository,
+            EnvSecretResolver(),
+            client_factory=guarded_clients(provider_url_policy(settings)),
+        )
+    else:
+        gateway = build_gateway(settings)
+
+    async def on_start() -> None:
+        if hub_repository is not None:
+            await hub_repository.reload()
+
+    async def on_stop() -> None:
+        if hub_client is not None:
+            await hub_client.aclose()
+
+    return create_app(
+        gateway,
+        authenticator,
+        docs=not settings.is_production,
+        on_start=on_start,
+        on_stop=on_stop,
+    )

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from factotum.common.config import Environment
 from factotum.common.devauth import SUBJECT_HEADER
+from factotum.common.tokens import MIN_SECRET_BYTES
 from factotum.contracts.errors import AuthError
 from factotum.contracts.identity import TenantMode
 from factotum.model_gateway import __main__ as entrypoint
@@ -17,6 +18,8 @@ from factotum.model_gateway.app import build_app, build_gateway, provider_url_po
 from factotum.model_gateway.settings import GatewaySettings
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+SECRET = "s" * MIN_SECRET_BYTES
+HUB = "http://hub.test"
 
 BINDINGS = """
 bindings:
@@ -169,6 +172,22 @@ class TestBuilding:
 
         with pytest.raises(ValueError, match="already has a binding"):
             build_gateway(settings(gateway_bindings_file=twice))
+
+    async def test_it_starts_in_production_once_the_hub_is_configured(self) -> None:
+        app = build_app(
+            settings(
+                environment=Environment.PRODUCTION,
+                hub_token_secret=SECRET,
+                gateway_hub_url=HUB,
+            )
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://gateway"
+        ) as client:
+            response = await client.get("/healthz")
+
+        assert response.status_code == 200
 
 
 class TestWhereTheGatewayMayConnect:
