@@ -369,7 +369,7 @@ answer and other things than actions, voice.
 | 7b | `hub`: a device's pairing, the external devices a skill is bound to | done |
 | 7c | `hub`: model bindings, the gateway reading them from it, a real delegation for `actions`, `conversation` and `knowledge` | done |
 | 7d | `hub`: skill secrets, the actions service reading them from it | done |
-| 8 | Voice and the Raspberry Pi client | |
+| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway, one recording and one spoken answer at a time — a temporary version; still owed: a real stream of audio, barge-in, and the Raspberry Pi client | beta |
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |
 
