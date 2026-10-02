@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import AnyHttpUrl
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
@@ -39,16 +40,22 @@ from factotum.terminal.client import CannotConverse, DeviceClient, Refused
 from factotum.terminal.connection import ConnectionLost
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import Profile, get_profile
-from factotum.terminal.testing import MemoryConnection, RecordingRenderer
+from factotum.terminal.testing import FakeVoiceOutput, MemoryConnection, RecordingRenderer
+
+RECORDING = AudioPayload(sample_rate=16000, data=b"raw-microphone-bytes")
 
 
 class Rig:
-    def __init__(self, profile: str = "speaker") -> None:
+    def __init__(
+        self, profile: str = "speaker", *, voice_output: FakeVoiceOutput | None = None
+    ) -> None:
         self.profile = get_profile(profile)
         self.connection = MemoryConnection()
         self.shown = RecordingRenderer()
         self.hardware = TerminalDevice(self.profile.capabilities, self.shown)
-        self.client = DeviceClient(self.connection, self.profile, self.shown, self.hardware)
+        self.client = DeviceClient(
+            self.connection, self.profile, self.shown, self.hardware, voice_output=voice_output
+        )
 
     def ready(self, **changes: Any) -> Ready:
         fields: dict[str, Any] = {
@@ -458,6 +465,37 @@ class TestSpeaking:
         assert len(rig.connection.frames("utterance")) == 1
         await rig.client.close()
 
+    async def test_a_recording_is_sent_as_an_audio_utterance(self) -> None:
+        rig = Rig()
+        await rig.connected()
+
+        identity = await rig.client.say_audio(RECORDING)
+
+        assert identity == "u1"
+        assert [u.audio for u in rig.connection.frames("audio_utterance")] == [RECORDING]
+        assert rig.client.active == "u1"
+        await rig.client.close()
+
+    async def test_a_recording_and_typed_text_share_the_same_names(self) -> None:
+        rig = Rig()
+        await rig.connected()
+
+        first = await rig.client.say_audio(RECORDING)
+        second = await rig.client.say("and in Italian?")
+
+        assert (first, second) == ("u1", "u2")
+        await rig.client.close()
+
+    async def test_a_device_with_no_microphone_cannot_send_a_recording_either(self) -> None:
+        rig = Rig("screen")
+        await rig.connected()
+
+        with pytest.raises(CannotConverse, match="no microphone"):
+            await rig.client.say_audio(RECORDING)
+
+        assert rig.connection.frames("audio_utterance") == []
+        await rig.client.close()
+
     async def test_the_answer_being_given_can_be_stopped_and_nothing_else_can(self) -> None:
         rig = Rig()
         running = await rig.running()
@@ -493,6 +531,47 @@ class TestSpeaking:
         rig = Rig()
 
         assert await rig.client.wait_for_turn("u99") is None
+
+
+class TestBeingPlayedTo:
+    async def test_speech_with_audio_is_played_through_the_voice_output(self) -> None:
+        voice = FakeVoiceOutput()
+        rig = Rig(voice_output=voice)
+        running = await rig.running()
+        identity = await rig.client.say("hello")
+
+        rig.connection.say(part(0, Speech(text="Hold the button.", audio=RECORDING)))
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        await rig.client.wait_for_turn(identity)
+
+        assert rig.shown.of("speech") == ["Hold the button."]
+        assert voice.played == [RECORDING]
+        running.cancel()
+
+    async def test_speech_with_no_audio_is_shown_but_nothing_is_played(self) -> None:
+        voice = FakeVoiceOutput()
+        rig = Rig(voice_output=voice)
+        running = await rig.running()
+        identity = await rig.client.say("hello")
+
+        rig.connection.say(part(0, Speech(text="Hold the button.")))
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        await rig.client.wait_for_turn(identity)
+
+        assert voice.played == []
+        running.cancel()
+
+    async def test_without_a_voice_output_speech_with_audio_is_still_only_shown(self) -> None:
+        rig = Rig()  # no voice_output given
+        running = await rig.running()
+        identity = await rig.client.say("hello")
+
+        rig.connection.say(part(0, Speech(text="Hold the button.", audio=RECORDING)))
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        await rig.client.wait_for_turn(identity)
+
+        assert rig.shown.of("speech") == ["Hold the button."]
+        running.cancel()
 
 
 class TestSayingGoodbye:

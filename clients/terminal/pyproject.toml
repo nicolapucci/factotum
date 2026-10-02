@@ -5,7 +5,10 @@ description = "A Factotum device in a terminal: it connects to the edge as a sys
 requires-python = ">=3.13"
 dependencies = [
   "factotum-contracts",
+  "numpy>=1.26",
+  "pvporcupine>=3.0",
   "pydantic>=2.11",
+  "sounddevice>=0.5",
   "websockets>=15",
 ]
 

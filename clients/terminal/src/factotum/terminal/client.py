@@ -13,11 +13,13 @@ That is what a client is good for, before there is a real one.
 import asyncio
 import contextlib
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.commands import CommandStatus, PlayUrl
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
     Ack,
+    AudioUtterance,
     Bye,
     Cancel,
     ClientInfo,
@@ -43,6 +45,7 @@ from factotum.contracts.response import (
     Text,
     required_capability,
 )
+from factotum.terminal.audio import VoiceOutput
 from factotum.terminal.connection import Connection, ConnectionLost
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import Profile
@@ -74,6 +77,7 @@ class DeviceClient:
         *,
         hardware_id: str | None = None,
         token: str | None = None,
+        voice_output: VoiceOutput | None = None,
     ) -> None:
         self._connection = connection
         self._profile = profile
@@ -81,6 +85,7 @@ class DeviceClient:
         self._device = device
         self._hardware_id = hardware_id or profile.hardware_id
         self._token = token or profile.token
+        self._voice_output = voice_output
         self._heartbeat: asyncio.Task[None] | None = None
         self._turns: dict[str, asyncio.Event] = {}
         self._ended: dict[str, TurnEnded] = {}
@@ -203,6 +208,8 @@ class DeviceClient:
         match part:
             case Speech():
                 self._renderer.speech(part.text)
+                if part.audio is not None and self._voice_output is not None:
+                    await self._voice_output.play(part.audio)
             case Text():
                 self._renderer.text(part.text)
             case CardPart():
@@ -229,6 +236,19 @@ class DeviceClient:
         self._next_part[identity] = 0
         self.active = identity
         await self._connection.send(encode_frame(Utterance(id=identity, text=text)))
+        return identity
+
+    async def say_audio(self, audio: AudioPayload) -> str:
+        """Send a recording instead of typed text, and return what to call it. A device with no
+        microphone cannot: the same ``CannotConverse`` as ``say``."""
+        if Capability.AUDIO_IN not in self._profile.capabilities:
+            raise CannotConverse("this device has no microphone, so it cannot start a conversation")
+        self._counter += 1
+        identity = f"u{self._counter}"
+        self._turns[identity] = asyncio.Event()
+        self._next_part[identity] = 0
+        self.active = identity
+        await self._connection.send(encode_frame(AudioUtterance(id=identity, audio=audio)))
         return identity
 
     async def wait_for_turn(self, identity: str) -> TurnEnded | None:

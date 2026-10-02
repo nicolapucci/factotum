@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import SetVolume, ShowCard
 from factotum.contracts.edge import (
@@ -21,6 +22,7 @@ from factotum.contracts.edge import (
 from factotum.contracts.ids import DeviceId
 from factotum.contracts.response import Speech
 from factotum.terminal import cli
+from factotum.terminal.audio import DEFAULT_WAKE_WORD
 from factotum.terminal.cli import (
     DEFAULT_URL,
     HELP,
@@ -32,7 +34,15 @@ from factotum.terminal.cli import (
 )
 from factotum.terminal.connection import Connection, CouldNotConnect
 from factotum.terminal.profiles import get_profile
-from factotum.terminal.testing import MemoryConnection, Typed, never
+from factotum.terminal.testing import (
+    FakeVoiceInput,
+    FakeVoiceOutput,
+    MemoryConnection,
+    Typed,
+    never,
+)
+
+RECORDING = AudioPayload(sample_rate=16000, data=b"raw-microphone-bytes")
 
 CONNECTED = "--       connected as the test device"
 INVITATION = "--       type what you would say (/help)"
@@ -104,6 +114,23 @@ class TestTheArguments:
 
     def test_another_device_can_be_presented(self) -> None:
         assert parse_args(["--hardware-id", "lab-9"], {}).hardware_id == "lab-9"
+
+    def test_by_default_there_is_no_voice_and_the_wake_word_is_the_usual_one(self) -> None:
+        options = parse_args([], {})
+
+        assert options.voice is False
+        assert options.wake_word == DEFAULT_WAKE_WORD
+
+    def test_voice_and_a_wake_word_can_be_chosen(self) -> None:
+        options = parse_args(["--voice", "--wake-word", "alexa"], {})
+
+        assert options.voice is True
+        assert options.wake_word == "alexa"
+
+    def test_the_access_key_comes_from_the_command_line_or_else_the_environment(self) -> None:
+        env = {"PICOVOICE_ACCESS_KEY": "from-env"}
+        assert parse_args([], env).access_key == "from-env"
+        assert parse_args(["--access-key", "from-flag"], env).access_key == "from-flag"
 
     def test_a_profile_that_does_not_exist_is_refused_and_the_profiles_are_listed(
         self, capsys: pytest.CaptureFixture[str]
@@ -212,6 +239,95 @@ class TestConversing:
 
         assert code == 0
         assert out[-1] == "[say]    Late."
+
+
+async def voice_session(
+    profile: str,
+    *recordings: AudioPayload,
+    connection: MemoryConnection | None = None,
+    voice_output: FakeVoiceOutput | None = None,
+) -> tuple[int, list[str], MemoryConnection, FakeVoiceOutput]:
+    """A person at a terminal of this profile who says these recordings, with ``--voice``. What
+    comes out is returned as the lines of the screen, and what was played back."""
+    connection = connection or connected(profile)
+    voice_output = voice_output or FakeVoiceOutput()
+    out = io.StringIO()
+    code = await run(
+        Options(
+            url=DEFAULT_URL, profile=get_profile(profile), hardware_id=None, token=None, voice=True
+        ),
+        out=out,
+        open_connection=lambda _url: opened(connection),
+        voice_input=FakeVoiceInput(*recordings),
+        voice_output=voice_output,
+    )
+    return code, out.getvalue().splitlines(), connection, voice_output
+
+
+class TestConversingByVoice:
+    async def test_a_wake_word_sends_the_recording_and_the_answer_is_shown_and_played(
+        self,
+    ) -> None:
+        connection = connected("speaker")
+
+        def answer() -> None:
+            connection.say(
+                PartFrame(
+                    utterance_id="u1", seq=0, part=Speech(text="Ten seconds.", audio=RECORDING)
+                )
+            )
+            connection.say(TurnEnded(utterance_id="u1", status=TurnStatus.FINISHED))
+            connection.drop()
+
+        asyncio.get_running_loop().call_later(0.05, answer)
+        code, out, _, played = await voice_session("speaker", RECORDING, connection=connection)
+
+        assert [u.audio for u in connection.frames("audio_utterance")] == [RECORDING]
+        assert "[say]    Ten seconds." in out
+        assert played.played == [RECORDING]
+        assert code == 1  # the connection ends once the answer is in, same as typing would report
+
+    async def test_a_profile_with_no_microphone_cannot_use_voice(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("screen"),
+                hardware_id=None,
+                token=None,
+                voice=True,
+            ),
+            voice_input=FakeVoiceInput(),
+        )
+
+        assert code == 1
+        assert "needs a microphone" in capsys.readouterr().err
+
+    async def test_voice_without_an_access_key_and_no_fake_input_is_refused(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("speaker"),
+                hardware_id=None,
+                token=None,
+                voice=True,
+            )
+        )
+
+        assert code == 1
+        assert "AccessKey" in capsys.readouterr().err
+
+    async def test_the_edge_dropping_the_connection_is_said_and_voice_mode_ends(self) -> None:
+        connection = connected("speaker")
+        asyncio.get_running_loop().call_later(0.05, lambda: connection.drop(4002, "idle"))
+
+        code, out, _, _ = await voice_session("speaker", connection=connection)
+
+        assert code == 1
+        assert out[-1] == "--       the connection to the edge ended (4002: idle)"
 
 
 class TestTheCommandsOfTheTerminal:

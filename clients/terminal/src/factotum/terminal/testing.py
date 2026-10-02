@@ -7,6 +7,7 @@ import inspect
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.cards import Card
 from factotum.contracts.edge import ErrorFrame, TurnEnded, decode_device_frame, encode_frame
@@ -107,6 +108,29 @@ class RecordingRenderer:
 async def never() -> None:
     """What a person does who has nothing more to type: wait, for ever."""
     await asyncio.Event().wait()
+
+
+class FakeVoiceInput:
+    """A microphone that has already heard what it is given, one recording per wake word; after
+    the last of them, no further wake word is ever heard."""
+
+    def __init__(self, *recordings: AudioPayload) -> None:
+        self._recordings = list(recordings)
+
+    async def listen(self) -> AsyncIterator[AudioPayload]:
+        for recording in self._recordings:
+            yield recording
+        await never()
+
+
+class FakeVoiceOutput:
+    """A speaker that remembers what it was asked to play."""
+
+    def __init__(self) -> None:
+        self.played: list[AudioPayload] = []
+
+    async def play(self, audio: AudioPayload) -> None:
+        self.played.append(audio)
 
 
 class Typed:

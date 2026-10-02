@@ -94,6 +94,8 @@ module = [
   "reportlab.*",
   "faster_whisper",
   "faster_whisper.*",
+  "pvporcupine",
+  "sounddevice",
 ]
 ignore_missing_imports = true
 
