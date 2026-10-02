@@ -63,7 +63,7 @@ flowchart TD
 
 | Service | Responsibility | What it does not know |
 | --- | --- | --- |
-| `edge` (*implemented* for text) | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement; later the voice pipeline | documents, models |
+| `edge` (*implemented* for text, and for a basic voice: one recording in, one spoken answer out) | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement, turning a recording into words and an answer into one through the gateway | documents |
 | `conversation` (*implemented* for text) | One conversation turn: retrieval from `knowledge` (and later the web) with timeouts and partial degradation, context budgeting, streamed answers with citations, and no history unless the message refers to it, when what was said is looked up in a log; later routing with structured output and the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
 | `knowledge` (*implemented*) | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
 | `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
@@ -256,8 +256,9 @@ Markdown instructions for the model, or notes for humans.
 it and what each provider needs are in [`model-gateway.md`](model-gateway.md). What follows is the
 design it was built from. Bindings are managed by the hub (slice 7c, [`hub.md`](hub.md)), still only
 by reference to a key, never the key itself (not the "encrypted secrets at rest" once planned here:
-[`model-gateway.md`](model-gateway.md#known-limits) says why). *Planned* still: speech, reranking and
-web search roles.
+[`model-gateway.md`](model-gateway.md#known-limits) says why). Speech (`stt`, `tts`) is implemented,
+served locally (slice 8, [`model-gateway.md`](model-gateway.md#speech)). *Planned* still: reranking
+and web search roles.
 
 - Services ask for a **role**, never a model: `chat.main`, `chat.fast`, `embedding`, `stt`, `tts`,
   `rerank`, `web_search`. Each user (or the tenant) binds a role to a **binding**: provider kind,

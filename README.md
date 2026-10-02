@@ -18,8 +18,10 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 > which skill does it and whether this device may have it done, asks for a yes when it must, runs the
 > skill (its script in a container of its own, that reaches only the hosts it was granted; or, for a
 > skill that is only words, a plan that a model writes and that code checks before the same container
-> runs it) and has a device do what it answers with, and keeps a trail of it. Linked accounts, voice,
-> and the web app are not built yet. See
+> runs it) and has a device do what it answers with, and keeps a trail of it; and a basic voice
+> pipeline (Slice 8): a device's own wake word, speech-to-text and text-to-speech through two local
+> providers in the gateway, one recording and one spoken answer at a time. Linked accounts, a real
+> stream of audio instead, and the web app are not built yet. See
 > the roadmap in [`docs/design.md`](docs/design.md).
 
 ## Principles

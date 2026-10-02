@@ -2,17 +2,22 @@
 
 The door of the system devices: a speaker, a screen, a phone connect to it over a WebSocket, say who
 they are, and talk. It asks the conversation service for every answer and hands it back in pieces a
-device can render, and it lets the rest of the platform have a device do something (set the volume,
-show a card) and learn what became of it. It **knows no model, no document and no key**: what an
-answer says is the conversation service's business; what a device is sent of it is the edge's.
+device can render, asks the model gateway to turn a recording into words and an answer into one, and
+it lets the rest of the platform have a device do something (set the volume, show a card) and learn
+what became of it. It **knows no document and no key**: what an answer says is the conversation
+service's business; what a device is sent of it, and whether it is heard or spoken aloud, is the
+edge's.
 
-*Implemented* (text): the protocol, sessions, answers adapted to what a device can do, interruption,
-commands with an acknowledgement, a registry of devices read from a file (development) or from the
-hub, which registers and pairs them (slice 7b, [`hub.md`](hub.md)), an HTTP API, a container image, a
-terminal client that is a device (`factotum-terminal`), and (slice 5b) the `actions` service giving a
-device the commands a skill answers with, through the endpoint below, once it has decided that the
-device may have something done ([`actions.md`](actions.md)). *Not yet*: audio (voice is slice 8: the
-protocol carries text today).
+*Implemented*: the protocol (text and, since slice 8, one recording and one spoken answer at a
+time), sessions, answers adapted to what a device can do, interruption, commands with an
+acknowledgement, a registry of devices read from a file (development) or from the hub, which
+registers and pairs them (slice 7b, [`hub.md`](hub.md)), an HTTP API, a container image, a terminal
+client that is a device (`factotum-terminal`, with `--voice` for a real microphone and speaker), and
+(slice 5b) the `actions` service giving a device the commands a skill answers with, through the
+endpoint below, once it has decided that the device may have something done
+([`actions.md`](actions.md)). *Not yet*: a real stream of audio instead of one clip at a time, and
+interrupting a spoken answer by speaking over it (see [ADR
+0021](decisions/0021-voice-wake-word-on-the-device-speech-through-the-gateway.md)).
 
 The reasons behind the design are in
 [ADR 0013](decisions/0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md).
@@ -36,10 +41,11 @@ sequenceDiagram
     Note over D,E: ping / pong every few seconds while nothing else is said
 ```
 
-The device speaks first. Frames are JSON text, each an object with a `type`, at most 64 KiB. A frame
-that is not one of the protocol is refused without being echoed (it may be a credential in the wrong
-place). Version 1 is the whole of `factotum.contracts.edge`, which is the definition; this is a
-reading of it.
+The device speaks first. Frames are JSON text, each an object with a `type`, at most 4 MiB (big
+enough for a recording, base64 and all, since slice 8; a text frame is a few bytes). A frame that is
+not one of the protocol is refused without being echoed (it may be a credential in the wrong place).
+Version 1 is the whole of `factotum.contracts.edge`, which is the definition; this is a reading of
+it.
 
 ### From the device
 
@@ -47,6 +53,7 @@ reading of it.
 | --- | --- |
 | `hello` | `protocol_version`, `hardware_id`, `token` (the credential of the device), `capabilities`, optional `display` (`width`, `height`, `touch`) and `client` (software and version, for the logs). It is the first frame, and the only time the credential is sent |
 | `utterance` | `id`, `text`: what a person said, as text. Only a device with `audio_in` can start a conversation |
+| `audio_utterance` | `id`, `audio` (format, sample rate, the recording as bytes): what a person said, recorded after the device's own wake word. The edge transcribes it through the model gateway and runs the result through the same turn an `utterance` would; blank or untranscribable ends the turn, `failed` (`nothing_heard`), instead of asking the conversation service to answer silence. Needs `audio_in`, the same as `utterance` |
 | `cancel` | `id`: stop answering that utterance |
 | `ack` | `id`, `result`: what became of a command |
 | `ping` | I am here |
@@ -83,6 +90,11 @@ shows them one after another (the terminal client puts a line for each). Sentenc
 characters are held back and said with the next ("Yes." on its own is a click); a stretch of 280
 characters with no end to a sentence in it is cut at a comma or a space; a number such as 3.5 is not
 a sentence; and a citation marker is kept with the sentence it follows.
+
+Since slice 8, a `speech` part sent to a device that declared `audio_out` also carries `audio` (the
+sentence, synthesized through the model gateway's `tts` role): the device plays it, or speaks the
+text itself, or both. Without a `tts` binding, `audio` is left out and only the text travels, exactly
+as before slice 8.
 
 When the answer cannot be given the device is told in words it can render, chosen by why: *I have no
 model to answer with yet* (`chat_not_configured`), *That is too long for me to answer*
@@ -223,7 +235,16 @@ edge sends comes out as what that device would do:
 ```bash
 uv run factotum-terminal                                       # a speaker
 uv run factotum-terminal --profile smart-display --url ws://127.0.0.1:8084/v1/connect
+uv run factotum-terminal --voice                                # a real microphone and speaker
 ```
+
+With `--voice` (only on a profile with `audio_in`) a real microphone and speaker replace the
+keyboard and the screen: say the wake word (`--wake-word`, default `jarvis`), then what you would
+say, and wait for the answer before saying it again (one recording at a time; see the known limits,
+below). It needs a free Picovoice AccessKey for the wake-word engine
+(`$PICOVOICE_ACCESS_KEY`, from <https://console.picovoice.ai/>) and the model gateway configured
+with `stt` and `tts` bindings ([`model-gateway.md`](model-gateway.md#speech)) to hear or say
+anything; without the gateway, `--voice` still connects but every recording is refused.
 
 | Profile | Is | Sees |
 | --- | --- | --- |
@@ -274,6 +295,14 @@ uv run factotum-terminal --profile smart-display
 
 Put a document in first (`docs/knowledge.md` shows how) for there to be something to answer from.
 Without the conversation service the edge is up and every answer is an apology.
+
+To try it with a real voice instead, bind `stt` and `tts` to `whisper_local` and `piper_local`
+([`model-gateway.md`](model-gateway.md#speech)), set `FACTOTUM_EDGE_GATEWAY_URL` and
+`$PICOVOICE_ACCESS_KEY`, and say the wake word:
+
+```bash
+uv run factotum-terminal --profile speaker --voice
+```
 
 ## Tests
 
@@ -328,9 +357,12 @@ the conversation service drops from the citations but a screen shows as written 
   on without something (the documents, the past, the actions service); the edge drops them, so a
   device answers as if nothing had been missing. What a device should say about it is a decision
   about the voice, not about the protocol.
-- **Text, not audio.** The protocol carries what was said and what is to be said as text; the
-  speech-to-text and text-to-speech pipeline and the audio frames come with the Raspberry Pi client
-  (slice 8) and will be a new part of the protocol, not a change to this one.
+- **One recording at a time, not a stream.** A device sends a whole clip after its own wake word and
+  waits for the turn, and the spoken answer, to finish before the next one; it does not listen while
+  an answer plays, and a wake word heard then does not interrupt it. A real stream of audio, and
+  interrupting a spoken answer by speaking over it, are a later, additive change to the protocol, not
+  a change to this slice's ([ADR
+  0021](decisions/0021-voice-wake-word-on-the-device-speech-through-the-gateway.md)).
 - **No TLS.** The edge speaks `ws://`. The compose port is on loopback; what puts it on a network
   (a reverse proxy with certificates) is a deployment matter (slice 10).
 - **One process holds the connections.** A command reaches a device only through the edge process

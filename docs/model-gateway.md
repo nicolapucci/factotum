@@ -5,8 +5,9 @@ The only service that knows providers, addresses and keys (ADR 0008). Everything
 chose, and gives the answer back in one shape whichever provider it came from.
 
 *Implemented*: chat (whole or streamed), structured output and embeddings, through OpenAI,
-Anthropic, Gemini, Ollama and any OpenAI-compatible server. The roles `stt`, `tts`, `rerank` and
-`web_search` exist in the contracts and are added with the slices that need them.
+Anthropic, Gemini, Ollama and any OpenAI-compatible server; speech-to-text and text-to-speech
+(`stt`, `tts`), through two providers that run in the gateway's own process (below). The roles
+`rerank` and `web_search` exist in the contracts and are added with the slices that need them.
 
 ## Roles, bindings and profiles
 
@@ -94,6 +95,34 @@ at a time, so `chat.main` and `chat.fast` bound to the same model with different
 windows are `max_input_tokens` + `max_output_tokens`) load it again each time the other role asks: a
 conversation turn that took 0.9 s took 14 s, found by the live test of the conversation service.
 Give both bindings the same `num_ctx`, or the same limits.
+
+## Speech
+
+`stt` and `tts` are served by two providers that run in the gateway's own process, not over HTTP:
+no address, no key, so a binding needs neither `base_url` nor `secret_ref`. `model` is a Whisper
+model size (`whisper_local`: `tiny`, `base`, `small`...) or a Piper voice name (`piper_local`:
+`it_IT-paola-medium`...), or a path to one already on disk. Chat, streaming and embeddings are not
+what either is for: asking one for them is `role_not_supported`, the same as Anthropic and
+embeddings.
+
+```yaml
+bindings:
+  - role: stt
+    provider: whisper_local
+    model: base
+  - role: tts
+    provider: piper_local
+    model: it_IT-paola-medium
+```
+
+The engine for a binding's model is built the first time it is actually asked to transcribe or to
+synthesize, not at startup: a deployment that never binds either role never loads one. Building it
+downloads the model from Hugging Face if it is not already cached — a few hundred MB for a Whisper
+size, tens of MB for a Piper voice — into `FACTOTUM_GATEWAY_SPEECH_CACHE_DIR` (default: each
+library's own cache in the user's home directory); `FACTOTUM_GATEWAY_SPEECH_DEVICE` (`cpu` or
+`cuda`) picks where both run. See [ADR
+0021](decisions/0021-voice-wake-word-on-the-device-speech-through-the-gateway.md) for why these
+two, in the gateway's own process, rather than a hosted provider.
 
 ## Structured output
 
@@ -186,6 +215,8 @@ authenticator (`x-factotum-dev-subject: user|tenant`), so **the gateway refuses 
 | --- | --- |
 | `POST /v1/chat` | `ChatRequest` → `ChatResult`, or server-sent events with `stream: true` |
 | `POST /v1/embeddings` | `EmbeddingRequest` → `EmbeddingResult` (`vectors`, `dimensions`, `space_id`, `usage`) |
+| `POST /v1/transcribe` | `TranscribeRequest` (`audio`) → `TranscribeResult` (`text`, blank if nothing was understood) |
+| `POST /v1/synthesize` | `SynthesizeRequest` (`text`) → `SynthesizeResult` (`audio`) |
 | `GET /v1/profiles/{role}` | → `Profile` |
 | `GET /healthz`, `GET /readyz` | → `{"status": "ok"}` |
 
@@ -253,9 +284,12 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k
 ## Adding a provider
 
 1. A module in `providers/` with a class that satisfies `ProviderAdapter`: `kind`,
-   `native_structured_output`, `chat`, `chat_stream` and `embed`. Use the plumbing of
-   `providers/base.py` (typed errors from statuses, redaction, the two stream readers, retry-after).
-   Read the provider's own documentation and types: write the wire models in the adapter.
+   `native_structured_output`, `chat`, `chat_stream`, `embed`, `transcribe` and `synthesize`. A
+   provider that does not offer one of these raises `role_not_supported` (`base.role_not_supported`)
+   rather than pretending; `whisper_local` and `piper_local` do this for everything but speech. Use
+   the plumbing of `providers/base.py` (typed errors from statuses, redaction, the two stream
+   readers, retry-after). Read the provider's own documentation and types: write the wire models in
+   the adapter.
 2. Register it in `default_adapters()` in `core.py`, and its default address if it has one.
 3. Add its wire format to `tests/test_adapter_contract.py`, and its own file of tests for what only
    it does.
@@ -268,6 +302,10 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k
   calls a tenant may have in flight: quotas come with the cloud gates.
 - Asymmetric embedding models (a different prefix or task for a query and for a document) are not
   modelled yet; the knowledge service will decide how.
+- **No hosted speech provider yet.** `stt` and `tts` are served locally (`whisper_local`,
+  `piper_local`) only; every hosted adapter answers `role_not_supported` for both, even where the
+  provider itself offers one (OpenAI's Whisper and TTS APIs, for instance). Adding one is the same
+  three steps as any other provider, above.
 - **Keys come only from the environment, by design, even from the hub**: a binding the hub holds
   still only ever names an environment variable (`secret_ref: env:...`), read where it always was.
   Letting an administrator paste a provider's key into the hub instead, encrypted at rest, was on
