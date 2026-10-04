@@ -313,7 +313,7 @@ client library that devices use on the other side, for what only a real connecti
 peer sees when it is closed, a frame bigger than the protocol allows). The terminal client is tested
 against an edge served the same way, so that the two halves of the protocol are shown to fit.
 What needs everything behind the edge as well (a question by voice answered aloud from a
-document) is in `tests/e2e`, with the real conversation, knowledge and model-gateway services
+document) is in `e2e`, with the real conversation, knowledge and model-gateway services
 ([`development.md`](development.md#end-to-end-tests)).
 
 ## Measured

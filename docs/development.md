@@ -41,7 +41,8 @@ libs/db/          the Postgres pool, migrations and the harness for tests agains
 libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
 services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions, runner, egress, hub)
 clients/          the devices that talk to the edge (so far: terminal, a device in a terminal)
-tests/e2e/        the end-to-end tests: every service in one process, from a device to the models
+e2e/              the end-to-end tests, and the rig they share: every service in one process,
+                  from a device to the models
 config/           example configuration, such as the model bindings
 docs/             design.md, the decision records, one document per service
 infra/            files mounted into containers
@@ -67,11 +68,14 @@ To add a member, create its folder with a `pyproject.toml` (copy one from `libs/
 
 ## End-to-end tests
 
-`tests/e2e` holds the tests that need every service at once. They cost what a unit test costs (no
-Docker, no model, nothing beyond the loopback, a few seconds) and cover what one does not: the terminal
-client talks over a real WebSocket to the edge, and behind the edge the conversation, knowledge and
-model-gateway applications are the real ones, each reached through its own HTTP interface and each with
-its store in memory instead of Postgres. Nothing above the stores is replaced.
+`e2e` holds the tests that need every service at once, and the rig they share (`factotum.e2e`, a
+member of the workspace like the others, since one test module cannot import another). They cost
+what a unit test costs (no Docker, no model, nothing beyond the loopback, a few seconds) and cover
+what one does not: the terminal client talks over a real WebSocket to the edge, and behind the edge
+the conversation, knowledge, actions and model-gateway applications are the real ones, each reached
+through its own HTTP interface and each with its store in memory instead of Postgres. Nothing above
+the stores is replaced, and the home is the example one, `config/devices.example.yaml`, with the
+skills of `skills/examples`.
 
 What is made up is what a unit test cannot have:
 
@@ -85,7 +89,7 @@ What is made up is what a unit test cannot have:
   answer from the sources they were shown and give words a direction.
 
 ```bash
-uv run pytest tests/e2e
+uv run pytest e2e
 ```
 
 They cover a question answered aloud from the documents (asked by voice, or typed, on a speaker and on a
@@ -97,8 +101,7 @@ text-to-speech model, a silence, a model that falls over).
 They do not cover yet: an action asked by voice (the actions service and the runner), the hub's tokens in
 place of the development headers, a real Postgres or the containers, and two tenants (every service is
 given one development tenant, so what they show is the owners of a tenant: a person, and the tenant
-itself for a shared device). The rig is at the top of the module; when a second one needs it, it moves
-to a `testing.py` of its own, since one test module cannot import another here.
+itself for a shared device).
 
 ## Trying the model gateway
 

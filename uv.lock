@@ -15,6 +15,7 @@ members = [
     "factotum-conversation",
     "factotum-db",
     "factotum-devices",
+    "factotum-e2e",
     "factotum-edge",
     "factotum-egress",
     "factotum-hub",
@@ -726,6 +727,43 @@ dependencies = [
 requires-dist = [
     { name = "factotum-contracts", editable = "libs/contracts" },
     { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
+name = "factotum-e2e"
+version = "0.0.0"
+source = { editable = "e2e" }
+dependencies = [
+    { name = "factotum-actions" },
+    { name = "factotum-common" },
+    { name = "factotum-contracts" },
+    { name = "factotum-conversation" },
+    { name = "factotum-devices" },
+    { name = "factotum-edge" },
+    { name = "factotum-knowledge" },
+    { name = "factotum-model-client" },
+    { name = "factotum-model-gateway" },
+    { name = "factotum-terminal" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-actions", editable = "services/actions" },
+    { name = "factotum-common", editable = "libs/common" },
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "factotum-conversation", editable = "services/conversation" },
+    { name = "factotum-devices", editable = "libs/devices" },
+    { name = "factotum-edge", editable = "services/edge" },
+    { name = "factotum-knowledge", editable = "services/knowledge" },
+    { name = "factotum-model-client", editable = "libs/model_client" },
+    { name = "factotum-model-gateway", editable = "services/model_gateway" },
+    { name = "factotum-terminal", editable = "clients/terminal" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "uvicorn", specifier = ">=0.32" },
 ]
 
 [[package]]

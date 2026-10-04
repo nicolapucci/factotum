@@ -1,0 +1,39 @@
+[project]
+name = "factotum-e2e"
+version = "0.0.0"
+description = "The end-to-end tests of Factotum: every service put together in one process, from a device to the models. A package for what those tests share (the rig), since one test module cannot import another."
+requires-python = ">=3.13"
+dependencies = [
+  "factotum-actions",
+  "factotum-common",
+  "factotum-contracts",
+  "factotum-conversation",
+  "factotum-devices",
+  "factotum-edge",
+  "factotum-knowledge",
+  "factotum-model-client",
+  "factotum-model-gateway",
+  "factotum-terminal",
+  "fastapi>=0.115",
+  "httpx>=0.28",
+  "uvicorn>=0.32",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/factotum"]
+
+[tool.uv.sources]
+factotum-actions = { workspace = true }
+factotum-common = { workspace = true }
+factotum-contracts = { workspace = true }
+factotum-conversation = { workspace = true }
+factotum-devices = { workspace = true }
+factotum-edge = { workspace = true }
+factotum-knowledge = { workspace = true }
+factotum-model-client = { workspace = true }
+factotum-model-gateway = { workspace = true }
+factotum-terminal = { workspace = true }
