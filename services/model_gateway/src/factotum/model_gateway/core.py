@@ -320,7 +320,9 @@ class ModelGateway:
     def _resolve(self, binding: ModelBinding, *, with_secret: bool = True) -> ResolvedBinding:
         return ResolvedBinding(
             binding=binding,
-            base_url=binding.base_url or DEFAULT_BASE_URLS[binding.provider],
+            # A provider that runs in the gateway's own process (the speech ones) has no address,
+            # and a binding of one gives none: nothing is ever sent to it over a network.
+            base_url=binding.base_url or DEFAULT_BASE_URLS.get(binding.provider, ""),
             api_key=self._secrets.resolve(binding.secret_ref) if with_secret else None,
         )
 

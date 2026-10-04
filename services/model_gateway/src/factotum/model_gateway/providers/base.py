@@ -39,8 +39,9 @@ _MAX_RETRY_AFTER_S = 3600.0
 class ResolvedBinding:
     """A binding with everything needed to call the provider.
 
-    The address has its default applied and the key is in memory (``SecretStr`` keeps it out of
-    ``repr``). It is built for one call and never leaves the gateway.
+    The address has its default applied (it is empty for a provider that runs in the gateway's own
+    process, which is never called over a network) and the key is in memory (``SecretStr`` keeps it
+    out of ``repr``). It is built for one call and never leaves the gateway.
     """
 
     binding: ModelBinding

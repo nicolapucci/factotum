@@ -662,6 +662,55 @@ def clip(data: bytes = b"wav-bytes", sample_rate: int = 16000) -> AudioPayload:
     return AudioPayload(sample_rate=sample_rate, data=data)
 
 
+def speech_binding(role: ModelRole, provider: ProviderKind, model: str) -> ModelBinding:
+    """A binding of a speech role the way a person writes it (docs/model-gateway.md): the provider
+    and the model, and no address, since it runs in the gateway's own process."""
+    return make_model_binding(
+        tenant_id=TENANT, role=role, provider=provider, model=model, base_url=None
+    )
+
+
+class TestASpeechBindingWithNoAddress:
+    """The two local providers have no address and the binding of one says none. Every other test of
+    speech binds the role to a provider that has one, which is how this was not seen."""
+
+    async def test_a_recording_can_be_transcribed(self) -> None:
+        rig = Rig(speech_binding(ModelRole.STT, ProviderKind.WHISPER_LOCAL, "base"))
+        rig.adapter.will_transcribe("how do I reset the router?")
+
+        text = await rig.gateway.transcribe(TENANT_PRINCIPAL, clip())
+
+        assert text == "how do I reset the router?"
+        [(resolved_binding, _)] = rig.adapter.transcriptions
+        assert (resolved_binding.model, resolved_binding.base_url) == ("base", "")
+
+    async def test_a_text_can_be_spoken(self) -> None:
+        rig = Rig(speech_binding(ModelRole.TTS, ProviderKind.PIPER_LOCAL, "it_IT-paola-medium"))
+        rig.adapter.will_synthesize(clip(data=b"spoken-aloud"))
+
+        audio = await rig.gateway.synthesize(TENANT_PRINCIPAL, "Dinner is ready")
+
+        assert audio.data == b"spoken-aloud"
+        [(resolved_binding, _)] = rig.adapter.syntheses
+        assert (resolved_binding.model, resolved_binding.base_url) == ("it_IT-paola-medium", "")
+
+    @pytest.mark.parametrize(
+        ("role", "provider"),
+        [
+            (ModelRole.STT, ProviderKind.WHISPER_LOCAL),
+            (ModelRole.TTS, ProviderKind.PIPER_LOCAL),
+        ],
+    )
+    async def test_the_profile_of_the_role_is_there_to_be_read(
+        self, role: ModelRole, provider: ProviderKind
+    ) -> None:
+        rig = Rig(speech_binding(role, provider, "any"))
+
+        profile = await rig.gateway.profile(TENANT_PRINCIPAL, role)
+
+        assert (profile.role, profile.streaming) == (role, False)
+
+
 class TestTranscribe:
     async def test_what_the_adapter_heard_is_returned(self) -> None:
         rig = Rig(local_binding(ModelRole.STT, model="base"))
