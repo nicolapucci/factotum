@@ -80,28 +80,42 @@ skills of `skills/examples`.
 What is made up is what a unit test cannot have:
 
 - **The hardware of the device.** A recording is a WAV file that carries the words that were said in
-  it, the speaker remembers what it was asked to play, and the wake word is a `FakeVoiceInput` that hands
-  the terminal one recording after another. That is the mock of the client: a client that streams audio
-  and can be interrupted (ADR 0021) will need a stand-in of its own.
-- **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines (the
-  first reads the words out of a recording, the second writes a clip that carries the words it was asked
-  to say, so a test reads what a speaker was made to say), and the chat and embedding model write an
-  answer from the sources they were shown and give words a direction.
+  it, the speaker remembers what it was asked to play, and the wake word is a `FakeVoiceInput` that
+  hands the terminal one recording after another. That is the mock of the client: a client that
+  streams audio and can be interrupted (ADR 0021) will need a stand-in of its own.
+- **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines
+  (the first reads the words out of a recording, the second writes a clip that carries the words it
+  was asked to say, so a test reads what a speaker was made to say). The chat model answers from the
+  sources it was shown, the embedding model gives words a direction, and the small model that plans
+  reads a message as a question or as a command. What it proposes is a proposal: it names a skill or
+  a device whether or not they were offered, and the tests show that the code decides.
+- **What a skill reaches, and the container it runs in.** A script is the real one, run in a process
+  of its own with what it was granted (`LocalRunner`); the Home Assistant it calls is a web server on
+  this machine that every host resolves to, which keeps what it was asked (`FakeWeb`).
 
 ```bash
 uv run pytest e2e
 ```
 
-They cover a question answered aloud from the documents (asked by voice, or typed, on a speaker and on a
-screen with a speaker), what was heard being what the conversation keeps, the wake-word loop of the
-terminal, who may hear which document read out (a person's own phone against the shared speaker), the
-longest recording a microphone makes, Italian with its accents, and each thing that may be missing (no speech-to-text model, no
-text-to-speech model, a silence, a model that falls over).
+They cover a question answered aloud from the documents (asked by voice, or typed, on a speaker and
+on a screen with a speaker), what was heard being what the conversation keeps, the wake-word loop of
+the terminal, who may hear which document read out (a person's own phone against the shared speaker),
+the longest recording a microphone makes, Italian with its accents, and each thing that may be
+missing (no speech-to-text model, no text-to-speech model, a silence, a model that falls over).
 
-They do not cover yet: an action asked by voice (the actions service and the runner), the hub's tokens in
-place of the development headers, a real Postgres or the containers, and two tenants (every service is
-given one development tenant, so what they show is the owners of a tenant: a person, and the tenant
-itself for a shared device).
+They cover what is asked to be done too, in the example home: a lamp switched through Home Assistant
+with the token of the home and a script that was given only what it declared, the volume of the
+device that was spoken to, a garage door that the kitchen speaker is refused (in English and in
+Italian) and the living room display asks about, a yes that opens it, a no, a yes that adds
+something, a yes that is taken once, a yes said to another device, a skill that was switched off
+meanwhile; a lamp that is one person's own and that the shared speaker is never told of; a question
+that names something to do, which is answered and runs nothing and whose planner never reads a
+document; and the audit trail of it all, with the device each step came from.
+
+They do not cover yet: the hub's tokens in place of the development headers, a real Postgres or the
+containers (the sandbox of the runner has its own tests that need an engine), an approval (there is
+nobody to ask yet), and two tenants (every service is given one development tenant, so what they
+show is the owners of a tenant: a person, and the tenant itself for a shared device).
 
 ## Trying the model gateway
 

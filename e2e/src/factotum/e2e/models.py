@@ -45,6 +45,14 @@ CLOSING = "Let me know if there is anything else you need."
 NOT_FOUND = "I did not find that in your documents."
 OFFER = "Is there anything else I can look up for you?"
 
+ROUTER = "To reset the router, hold the reset button for ten seconds."
+"""A sentence of a manual: the questions about the router are answered from it."""
+
+FROM_THE_MANUAL = f"From your documents: {ROUTER.rstrip('.')}"
+SPOKEN_ANSWER = [f"{FROM_THE_MANUAL}.", CLOSING]
+"""The two sentences a speaker is made to say to a question about the router: what it says has
+no references in it."""
+
 _SOURCES = re.compile(r"=== SOURCES (\w+) ===\n(.*?)\n=== END SOURCES \1 ===", re.DOTALL)
 
 

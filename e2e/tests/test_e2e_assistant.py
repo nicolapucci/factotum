@@ -25,21 +25,24 @@ from factotum.contracts.edge import CloseCode, TurnStatus
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.e2e.devices import connected, joined, remembered, until
 from factotum.e2e.house import TIMEOUT_S, running
-from factotum.e2e.models import CLOSING, NOT_FOUND, OFFER, STT_MODEL, VOICE
+from factotum.e2e.models import (
+    CLOSING,
+    FROM_THE_MANUAL,
+    NOT_FOUND,
+    OFFER,
+    ROUTER,
+    SPOKEN_ANSWER,
+    STT_MODEL,
+    VOICE,
+)
 from factotum.e2e.voice import recording_of
 from factotum.terminal.cli import converse_by_voice
 from factotum.terminal.testing import FakeVoiceInput
 
-ROUTER = "To reset the router, hold the reset button for ten seconds."
 ROUTER_IN_ITALIAN = "Il router è nello studio, accanto alla libreria, perché lì arriva il cavo."
 SAFE = "The code of the safe is 4711."
 QUESTION = "How do I reset the router?"
 SAFE_QUESTION = "What is the code of the safe?"
-
-FROM_THE_MANUAL = "From your documents: To reset the router, hold the reset button for ten seconds"
-SPOKEN_ANSWER = [f"{FROM_THE_MANUAL}.", CLOSING]
-"""The two sentences a speaker is made to say to a question about the router: what it says has
-no references in it."""
 
 
 class TestAskingByVoice:
