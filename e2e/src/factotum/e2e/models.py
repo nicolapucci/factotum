@@ -56,15 +56,24 @@ no references in it."""
 _SOURCES = re.compile(r"=== SOURCES (\w+) ===\n(.*?)\n=== END SOURCES \1 ===", re.DOTALL)
 
 
+_WORD = re.compile(r"\w{3,}")
+_SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
 def answer_from(prompt: str) -> str:
-    """What the stand-in chat model writes for a prompt: the first of the sources it was shown,
-    quoted and cited, or that it found none. Two sentences, each long enough to be said alone."""
+    """What the stand-in chat model writes for a prompt: the sentence of the first source it was
+    shown that has the most words of the question in it, quoted and cited, or that it found no
+    source. Two sentences, each long enough to be said alone."""
     sources = _SOURCES.search(prompt)
     if sources is None:
         return f"{NOT_FOUND} {OFFER}"
-    _label, _, text = sources.group(2).partition("\n")
-    quoted = text.split("\n\n", 1)[0].strip().rstrip(".")
-    return f"From your documents: {quoted} [1]. {CLOSING}"
+    asked = set(_WORD.findall(prompt.rsplit("Message: ", 1)[-1].casefold()))
+    _label, _, first = sources.group(2).partition("\n")
+    sentences = [s.strip() for s in _SENTENCES.split(first.split("\n\n", 1)[0]) if s.strip()]
+    # The most words of the question, and of those the one that says the most: a title that has
+    # the same words in it says less than the sentence under it.
+    nearest = max(sentences, key=lambda s: (len(asked & set(_WORD.findall(s.casefold()))), len(s)))
+    return f"From your documents: {nearest.rstrip('.')} [1]. {CLOSING}"
 
 
 _ITALIAN = re.compile(r"\b(accendi|spegni|apri|chiudi|alza|abbassa|luce|lampada)\b")

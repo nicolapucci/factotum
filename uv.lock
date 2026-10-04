@@ -750,6 +750,8 @@ dependencies = [
     { name = "factotum-web" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "python-docx" },
+    { name = "reportlab" },
     { name = "uvicorn" },
 ]
 
@@ -771,6 +773,8 @@ requires-dist = [
     { name = "factotum-web", editable = "libs/web" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "python-docx", specifier = ">=1.1" },
+    { name = "reportlab", specifier = ">=5.0.1" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
 

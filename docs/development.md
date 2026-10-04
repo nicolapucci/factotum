@@ -114,6 +114,12 @@ meanwhile; a lamp that is one person's own and that the shared speaker is never 
 that names something to do, which is answered and runs nothing and whose planner never reads a
 document; and the audit trail of it all, with the device each step came from.
 
+A document can be a file: a PDF is uploaded as a person uploads it, read by the knowledge service in
+a process of its own, and answered from with the page it is on; a Word file with its heading; an
+Italian one with its accents from the page to the speaker; a PDF that is broken fails where it was
+read and the service goes on; and a file is read for what its bytes are, not for what it is said to
+be.
+
 Run the way production runs, with the hub (`running(auth=Auth.HUB)`), nothing reads a header that
 says whom a call is for: the services share a secret, check the signed token they are shown and
 mint a short one of their own to call the next, and the devices, the skills bound to them, the

@@ -95,39 +95,70 @@ HOME_ASSISTANT = (
 
 class Library:
     """The documents, put in through the knowledge service's own interface and read by its worker,
-    which a test runs by hand: what can be found is known when ``add`` returns."""
+    which a test runs by hand: what can be found is known when ``add`` returns. A text is read where
+    the test is; a file (``upload``) is read the way the service reads it, in a process of its own
+    that has nothing but the bytes and a limit of time and memory."""
 
     def __init__(
         self,
         http: httpx.AsyncClient,
         store: KnowledgeStore,
         ingestor: Ingestor,
+        isolated: Ingestor,
         admin: dict[str, str],
     ) -> None:
         self._http = http
-        self._admin = admin
         self._store = store
         self._ingestor = ingestor
+        self._isolated = isolated
+        self._admin = admin
 
     async def add(self, collection: str, title: str, text: str, *, owner: CollectionOwner) -> None:
-        created = await self._http.post(
-            "/v1/collections",
-            json=CollectionCreate(name=collection, owner=owner).model_dump(mode="json"),
-            headers=self._admin,
-        )
-        assert created.status_code == 201, created.text
+        created = await self._collection(collection, owner)
         added = await self._http.post(
-            f"/v1/collections/{created.json()['id']}/documents/text",
+            f"/v1/collections/{created}/documents/text",
             json=DocumentText(title=title, text=text).model_dump(mode="json", exclude_none=True),
             headers=self._admin,
         )
         assert added.status_code == 202, added.text
-        while (job := await self._store.claim_job("e2e", lease_seconds=60)) is not None:
-            await self._ingestor.run(job)
-        read = await self._http.get(
-            f"/v1/documents/{Document.model_validate(added.json()).id}", headers=self._admin
+        document = await self._read(self._ingestor, Document.model_validate(added.json()))
+        assert document.status is DocumentStatus.READY, document
+
+    async def upload(
+        self,
+        collection: str,
+        filename: str,
+        content: bytes,
+        media_type: str,
+        *,
+        owner: CollectionOwner,
+        title: str | None = None,
+    ) -> Document:
+        """A file, put in as a person does it, and what became of it once it was read."""
+        created = await self._collection(collection, owner)
+        uploaded = await self._http.post(
+            f"/v1/collections/{created}/documents",
+            files={"file": (filename, content, media_type)},
+            data={"title": title} if title else None,
+            headers=self._admin,
         )
-        assert Document.model_validate(read.json()).status is DocumentStatus.READY, read.text
+        assert uploaded.status_code == 202, uploaded.text
+        return await self._read(self._isolated, Document.model_validate(uploaded.json()))
+
+    async def _collection(self, name: str, owner: CollectionOwner) -> str:
+        created = await self._http.post(
+            "/v1/collections",
+            json=CollectionCreate(name=name, owner=owner).model_dump(mode="json"),
+            headers=self._admin,
+        )
+        assert created.status_code == 201, created.text
+        return str(created.json()["id"])
+
+    async def _read(self, ingestor: Ingestor, document: Document) -> Document:
+        while (job := await self._store.claim_job("e2e", lease_seconds=60)) is not None:
+            await ingestor.run(job)
+        read = await self._http.get(f"/v1/documents/{document.id}", headers=self._admin)
+        return Document.model_validate(read.json())
 
 
 @dataclass
@@ -364,6 +395,7 @@ async def running(
                     knowledge,
                     documents,
                     Ingestor(documents, embedder, parser=parse_in_process),
+                    Ingestor(documents, embedder),
                     wiring.admin,
                 ),
                 conversation=conversation,
