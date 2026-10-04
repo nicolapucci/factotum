@@ -10,10 +10,12 @@ dependencies = [
   "factotum-conversation",
   "factotum-devices",
   "factotum-edge",
+  "factotum-hub",
   "factotum-knowledge",
   "factotum-model-client",
   "factotum-model-gateway",
   "factotum-terminal",
+  "factotum-web",
   "fastapi>=0.115",
   "httpx>=0.28",
   "uvicorn>=0.32",
@@ -33,7 +35,9 @@ factotum-contracts = { workspace = true }
 factotum-conversation = { workspace = true }
 factotum-devices = { workspace = true }
 factotum-edge = { workspace = true }
+factotum-hub = { workspace = true }
 factotum-knowledge = { workspace = true }
 factotum-model-client = { workspace = true }
 factotum-model-gateway = { workspace = true }
 factotum-terminal = { workspace = true }
+factotum-web = { workspace = true }

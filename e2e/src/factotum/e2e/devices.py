@@ -11,7 +11,6 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from factotum.common.devauth import SUBJECT_HEADER
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.conversation import ConversationDetail, ConversationList, Exchange
 from factotum.contracts.edge import TurnEnded
@@ -55,10 +54,13 @@ class Device:
 
 
 @asynccontextmanager
-async def joined(house: House, name: str) -> AsyncIterator[Device]:
+async def joined(
+    house: House, name: str, *, credential: str | None = None
+) -> AsyncIterator[Device]:
     """The device of this profile (``speaker``, ``smart-display``, ``phone``...), connected to the
     edge and told it is ready. It does not yet do what the edge sends: whoever takes it on does
-    (``client.run()``)."""
+    (``client.run()``). It presents the credential it was given when it was paired (the hub's) or
+    the one of its profile, unless ``credential`` says another."""
     profile = get_profile(name)
     shown, speaker = RecordingRenderer(), FakeVoiceOutput()
     hardware = TerminalDevice(profile.capabilities, shown)
@@ -67,6 +69,7 @@ async def joined(house: House, name: str) -> AsyncIterator[Device]:
         profile,
         shown,
         hardware,
+        token=credential or house.tokens.get(profile.hardware_id),
         voice_output=speaker,
     )
     try:
@@ -77,9 +80,11 @@ async def joined(house: House, name: str) -> AsyncIterator[Device]:
 
 
 @asynccontextmanager
-async def connected(house: House, name: str) -> AsyncIterator[Device]:
+async def connected(
+    house: House, name: str, *, credential: str | None = None
+) -> AsyncIterator[Device]:
     """The same, doing what the edge sends."""
-    async with joined(house, name) as device:
+    async with joined(house, name, credential=credential) as device:
         listening = asyncio.create_task(device.client.run())
         try:
             yield device
@@ -96,7 +101,7 @@ async def until(condition: Callable[[], bool]) -> None:
 
 async def remembered(house: House) -> list[Exchange]:
     """What the conversation service kept of what a person said, read as that person."""
-    me = {SUBJECT_HEADER: "user"}
+    me = house.admin
     listed = await house.conversation.get("/v1/conversations", headers=me)
     exchanges: list[Exchange] = []
     for conversation in ConversationList.model_validate(listed.json()).conversations:

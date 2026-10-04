@@ -24,8 +24,9 @@ from factotum.contracts.identity import Subject
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.devices.home import device_id_for
 from factotum.e2e.devices import connected, remembered
-from factotum.e2e.house import HA_TOKEN, TENANT, House, running
+from factotum.e2e.house import House, running
 from factotum.e2e.models import ROUTER, SPOKEN_ANSWER
+from factotum.e2e.wiring import HA_TOKEN, TENANT
 
 HOME_ASSISTANT = "http://homeassistant.local:8123"
 GARAGE = "Open the garage door."
@@ -179,9 +180,13 @@ class TestWhatADeviceMayStart:
     async def test_a_skill_that_is_disabled_meanwhile_is_not_run_by_a_late_yes(self) -> None:
         async with running() as house, connected(house, "smart-display") as display:
             await display.says_aloud(GARAGE)
-            listed = SkillList.model_validate((await house.actions.get("/v1/skills")).json())
+            listed = SkillList.model_validate(
+                (await house.actions.get("/v1/skills", headers=house.admin)).json()
+            )
             garage_door = next(skill for skill in listed.skills if skill.name == "garage-door")
-            disabled = await house.actions.post(f"/v1/skills/{garage_door.id}/disable")
+            disabled = await house.actions.post(
+                f"/v1/skills/{garage_door.id}/disable", headers=house.admin
+            )
             await display.says_aloud("Yes.")
 
             # When a yes is taken nothing is assumed: the action is decided again, and a skill that
@@ -239,7 +244,9 @@ class TestTheTrail:
             await display.says_aloud(GARAGE)
             await display.says_aloud("Yes.")
 
-            trail = AuditList.model_validate((await house.actions.get("/v1/audit")).json())
+            trail = AuditList.model_validate(
+                (await house.actions.get("/v1/audit", headers=house.admin)).json()
+            )
             steps = [
                 (r.skill_name, r.device_id, r.decision, r.result, r.confirmed)
                 for r in reversed(trail.records)  # the trail lists the latest first

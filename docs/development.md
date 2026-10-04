@@ -112,10 +112,19 @@ meanwhile; a lamp that is one person's own and that the shared speaker is never 
 that names something to do, which is answered and runs nothing and whose planner never reads a
 document; and the audit trail of it all, with the device each step came from.
 
-They do not cover yet: the hub's tokens in place of the development headers, a real Postgres or the
-containers (the sandbox of the runner has its own tests that need an engine), an approval (there is
-nobody to ask yet), and two tenants (every service is given one development tenant, so what they
-show is the owners of a tenant: a person, and the tenant itself for a shared device).
+Run the way production runs, with the hub (`running(auth=Auth.HUB)`), nothing reads a header that
+says whom a call is for: the services share a secret, check the signed token they are shown and
+mint a short one of their own to call the next, and the devices, the skills bound to them, the
+models and the secrets of the home are the hub's, paired in it by its administrator the way
+[`hub.md`](hub.md#trying-it) says. The journeys above are run against it, and so is what only the
+hub has to say: a device with the placeholder credential of the example file, or with another
+device's, is refused, and every service refuses a call with no token, with one that another secret
+signed and with the headers of development.
+
+They do not cover yet: a real Postgres or the containers (the sandbox of the runner has its own
+tests that need an engine), an approval (there is nobody to ask yet), and two tenants (every service
+is given one tenant, so what they show is the owners of a tenant: a person, and the tenant itself
+for a shared device).
 
 ## Trying the model gateway
 

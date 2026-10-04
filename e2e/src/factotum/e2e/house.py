@@ -27,22 +27,13 @@ from factotum.actions.api import create_app as create_actions_app
 from factotum.actions.audit import AuditReader
 from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import ConfirmationReader
-from factotum.actions.directory import FileDeviceDirectory
 from factotum.actions.edge_client import EdgeDispatcher
 from factotum.actions.instructions.testing import FakeWeb, LocalRunner
 from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
 from factotum.actions.runner_client import RemoteRunner
-from factotum.actions.secrets import FileSecrets, parse_secrets
 from factotum.actions.service import ActionService
 from factotum.actions.store import InMemoryStore as ActionsMemory
-from factotum.common.config import Environment, ServiceSettings
-from factotum.common.devauth import (
-    DEV_TENANT_ID,
-    DEV_USER_ID,
-    DevAuthenticator,
-    DevPrincipalDelegation,
-)
 from factotum.contracts.edge import MAX_FRAME_BYTES
 from factotum.contracts.knowledge import (
     CollectionCreate,
@@ -64,9 +55,9 @@ from factotum.conversation.turn import TurnEngine
 from factotum.devices.home import parse_home
 from factotum.e2e.models import HouseholdModel, bindings
 from factotum.e2e.voice import StandInPiper, StandInWhisper
+from factotum.e2e.wiring import TENANT, USER, Auth, dev_wiring, hub_wiring
 from factotum.edge.api import create_app as create_edge_app
 from factotum.edge.conversation import ConversationClient
-from factotum.edge.registry import FileDeviceRegistry
 from factotum.edge.router import Sessions
 from factotum.edge.testing import ReportingServer, quick_settings
 from factotum.knowledge.api import create_app as create_knowledge_app
@@ -75,9 +66,8 @@ from factotum.knowledge.service import KnowledgeService
 from factotum.knowledge.store import InMemoryStore as KnowledgeMemory
 from factotum.knowledge.store import KnowledgeStore
 from factotum.knowledge.testing import parse_in_process
-from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder, GatewaySpeech
+from factotum.model_client import GatewayChat, GatewayEmbedder, GatewaySpeech
 from factotum.model_gateway.api import create_app as create_gateway_app
-from factotum.model_gateway.bindings import InMemoryBindingRepository
 from factotum.model_gateway.core import ModelGateway
 from factotum.model_gateway.providers.piper_local import PiperLocalAdapter
 from factotum.model_gateway.providers.whisper_local import WhisperLocalAdapter
@@ -88,20 +78,9 @@ from factotum.model_gateway.testing import Sleeps, TrackedClients
 TIMEOUT_S = 10.0
 """What a test waits for something that should be immediate: a stuck one ends instead of hanging."""
 
-TENANT = DEV_TENANT_ID
-USER = DEV_USER_ID
-"""The tenant and the person of every service in development, so that what one of them is told about
-whom a device acts for is what the next one understands."""
-
-TEST = ServiceSettings(_env_file=None, environment=Environment.TEST)
-
 _ROOT = Path(__file__).resolve().parents[4]
 HOME_FILE = _ROOT / "config" / "devices.example.yaml"
 SKILLS_FOLDER = _ROOT / "skills" / "examples"
-
-HA_TOKEN = "the-token-of-the-home"  # noqa: S105 - a stand-in, in the secrets the example file shows
-SECRETS = f'tenant:\n  HA_TOKEN: "{HA_TOKEN}"\n'
-"""What the home keeps for its skills, as ``config/secrets.example.yaml`` has it."""
 
 HOME_ASSISTANT = (
     "/api/services/light/turn_on",
@@ -116,8 +95,15 @@ class Library:
     """The documents, put in through the knowledge service's own interface and read by its worker,
     which a test runs by hand: what can be found is known when ``add`` returns."""
 
-    def __init__(self, http: httpx.AsyncClient, store: KnowledgeStore, ingestor: Ingestor) -> None:
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        store: KnowledgeStore,
+        ingestor: Ingestor,
+        admin: dict[str, str],
+    ) -> None:
         self._http = http
+        self._admin = admin
         self._store = store
         self._ingestor = ingestor
 
@@ -125,16 +111,20 @@ class Library:
         created = await self._http.post(
             "/v1/collections",
             json=CollectionCreate(name=collection, owner=owner).model_dump(mode="json"),
+            headers=self._admin,
         )
         assert created.status_code == 201, created.text
         added = await self._http.post(
             f"/v1/collections/{created.json()['id']}/documents/text",
             json=DocumentText(title=title, text=text).model_dump(mode="json", exclude_none=True),
+            headers=self._admin,
         )
         assert added.status_code == 202, added.text
         while (job := await self._store.claim_job("e2e", lease_seconds=60)) is not None:
             await self._ingestor.run(job)
-        read = await self._http.get(f"/v1/documents/{Document.model_validate(added.json()).id}")
+        read = await self._http.get(
+            f"/v1/documents/{Document.model_validate(added.json()).id}", headers=self._admin
+        )
         assert Document.model_validate(read.json()).status is DocumentStatus.READY, read.text
 
 
@@ -159,6 +149,21 @@ class House:
 
     runner: LocalRunner
     """What ran a skill: the jobs it was given, and what they printed."""
+
+    admin: dict[str, str]
+    """The headers of the administrator that the tests act as, in the way the services check."""
+
+    tokens: dict[str, str]
+    """The credential each device was given when it was paired, by hardware id (the hub only)."""
+
+    secret: bytes | None
+    """The secret that signs the tokens (the hub only), for a test that makes one of its own."""
+
+    hub: httpx.AsyncClient | None
+    """The hub's own interface (the hub only)."""
+
+    services: dict[str, httpx.AsyncClient]
+    """The own interface of every service that has one, by name, as another service reaches it."""
 
 
 @dataclass(frozen=True)
@@ -200,15 +205,13 @@ async def forgotten(sessions: Sessions) -> bool:
     return False
 
 
-def authenticator() -> DevAuthenticator:
-    return DevAuthenticator(TEST, tenant_id=TENANT, user_id=USER)
-
-
 @asynccontextmanager
 async def running(
-    *, speech_to_text: bool = True, text_to_speech: bool = True
+    *, auth: Auth = Auth.DEV, speech_to_text: bool = True, text_to_speech: bool = True
 ) -> AsyncIterator[House]:
-    """The whole assistant, in the example home, with the models the tenant bound."""
+    """The whole assistant, in the example home, with the models the tenant bound. ``auth`` is how
+    the services trust each other: the headers of development, or the hub's signed tokens, with
+    the home paired in a hub of this process (``factotum.e2e.wiring``)."""
     model, whisper, piper = HouseholdModel(), StandInWhisper(), StandInPiper()
     home = parse_home(
         HOME_FILE.read_text(encoding="utf-8"),
@@ -216,9 +219,8 @@ async def running(
         user_id=USER,
         source=HOME_FILE.name,
     )
+    models = bindings(TENANT, speech_to_text=speech_to_text, text_to_speech=text_to_speech)
     sessions = Sessions()
-    delegation = DevDelegation(TEST)
-    principals = DevPrincipalDelegation(TEST)
 
     async with AsyncExitStack() as closing:
 
@@ -228,14 +230,14 @@ async def running(
             )
             return await closing.enter_async_context(client)
 
+        wiring = (
+            dev_wiring(home, models) if auth is Auth.DEV else await hub_wiring(home, models, reach)
+        )
+
         gateway = await reach(
             create_gateway_app(
                 ModelGateway(
-                    InMemoryBindingRepository(
-                        bindings(
-                            TENANT, speech_to_text=speech_to_text, text_to_speech=text_to_speech
-                        )
-                    ),
+                    wiring.repository,
                     EnvSecretResolver({}),
                     adapters={
                         ProviderKind.OLLAMA: model,
@@ -249,16 +251,18 @@ async def running(
                     sleep=Sleeps(),
                     jitter=lambda: 0.0,
                 ),
-                authenticator(),
+                wiring.authenticator(),
             ),
             "model-gateway",
         )
-        embedder = GatewayEmbedder(gateway, delegation)
-        chat = GatewayChat(gateway, delegation)
+        embedder = GatewayEmbedder(gateway, wiring.delegation)
+        chat = GatewayChat(gateway, wiring.delegation)
 
         documents = KnowledgeMemory()
         knowledge = await reach(
-            create_knowledge_app(authenticator(), service=KnowledgeService(documents, embedder)),
+            create_knowledge_app(
+                wiring.authenticator(), service=KnowledgeService(documents, embedder)
+            ),
             "knowledge",
         )
 
@@ -281,25 +285,21 @@ async def running(
         await closing.enter_async_context(edge_client)
         actions = await reach(
             create_actions_app(
-                authenticator(),
+                wiring.authenticator(),
                 operations=Operations(
                     service=ActionService(
                         store=skills,
-                        directory=FileDeviceDirectory(TEST, home),
+                        directory=wiring.directory,
                         matcher=SkillMatcher(skills, embedder, index, timeout_s=TIMEOUT_S),
                         planner=Planner(chat, timeout_s=TIMEOUT_S),
                         reader=ConfirmationReader(chat, timeout_s=TIMEOUT_S),
                         runner=RemoteRunner(
                             runner_client,
                             store=skills,
-                            secrets=FileSecrets(
-                                TEST,
-                                parse_secrets(SECRETS, tenant_id=TENANT, user_id=USER),
-                                tenant_id=TENANT,
-                            ),
-                            delegation=principals,
+                            secrets=wiring.secrets,
+                            delegation=wiring.principals,
                         ),
-                        dispatcher=EdgeDispatcher(edge_client, principals),
+                        dispatcher=EdgeDispatcher(edge_client, wiring.principals),
                     ),
                     catalog=Catalog(skills, index, folder=SKILLS_FOLDER, enable_folder=True),
                     audit=AuditReader(skills),
@@ -307,7 +307,7 @@ async def running(
             ),
             "actions",
         )
-        reloaded = await actions.post("/v1/skills/reload")
+        reloaded = await actions.post("/v1/skills/reload", headers=wiring.admin)
         assert reloaded.status_code == 200, reloaded.text
 
         store = ConversationMemory()
@@ -315,25 +315,25 @@ async def running(
         engine = TurnEngine(
             store,
             chat,
-            KnowledgeClient(knowledge, delegation),
+            KnowledgeClient(knowledge, wiring.delegation),
             history,
             ReferenceGate(chat),
             PromptBuilder(),
-            actions=ActionsClient(actions, principals),
+            actions=ActionsClient(actions, wiring.principals),
         )
         conversation = await reach(
             create_conversation_app(
-                authenticator(), service=ConversationService(store, engine, history)
+                wiring.authenticator(), service=ConversationService(store, engine, history)
             ),
             "conversation",
         )
 
         edge = create_edge_app(
-            authenticator(),
+            wiring.authenticator(),
             sessions=sessions,
-            registry=FileDeviceRegistry(TEST, list(home.system)),
-            conversation=ConversationClient(conversation, principals),
-            speech=GatewaySpeech(gateway, delegation),
+            registry=wiring.registry,
+            conversation=ConversationClient(conversation, wiring.principals),
+            speech=GatewaySpeech(gateway, wiring.delegation),
             session_settings=quick_settings(
                 idle_timeout_s=30.0, command_timeout_s=TIMEOUT_S, send_timeout_s=TIMEOUT_S
             ),
@@ -350,10 +350,22 @@ async def running(
                     knowledge,
                     documents,
                     Ingestor(documents, embedder, parser=parse_in_process),
+                    wiring.admin,
                 ),
                 conversation=conversation,
                 actions=actions,
                 home_assistant=home_assistant,
                 runner=local_runner,
+                admin=wiring.admin,
+                tokens=wiring.tokens,
+                secret=wiring.secret,
+                hub=wiring.hub,
+                services={
+                    "model-gateway": gateway,
+                    "knowledge": knowledge,
+                    "conversation": conversation,
+                    "actions": actions,
+                    **({} if wiring.hub is None else {"hub": wiring.hub}),
+                },
             )
             assert await forgotten(sessions), "a device was still connected when the test ended"
