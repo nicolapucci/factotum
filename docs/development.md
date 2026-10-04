@@ -73,9 +73,10 @@ member of the workspace like the others, since one test module cannot import ano
 what a unit test costs (no Docker, no model, nothing beyond the loopback, a few seconds) and cover
 what one does not: the terminal client talks over a real WebSocket to the edge, and behind the edge
 the conversation, knowledge, actions and model-gateway applications are the real ones, each reached
-through its own HTTP interface and each with its store in memory instead of Postgres. Nothing above
-the stores is replaced, and the home is the example one, `config/devices.example.yaml`, with the
-skills of `skills/examples`.
+through its own HTTP interface. Nothing is replaced above the stores, which are in memory or, as in
+production, the Postgres of `docker compose up` (a database of its own for the test, prepared by the
+migrations the services run): every test runs on both, and the second is an integration test. The
+home is the example one, `config/devices.example.yaml`, with the skills of `skills/examples`.
 
 What is made up is what a unit test cannot have:
 
@@ -94,7 +95,8 @@ What is made up is what a unit test cannot have:
   this machine that every host resolves to, which keeps what it was asked (`FakeWeb`).
 
 ```bash
-uv run pytest e2e
+uv run pytest e2e                         # in memory, and in Postgres where there is one
+uv run pytest e2e -m "not integration"    # in memory only
 ```
 
 They cover a question answered aloud from the documents (asked by voice, or typed, on a speaker and
@@ -121,10 +123,10 @@ hub has to say: a device with the placeholder credential of the example file, or
 device's, is refused, and every service refuses a call with no token, with one that another secret
 signed and with the headers of development.
 
-They do not cover yet: a real Postgres or the containers (the sandbox of the runner has its own
-tests that need an engine), an approval (there is nobody to ask yet), and two tenants (every service
-is given one tenant, so what they show is the owners of a tenant: a person, and the tenant itself
-for a shared device).
+They do not cover yet: the containers (the sandbox of the runner has its own tests that need an
+engine), an approval (there is nobody to ask yet), and two tenants (every service is given one
+tenant, so what they show is the owners of a tenant: a person, and the tenant itself for a shared
+device).
 
 ## Trying the model gateway
 

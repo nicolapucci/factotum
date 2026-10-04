@@ -33,7 +33,6 @@ from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
 from factotum.actions.runner_client import RemoteRunner
 from factotum.actions.service import ActionService
-from factotum.actions.store import InMemoryStore as ActionsMemory
 from factotum.contracts.edge import MAX_FRAME_BYTES
 from factotum.contracts.knowledge import (
     CollectionCreate,
@@ -50,10 +49,10 @@ from factotum.conversation.documents import KnowledgeClient
 from factotum.conversation.gate import ReferenceGate
 from factotum.conversation.history import History
 from factotum.conversation.service import ConversationService
-from factotum.conversation.store import InMemoryStore as ConversationMemory
 from factotum.conversation.turn import TurnEngine
 from factotum.devices.home import parse_home
 from factotum.e2e.models import HouseholdModel, bindings
+from factotum.e2e.stores import Store, in_memory, in_postgres
 from factotum.e2e.voice import StandInPiper, StandInWhisper
 from factotum.e2e.wiring import TENANT, USER, Auth, dev_wiring, hub_wiring
 from factotum.edge.api import create_app as create_edge_app
@@ -63,7 +62,6 @@ from factotum.edge.testing import ReportingServer, quick_settings
 from factotum.knowledge.api import create_app as create_knowledge_app
 from factotum.knowledge.ingestion import Ingestor
 from factotum.knowledge.service import KnowledgeService
-from factotum.knowledge.store import InMemoryStore as KnowledgeMemory
 from factotum.knowledge.store import KnowledgeStore
 from factotum.knowledge.testing import parse_in_process
 from factotum.model_client import GatewayChat, GatewayEmbedder, GatewaySpeech
@@ -74,6 +72,10 @@ from factotum.model_gateway.providers.whisper_local import WhisperLocalAdapter
 from factotum.model_gateway.retry import RetryPolicy
 from factotum.model_gateway.secrets import EnvSecretResolver
 from factotum.model_gateway.testing import Sleeps, TrackedClients
+
+DEFAULT_STORE = Store.MEMORY
+"""Where the services keep what they keep unless a test says: the tests of ``e2e/tests`` run on
+each (see its ``conftest.py``), which is what changes this."""
 
 TIMEOUT_S = 10.0
 """What a test waits for something that should be immediate: a stuck one ends instead of hanging."""
@@ -207,11 +209,16 @@ async def forgotten(sessions: Sessions) -> bool:
 
 @asynccontextmanager
 async def running(
-    *, auth: Auth = Auth.DEV, speech_to_text: bool = True, text_to_speech: bool = True
+    *,
+    auth: Auth = Auth.DEV,
+    storage: Store | None = None,
+    speech_to_text: bool = True,
+    text_to_speech: bool = True,
 ) -> AsyncIterator[House]:
     """The whole assistant, in the example home, with the models the tenant bound. ``auth`` is how
     the services trust each other: the headers of development, or the hub's signed tokens, with
-    the home paired in a hub of this process (``factotum.e2e.wiring``)."""
+    the home paired in a hub of this process (``factotum.e2e.wiring``). ``storage`` is where they
+    keep what they keep (``factotum.e2e.stores``)."""
     model, whisper, piper = HouseholdModel(), StandInWhisper(), StandInPiper()
     home = parse_home(
         HOME_FILE.read_text(encoding="utf-8"),
@@ -230,8 +237,15 @@ async def running(
             )
             return await closing.enter_async_context(client)
 
+        stores = (
+            in_memory()
+            if (storage or DEFAULT_STORE) is Store.MEMORY
+            else await in_postgres(closing)
+        )
         wiring = (
-            dev_wiring(home, models) if auth is Auth.DEV else await hub_wiring(home, models, reach)
+            dev_wiring(home, models)
+            if auth is Auth.DEV
+            else await hub_wiring(home, models, reach, stores.hub)
         )
 
         gateway = await reach(
@@ -258,7 +272,7 @@ async def running(
         embedder = GatewayEmbedder(gateway, wiring.delegation)
         chat = GatewayChat(gateway, wiring.delegation)
 
-        documents = KnowledgeMemory()
+        documents = stores.knowledge
         knowledge = await reach(
             create_knowledge_app(
                 wiring.authenticator(), service=KnowledgeService(documents, embedder)
@@ -272,7 +286,7 @@ async def running(
         for path in HOME_ASSISTANT:
             home_assistant.answer("POST", path, json_body=[])
         local_runner = LocalRunner(proxy=home_assistant.url())
-        skills = ActionsMemory()
+        skills = stores.actions
         index = SkillIndex(skills, embedder, timeout_s=TIMEOUT_S)
         closing.push_async_callback(index.aclose)
         runner_client = httpx.AsyncClient(
@@ -310,7 +324,7 @@ async def running(
         reloaded = await actions.post("/v1/skills/reload", headers=wiring.admin)
         assert reloaded.status_code == 200, reloaded.text
 
-        store = ConversationMemory()
+        store = stores.conversation
         history = History(store, embedder)
         engine = TurnEngine(
             store,

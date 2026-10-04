@@ -50,7 +50,7 @@ from factotum.edge.registry import DeviceRegistry, FileDeviceRegistry, HubDevice
 from factotum.hub.api import Operations as HubOperations
 from factotum.hub.api import create_app as create_hub_app
 from factotum.hub.service import HubService
-from factotum.hub.store.memory import InMemoryStore as HubMemory
+from factotum.hub.store.base import HubStore
 from factotum.model_client import Delegation, DevDelegation, HubDelegation
 from factotum.model_gateway.bindings import (
     BindingRepository,
@@ -121,11 +121,13 @@ def dev_wiring(home: Home, models: list[ModelBinding]) -> Wiring:
     )
 
 
-async def hub_wiring(home: Home, models: list[ModelBinding], reach: Reach) -> Wiring:
+async def hub_wiring(
+    home: Home, models: list[ModelBinding], reach: Reach, store: HubStore
+) -> Wiring:
     """A hub with the home paired in it by its administrator, and the services reading from it."""
     assert SINGLE_TENANT_ID == TENANT
     secret = HUB_SECRET
-    service = HubService(HubMemory(), secret=secret, session_hours=1)
+    service = HubService(store, secret=secret, session_hours=1)
     await service.bootstrap(tenant_id=TENANT, username="admin", password=FIRST_PASSWORD)
     hub = await reach(
         create_hub_app(HubAuthenticator(secret), operations=HubOperations(service=service)), "hub"

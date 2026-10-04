@@ -8,6 +8,7 @@ dependencies = [
   "factotum-common",
   "factotum-contracts",
   "factotum-conversation",
+  "factotum-db",
   "factotum-devices",
   "factotum-edge",
   "factotum-hub",
@@ -16,6 +17,7 @@ dependencies = [
   "factotum-model-gateway",
   "factotum-terminal",
   "factotum-web",
+  "asyncpg>=0.30",
   "fastapi>=0.115",
   "httpx>=0.28",
   "uvicorn>=0.32",
@@ -33,6 +35,7 @@ factotum-actions = { workspace = true }
 factotum-common = { workspace = true }
 factotum-contracts = { workspace = true }
 factotum-conversation = { workspace = true }
+factotum-db = { workspace = true }
 factotum-devices = { workspace = true }
 factotum-edge = { workspace = true }
 factotum-hub = { workspace = true }
