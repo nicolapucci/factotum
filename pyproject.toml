@@ -84,7 +84,7 @@ mypy_path = [
 ]
 explicit_package_bases = true
 namespace_packages = true
-files = ["libs", "services", "clients"]
+files = ["libs", "services", "clients", "tests"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -106,7 +106,7 @@ warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-testpaths = ["libs", "services", "clients"]
+testpaths = ["libs", "services", "clients", "tests"]
 # Unit tests must never reach the network: only loopback connections are allowed.
 addopts = "-ra --strict-markers --strict-config --import-mode=importlib --allow-hosts=127.0.0.1,::1"
 asyncio_mode = "auto"
