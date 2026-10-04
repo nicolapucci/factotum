@@ -23,6 +23,7 @@ uv sync --all-packages                 # install everything from the lockfile
 uv run ruff format && uv run ruff check
 uv run mypy
 uv run pytest                          # unit tests only need no Docker
+uv run pytest tests/e2e                # the whole assistant in one process, no Docker (docs/development.md)
 uv run pytest -m integration           # needs the Postgres of docker compose (FACTOTUM_POSTGRES_PASSWORD)
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live   # real Ollama and hosted providers, opt-in; see docs/model-gateway.md
 # the knowledge service against real everything, and a book of your own (never copied or committed):
@@ -127,6 +128,10 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - Prefer fakes that implement the real interface over mocks. Rules that must hold for every input are
   also tested as properties with Hypothesis.
 - Wherever data is scoped, test with two tenants.
+- `tests/e2e` puts every service together in one process, with the real code on both sides of every
+  boundary and only the hardware of a device and the models made up. What crosses a service boundary
+  is tested there once, as a person would meet it; a unit test of each side does not show that the two
+  fit (the speech roles were broken for every binding written the documented way until one did).
 - Test file names are unique across the whole repository (mypy checks them in one run).
 - Markers: `integration` needs Docker; `live` calls real providers with the user's own keys and never
   runs in CI.
@@ -169,6 +174,9 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - A test that measures a real model against `ActionsRig` gives it `patience_s`: the defaults give up
   on a model after a few seconds, which on a graphics card that something else is using is not a
   wrong answer but a slow one.
+- `make_model_binding` gives every binding an address (a local Ollama). The two local speech providers
+  have none, and a person writes their binding without one (`base_url=None`): a test of speech must too.
+  The first ones did not, and a `KeyError` for the address went unseen until an end-to-end test.
 - The keys of `extra=` in a log call must not be attributes of a `LogRecord` (`name`, `message`,
   `args`...): the standard library raises `KeyError`, and only when the level is enabled, which is
   how a session died the first time the log was at INFO.

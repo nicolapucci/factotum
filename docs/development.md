@@ -41,6 +41,7 @@ libs/db/          the Postgres pool, migrations and the harness for tests agains
 libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
 services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions, runner, egress, hub)
 clients/          the devices that talk to the edge (so far: terminal, a device in a terminal)
+tests/e2e/        the end-to-end tests: every service in one process, from a device to the models
 config/           example configuration, such as the model bindings
 docs/             design.md, the decision records, one document per service
 infra/            files mounted into containers
@@ -63,6 +64,41 @@ To add a member, create its folder with a `pyproject.toml` (copy one from `libs/
 - Builders for tests live next to the contracts (`factotum.contracts.testing`).
 - Errors derive from `FactotumError`, end in `Error` and carry a stable `code`.
 - Commits are small and conventional; the body says why.
+
+## End-to-end tests
+
+`tests/e2e` holds the tests that need every service at once. They cost what a unit test costs (no
+Docker, no model, nothing beyond the loopback, a few seconds) and cover what one does not: the terminal
+client talks over a real WebSocket to the edge, and behind the edge the conversation, knowledge and
+model-gateway applications are the real ones, each reached through its own HTTP interface and each with
+its store in memory instead of Postgres. Nothing above the stores is replaced.
+
+What is made up is what a unit test cannot have:
+
+- **The hardware of the device.** A recording is a WAV file that carries the words that were said in
+  it, the speaker remembers what it was asked to play, and the wake word is a `FakeVoiceInput` that hands
+  the terminal one recording after another. That is the mock of the client: a client that streams audio
+  and can be interrupted (ADR 0021) will need a stand-in of its own.
+- **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines (the
+  first reads the words out of a recording, the second writes a clip that carries the words it was asked
+  to say, so a test reads what a speaker was made to say), and the chat and embedding model write an
+  answer from the sources they were shown and give words a direction.
+
+```bash
+uv run pytest tests/e2e
+```
+
+They cover a question answered aloud from the documents (asked by voice, or typed, on a speaker and on a
+screen with a speaker), what was heard being what the conversation keeps, the wake-word loop of the
+terminal, who may hear which document read out (a person's own phone against the shared speaker), the
+longest recording a microphone makes, Italian with its accents, and each thing that may be missing (no speech-to-text model, no
+text-to-speech model, a silence, a model that falls over).
+
+They do not cover yet: an action asked by voice (the actions service and the runner), the hub's tokens in
+place of the development headers, a real Postgres or the containers, and two tenants (every service is
+given one development tenant, so what they show is the owners of a tenant: a person, and the tenant
+itself for a shared device). The rig is at the top of the module; when a second one needs it, it moves
+to a `testing.py` of its own, since one test module cannot import another here.
 
 ## Trying the model gateway
 
