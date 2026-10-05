@@ -117,7 +117,8 @@ async def test_a_text_is_made_into_sound_a_sentence_at_a_time_and_says_the_same_
     heard = await made.transcribe(PRINCIPAL, wav_of(pcm, rate))
     print(f"heard: {heard!r}")
 
-    assert first_sound_at is not None and first_sound_at < finished_at  # not all at the end
+    assert first_sound_at is not None
+    assert first_sound_at < finished_at  # the sound is not all there only at the end
     assert len(chunks) > 3  # three sentences, each more than a tenth of a second
     assert "ciao" in heard.lower() or "bene" in heard.lower()
 
