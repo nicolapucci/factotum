@@ -176,6 +176,19 @@ class HouseholdModel:
         self.confirmations: list[str] = []
         """What the reader of a yes or a no showed the model."""
 
+        self.proposal: dict[str, Any] | None = None
+        """When set, what the planner proposes for the message it reads, whatever the message is: a
+        competent model's reading of the message that a test means to say (``factotum.e2e.series``),
+        so that what is looked at is what the code does with it, and not what a stand-in makes of
+        the words that came out of a real Whisper. It is the proposal for *now*, not a queue of
+        them: a message that never reaches the planner leaves nothing behind for the next."""
+
+        self.writing: dict[str, Any] | None = None
+        """The same for the plan that is written for a skill that is only instructions."""
+
+        self.writings: list[str] = []
+        """What the writer of plans showed the model, one for each plan that was asked for."""
+
         self.hold_after: int | None = None
         """When set, an answer goes quiet after this many pieces and does not go on until
         ``release``: a model that has stopped in the middle of what it was saying, which is when a
@@ -205,7 +218,14 @@ class HouseholdModel:
         answer: dict[str, Any]
         if "skill" in asked:  # which skill a message asks for
             self.plans.append(shown)
-            answer = plan_for(shown)
+            answer = self.proposal if self.proposal is not None else plan_for(shown)
+        elif "steps" in asked:  # the plan of a skill that is only instructions
+            self.writings.append(shown)
+            if self.writing is None:
+                raise AssertionError(
+                    "the stand-in was asked to write a plan and was not told which"
+                )
+            answer = self.writing
         elif "answer" in asked:  # whether what was said is a yes
             self.confirmations.append(shown)
             answer = {"reason": "it is not a plain yes or no", "answer": "other"}

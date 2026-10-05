@@ -26,21 +26,16 @@ from io import BytesIO
 
 import pytest
 
+from factotum.actions.plan_cases import DISPLAY, KITCHEN, PlanCase
+from factotum.contracts.actions import ActStatus
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.edge import TurnStatus
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.e2e import devices
 from factotum.e2e.devices import Carrier, Device, connected
 from factotum.e2e.house import House, running
-from factotum.e2e.speech import (
-    MICROPHONE_RATE,
-    Person,
-    RealSpeech,
-    find_speech,
-    hears,
-    load,
-    silence,
-)
+from factotum.e2e.series import proposal_for
+from factotum.e2e.speech import MICROPHONE_RATE, Person, RealSpeech, hears, silence
 from factotum.e2e.stores import Store
 
 pytestmark = [
@@ -61,6 +56,26 @@ WASHER = (
 )
 QUESTION = "Come si pulisce il filtro della lavatrice?"
 
+OPEN_AT_THE_DISPLAY = PlanCase(
+    "apri il garage",
+    DISPLAY,
+    "garage-door",
+    ActStatus.NEEDS_CONFIRMATION,
+    "Garage door",
+    {"action": "open"},
+)
+OPEN_AT_THE_KITCHEN = PlanCase(
+    "apri il garage", KITCHEN, "garage-door", ActStatus.REFUSED, "Garage door", {"action": "open"}
+)
+"""What a competent planner makes of "Apri il garage." where it is said. The tests about the door
+give it to the stand-in of the planner (``HouseholdModel.proposal``) instead of leaving it to read
+what Whisper heard, and have it shown every skill (``offer_every_skill``: the stand-in that gives
+words a direction finds a skill near a message by its words, and a word that was heard as something
+else is none): Whisper hears a loanword that a voice says the Italian way as something else
+(``A pigara!``, with every size of it), and what these tests are about is what is done with a door,
+which must not depend on that. How each command is heard is the series of
+``test_e2e_speech_series.py``."""
+
 
 @pytest.fixture(autouse=True)
 def _how_the_house_is_run(monkeypatch: pytest.MonkeyPatch) -> Store:
@@ -70,20 +85,6 @@ def _how_the_house_is_run(monkeypatch: pytest.MonkeyPatch) -> Store:
     the fixture of ``conftest.py`` by the same name, which would run each test three times.)"""
     monkeypatch.setattr(devices, "DEFAULT_CARRIER", Carrier.STREAM)
     return Store.MEMORY
-
-
-@pytest.fixture(scope="session")
-def speech() -> RealSpeech:
-    found = find_speech()
-    if found is None:
-        pytest.skip("no Whisper model and Piper voice on this machine, and none is downloaded")
-    load(found)  # the models are loaded once, here, and not by the first test that needs them
-    return found
-
-
-@pytest.fixture
-def person(speech: RealSpeech) -> Person:
-    return Person(speech)
 
 
 def plain(text: str) -> str:
@@ -211,9 +212,10 @@ class TestAnActionByVoice:
         self, speech: RealSpeech, person: Person
     ) -> None:
         async with (
-            running(speech=speech, timeout_s=SLOW_S) as house,
+            running(speech=speech, timeout_s=SLOW_S, offer_every_skill=True) as house,
             connected(house, "smart-display") as display,
         ):
+            house.model.proposal = proposal_for(OPEN_AT_THE_DISPLAY)
             asked = await display.sends(person.saying("Apri il garage."))
             opened_before_the_yes = reached(house)
             answered = await display.sends(person.saying("Sì."))
@@ -222,7 +224,7 @@ class TestAnActionByVoice:
             assert answered.status is TurnStatus.FINISHED, answered
             assert opened_before_the_yes == []
             # What was asked first is what the planner proposes for a door that needs a yes, said
-            # in Italian (how a small model hears the loanword in it is not what is tried here).
+            # in Italian.
             assert house.piper.spoken[0] == "Vuoi davvero che apra il garage?"
             assert seconds(display.sentences()[0]) > 0.8
             assert plain(house.whisper.heard[-1]).split()[:1] == ["si"], house.whisper.heard
@@ -232,38 +234,51 @@ class TestAnActionByVoice:
         self, speech: RealSpeech, person: Person
     ) -> None:
         async with (
-            running(speech=speech, timeout_s=SLOW_S) as house,
+            running(speech=speech, timeout_s=SLOW_S, offer_every_skill=True) as house,
             connected(house, "smart-display") as display,
         ):
+            house.model.proposal = proposal_for(OPEN_AT_THE_DISPLAY)
             await display.sends(person.saying("Apri il garage."))
             answered = await display.sends(person.saying("No, grazie."))
 
             assert answered.status is TurnStatus.FINISHED, answered
+            assert [act.status for act in house.acts] == [
+                ActStatus.NEEDS_CONFIRMATION,  # it was asked about...
+                ActStatus.CANCELLED,  # ...and a no was a no
+            ]
             assert reached(house) == []
 
     async def test_something_that_is_neither_yes_nor_no_does_not_open_it(
         self, speech: RealSpeech, person: Person
     ) -> None:
         async with (
-            running(speech=speech, timeout_s=SLOW_S) as house,
+            running(speech=speech, timeout_s=SLOW_S, offer_every_skill=True) as house,
             connected(house, "smart-display") as display,
         ):
+            house.model.proposal = proposal_for(OPEN_AT_THE_DISPLAY)
             await display.sends(person.saying("Apri il garage."))
+            house.model.proposal = None  # what is said next is read as it was heard
             answered = await display.sends(person.saying("Forse più tardi."))
 
             assert answered.status is TurnStatus.FINISHED, answered
+            assert [act.status for act in house.acts] == [
+                ActStatus.NEEDS_CONFIRMATION,  # it was asked about...
+                ActStatus.NO_ACTION,  # ...and what was said next was not an answer to it
+            ]
             assert reached(house) == []
 
     async def test_the_speaker_of_the_kitchen_is_refused_the_garage_however_it_is_asked(
         self, speech: RealSpeech, person: Person
     ) -> None:
         async with (
-            running(speech=speech, timeout_s=SLOW_S) as house,
+            running(speech=speech, timeout_s=SLOW_S, offer_every_skill=True) as house,
             connected(house, "speaker") as speaker,
         ):
+            house.model.proposal = proposal_for(OPEN_AT_THE_KITCHEN)
             ended = await speaker.sends(person.saying("Apri il garage."))
 
             assert ended.status is TurnStatus.FINISHED, ended
+            assert [act.status for act in house.acts] == [ActStatus.REFUSED]
             assert reached(house) == []
             assert speaker.sentences(), "the refusal was not said"
 

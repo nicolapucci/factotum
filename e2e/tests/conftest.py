@@ -8,6 +8,7 @@ import pytest
 
 from factotum.e2e import devices, house
 from factotum.e2e.devices import Carrier
+from factotum.e2e.speech import Person, RealSpeech, find_speech, load
 from factotum.e2e.stores import Store
 
 
@@ -28,3 +29,18 @@ def _how_the_house_is_run(
     monkeypatch.setattr(house, "DEFAULT_STORE", store)
     monkeypatch.setattr(devices, "DEFAULT_CARRIER", carrier)
     return store, carrier
+
+
+@pytest.fixture(scope="session")
+def speech() -> RealSpeech:
+    """The real models of this machine, for the tests that are live (``factotum.e2e.speech``)."""
+    found = find_speech()
+    if found is None:
+        pytest.skip("no Whisper model and Piper voice on this machine, and none is downloaded")
+    load(found)  # the models are loaded once, here, and not by the first test that needs them
+    return found
+
+
+@pytest.fixture
+def person(speech: RealSpeech) -> Person:
+    return Person(speech)

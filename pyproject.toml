@@ -62,6 +62,7 @@ select = [
 "e2e/src/**" = ["S101"]
 # A live test reports what it measured: it is run by a person, with -s, to read it.
 "**/tests/live/**" = ["T201"]
+"e2e/tests/test_e2e_speech*.py" = ["T201"]
 # A skill script talks to the standard streams (its protocol) and to hosts it declared.
 "skills/**" = ["T201", "S310"]
 

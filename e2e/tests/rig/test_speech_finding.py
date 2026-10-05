@@ -22,6 +22,8 @@ from factotum.e2e.speech import (
 from factotum.model_gateway.providers.base import SpeechPiece
 
 SNAPSHOTS = ".cache/huggingface/hub/models--Systran--faster-whisper-small/snapshots"
+MEDIUM = ".cache/huggingface/hub/models--Systran--faster-whisper-medium/snapshots"
+LARGE = ".cache/huggingface/hub/models--Systran--faster-whisper-large-v3/snapshots"
 PIPER = ".cache/factotum/piper"
 
 
@@ -58,6 +60,41 @@ class TestFindingTheModels:
 
         assert found is not None
         assert found.whisper == newer
+
+    def test_the_bigger_model_is_the_one_used_when_there_are_two(self, tmp_path: Path) -> None:
+        a_whisper_model(tmp_path / SNAPSHOTS / "small")
+        medium = a_whisper_model(tmp_path / MEDIUM / "medium")
+        os.utime(medium, (1_000_000_000, 1_000_000_000))  # however old it is: bigger hears better
+        a_voice(tmp_path / PIPER)
+
+        found = find_speech({}, tmp_path)
+
+        assert found is not None
+        assert found.whisper == medium
+
+    def test_the_biggest_of_three_is_the_one_used(self, tmp_path: Path) -> None:
+        a_whisper_model(tmp_path / SNAPSHOTS / "small")
+        a_whisper_model(tmp_path / MEDIUM / "medium")
+        large = a_whisper_model(tmp_path / LARGE / "large")
+        a_voice(tmp_path / PIPER)
+
+        found = find_speech({}, tmp_path)
+
+        assert found is not None
+        assert found.whisper == large
+
+    def test_the_smaller_model_is_used_when_the_bigger_is_not_there_or_is_not_whole(
+        self, tmp_path: Path
+    ) -> None:
+        small = a_whisper_model(tmp_path / SNAPSHOTS / "small")
+        half = a_whisper_model(tmp_path / MEDIUM / "half")
+        (half / "model.bin").unlink()  # a download that was not finished is not a model
+        a_voice(tmp_path / PIPER)
+
+        found = find_speech({}, tmp_path)
+
+        assert found is not None
+        assert found.whisper == small
 
     def test_a_snapshot_without_the_model_in_it_is_not_a_model(self, tmp_path: Path) -> None:
         snapshot = a_whisper_model(tmp_path / SNAPSHOTS / "abc")

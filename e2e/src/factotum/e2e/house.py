@@ -8,7 +8,7 @@ example skills (``skills/examples``), as a person who copies the files has it.
 What is made up is what a unit test cannot have, and it is at the edges: the models
 (``factotum.e2e.models``), the voice (``factotum.e2e.voice``), the Home Assistant that skills reach
 (``FakeWeb``, which a run is made to reach through its proxy) and the container a script runs in
-(``LocalRunner``: the real script, run in a process of its own). The devices are in
+(``HouseRunner``: the real script, run in a process of its own). The devices are in
 ``factotum.e2e.devices``.
 """
 
@@ -28,11 +28,13 @@ from factotum.actions.audit import AuditReader
 from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import ConfirmationReader
 from factotum.actions.edge_client import EdgeDispatcher
-from factotum.actions.instructions.testing import FakeWeb, LocalRunner
+from factotum.actions.instructions.testing import FakeWeb
+from factotum.actions.instructions.writer import PlanWriter
 from factotum.actions.matching import SkillIndex, SkillMatcher
 from factotum.actions.planner import Planner
 from factotum.actions.runner_client import RemoteRunner
 from factotum.actions.service import ActionService
+from factotum.contracts.actions import ActOutcome
 from factotum.contracts.edge import MAX_FRAME_BYTES
 from factotum.contracts.knowledge import (
     CollectionCreate,
@@ -52,6 +54,7 @@ from factotum.conversation.service import ConversationService
 from factotum.conversation.turn import TurnEngine
 from factotum.devices.home import parse_home
 from factotum.e2e.models import HouseholdModel, bindings
+from factotum.e2e.runner import HouseRunner
 from factotum.e2e.speech import RealSpeech, RecordedPiper, RecordedWhisper, real_piper, real_whisper
 from factotum.e2e.stores import Store, in_memory, in_postgres
 from factotum.e2e.voice import PiperDouble, StandInPiper, StandInWhisper, WhisperDouble
@@ -92,6 +95,13 @@ HOME_ASSISTANT = (
     "/api/services/cover/close_cover",
 )
 """The calls of the example skills to Home Assistant, which the stand-in answers."""
+
+OPEN_METEO = (
+    ("/v1/search", {"results": [{"name": "the place", "latitude": 45.07, "longitude": 7.69}]}),
+    ("/v1/air-quality", {"current": {"european_aqi": 21}}),
+)
+"""What the plan of a skill that reads the air asks for, and what the stand-in answers: where a
+place is, and how good the air is there."""
 
 
 class Library:
@@ -186,8 +196,13 @@ class House:
     home_assistant: FakeWeb
     """What the skills that switch a lamp or a door reach: it keeps what it was asked."""
 
-    runner: LocalRunner
+    runner: HouseRunner
     """What ran a skill: the jobs it was given, and what they printed."""
+
+    acts: list[ActOutcome]
+    """What the actions service said of each message it was asked about, in order: what became of
+    it (``ActStatus``), and the skill that was chosen. Every message that a person says is asked
+    about, whether or not it turns out to be a request."""
 
     admin: dict[str, str]
     """The headers of the administrator that the tests act as, in the way the services check."""
@@ -254,6 +269,7 @@ async def running(
     speech: RealSpeech | None = None,
     timeout_s: float = TIMEOUT_S,
     stream_stall_s: float | None = None,
+    offer_every_skill: bool = False,
 ) -> AsyncIterator[House]:
     """The whole assistant, in the example home, with the models the tenant bound. ``auth`` is how
     the services trust each other: the headers of development, or the hub's signed tokens, with
@@ -261,7 +277,10 @@ async def running(
     keep what they keep (``factotum.e2e.stores``). ``speech`` puts the real Whisper and the real
     Piper where the stand-ins are (``factotum.e2e.speech``), bound by the paths of their models.
     ``stream_stall_s`` is how long the edge waits for the next chunk of what a person is saying
-    before it gives up on it, where a test is about that."""
+    before it gives up on it, where a test is about that. ``offer_every_skill`` has the planner
+    shown every skill whatever the message is: the stand-in that gives words a direction cannot tell
+    that "bump it up to eighty" is near the volume, and a series of commands is about what is done
+    with what the planner proposes, and not about which skills the words were near."""
     model = HouseholdModel()
     whisper: WhisperDouble
     piper: PiperDouble
@@ -343,10 +362,19 @@ async def running(
         home_assistant = closing.enter_context(FakeWeb())
         for path in HOME_ASSISTANT:
             home_assistant.answer("POST", path, json_body=[])
-        local_runner = LocalRunner(proxy=home_assistant.url())
+        for path, found in OPEN_METEO:
+            home_assistant.answer("GET", path, json_body=found)
+        local_runner = HouseRunner(proxy=home_assistant.url())
         skills = stores.actions
         index = SkillIndex(skills, embedder, timeout_s=TIMEOUT_S)
         closing.push_async_callback(index.aclose)
+        matcher = (
+            SkillMatcher(
+                skills, embedder, index, timeout_s=TIMEOUT_S, threshold=0.0, max_candidates=20
+            )
+            if offer_every_skill
+            else SkillMatcher(skills, embedder, index, timeout_s=TIMEOUT_S)
+        )
         runner_client = httpx.AsyncClient(
             transport=local_runner.transport(), base_url="http://runner.test"
         )
@@ -362,8 +390,9 @@ async def running(
                     service=ActionService(
                         store=skills,
                         directory=wiring.directory,
-                        matcher=SkillMatcher(skills, embedder, index, timeout_s=TIMEOUT_S),
+                        matcher=matcher,
                         planner=Planner(chat, timeout_s=TIMEOUT_S),
+                        writer=PlanWriter(chat, timeout_s=TIMEOUT_S),
                         reader=ConfirmationReader(chat, timeout_s=TIMEOUT_S),
                         runner=RemoteRunner(
                             runner_client,
@@ -381,6 +410,15 @@ async def running(
         )
         reloaded = await actions.post("/v1/skills/reload", headers=wiring.admin)
         assert reloaded.status_code == 200, reloaded.text
+
+        acts: list[ActOutcome] = []
+
+        async def keep(response: httpx.Response) -> None:
+            if response.request.url.path == "/v1/act" and response.status_code == 200:
+                await response.aread()
+                acts.append(ActOutcome.model_validate_json(response.content))
+
+        actions.event_hooks["response"].append(keep)
 
         store = stores.conversation
         history = History(store, embedder)
@@ -433,6 +471,7 @@ async def running(
                 actions=actions,
                 home_assistant=home_assistant,
                 runner=local_runner,
+                acts=acts,
                 admin=wiring.admin,
                 tokens=wiring.tokens,
                 secret=wiring.secret,

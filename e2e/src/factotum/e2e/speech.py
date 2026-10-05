@@ -2,11 +2,11 @@
 behind the real adapters of the gateway, and a person who talks to a device with a voice of Piper's.
 
 Nothing is ever downloaded here. The models are looked for where they already are, and what is not
-found is a skip: the folder of a Whisper model (``FACTOTUM_LIVE_WHISPER_MODEL``, or the one of the
-Hugging Face cache that ``Systran/faster-whisper-small`` already made) and the ``.onnx`` file of a
-Piper voice (``FACTOTUM_LIVE_PIPER_VOICE``, or the Italian one in the cache of the adapter). The
-engines are the ones the adapters build, and are built once for all the tests that use them: loading
-a model costs seconds.
+found is a skip: the folder of a Whisper model (``FACTOTUM_LIVE_WHISPER_MODEL``, or the biggest of
+the Hugging Face cache that ``Systran/faster-whisper-large-v3``, ``-medium`` or ``-small`` made) and
+the ``.onnx`` file of a Piper voice (``FACTOTUM_LIVE_PIPER_VOICE``, or the Italian one in the cache
+of the adapter). The engines are the ones the adapters build, and are built once for all the tests
+that use them: loading a model costs seconds.
 
 ``FACTOTUM_LIVE_SPEECH_DEVICE`` says where Whisper runs (``cpu``, which is slower and is everywhere,
 or ``cuda``).
@@ -33,6 +33,11 @@ CUDA_VARIABLE = "FACTOTUM_CUDA_DLL_DIR"
 DEFAULT_VOICE = "it_IT-paola-medium.onnx"
 MICROPHONE_RATE = 16_000
 """What a microphone hands over (Porcupine's rate): the voice of Piper is brought to it."""
+
+WHISPER_SIZES = ("large-v3", "medium", "small")
+"""The sizes of Whisper that the cache is looked in, the one that hears best first: a short command
+in Italian is heard better by the bigger one (``docs/development.md`` says by how much) and it takes
+longer to hear it."""
 
 _WHISPER_FILES = ("model.bin", "config.json", "tokenizer.json")
 
@@ -69,12 +74,17 @@ def find_speech(
         # A name (``small``) is not a folder: what is not on disk is not found, not fetched.
         whisper = Path(given) if _is_whisper_model(Path(given)) else None
     else:
-        snapshots = home / ".cache/huggingface/hub/models--Systran--faster-whisper-small/snapshots"
-        found = sorted(
-            (folder for folder in snapshots.glob("*") if _is_whisper_model(folder)),
-            key=lambda folder: folder.stat().st_mtime,
-        )
-        whisper = found[-1] if found else None
+        for size in WHISPER_SIZES:
+            snapshots = (
+                home / f".cache/huggingface/hub/models--Systran--faster-whisper-{size}/snapshots"
+            )
+            found = sorted(
+                (folder for folder in snapshots.glob("*") if _is_whisper_model(folder)),
+                key=lambda folder: folder.stat().st_mtime,
+            )
+            if found:
+                whisper = found[-1]
+                break
 
     voice = Path(environ.get(VOICE_VARIABLE) or home / ".cache/factotum/piper" / DEFAULT_VOICE)
     has_voice = (
