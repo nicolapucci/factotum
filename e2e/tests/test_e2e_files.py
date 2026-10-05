@@ -10,7 +10,7 @@ from factotum.contracts.knowledge import CollectionOwner, DocumentStatus
 from factotum.e2e.devices import connected
 from factotum.e2e.documents import PDF, WORD, a_pdf, a_word_document
 from factotum.e2e.house import running
-from factotum.e2e.models import NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
+from factotum.e2e.models import FROM_YOUR_DOCUMENTS_IT, NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
 
 QUESTION = "How do I reset the router?"
 MANUAL = [
@@ -79,7 +79,7 @@ class TestAFileThatWasUploaded:
                 await speaker.says_aloud("Dov'è il router?")
 
                 assert speaker.spoken()[0] == (
-                    "From your documents: Il router è nello studio, accanto alla libreria, "
+                    f"{FROM_YOUR_DOCUMENTS_IT} Il router è nello studio, accanto alla libreria, "
                     "perché lì c'è il cavo."
                 )
 

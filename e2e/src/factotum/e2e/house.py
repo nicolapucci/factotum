@@ -52,8 +52,9 @@ from factotum.conversation.service import ConversationService
 from factotum.conversation.turn import TurnEngine
 from factotum.devices.home import parse_home
 from factotum.e2e.models import HouseholdModel, bindings
+from factotum.e2e.speech import RealSpeech, RecordedPiper, RecordedWhisper, real_piper, real_whisper
 from factotum.e2e.stores import Store, in_memory, in_postgres
-from factotum.e2e.voice import StandInPiper, StandInWhisper
+from factotum.e2e.voice import PiperDouble, StandInPiper, StandInWhisper, WhisperDouble
 from factotum.e2e.wiring import TENANT, USER, Auth, dev_wiring, hub_wiring
 from factotum.edge.api import create_app as create_edge_app
 from factotum.edge.conversation import ConversationClient
@@ -168,8 +169,13 @@ class House:
     edge_url: str
     sessions: Sessions
     model: HouseholdModel
-    whisper: StandInWhisper
-    piper: StandInPiper
+    whisper: WhisperDouble
+    """The engine behind speech-to-text: the stand-in, or the real one under a recorder."""
+
+    piper: PiperDouble
+    timeout_s: float
+    """What a test waits for something that should be immediate: more where real speech runs."""
+
     library: Library
     conversation: httpx.AsyncClient
     """The conversation service's own interface, for what it remembers."""
@@ -245,19 +251,37 @@ async def running(
     storage: Store | None = None,
     speech_to_text: bool = True,
     text_to_speech: bool = True,
+    speech: RealSpeech | None = None,
+    timeout_s: float = TIMEOUT_S,
 ) -> AsyncIterator[House]:
     """The whole assistant, in the example home, with the models the tenant bound. ``auth`` is how
     the services trust each other: the headers of development, or the hub's signed tokens, with
     the home paired in a hub of this process (``factotum.e2e.wiring``). ``storage`` is where they
-    keep what they keep (``factotum.e2e.stores``)."""
-    model, whisper, piper = HouseholdModel(), StandInWhisper(), StandInPiper()
+    keep what they keep (``factotum.e2e.stores``). ``speech`` puts the real Whisper and the real
+    Piper where the stand-ins are (``factotum.e2e.speech``), bound by the paths of their models."""
+    model = HouseholdModel()
+    whisper: WhisperDouble
+    piper: PiperDouble
+    if speech is None:
+        whisper, piper = StandInWhisper(), StandInPiper()
+        models = bindings(TENANT, speech_to_text=speech_to_text, text_to_speech=text_to_speech)
+    else:
+        whisper = RecordedWhisper(real_whisper(speech))
+        piper = RecordedPiper(real_piper(speech))
+        models = bindings(
+            TENANT,
+            speech_to_text=speech_to_text,
+            text_to_speech=text_to_speech,
+            whisper_model=str(speech.whisper),
+            voice=str(speech.voice),
+            languages=speech.languages,
+        )
     home = parse_home(
         HOME_FILE.read_text(encoding="utf-8"),
         tenant_id=TENANT,
         user_id=USER,
         source=HOME_FILE.name,
     )
-    models = bindings(TENANT, speech_to_text=speech_to_text, text_to_speech=text_to_speech)
     sessions = Sessions()
 
     async with AsyncExitStack() as closing:
@@ -380,7 +404,7 @@ async def running(
             conversation=ConversationClient(conversation, wiring.principals),
             speech=GatewaySpeech(gateway, wiring.delegation),
             session_settings=quick_settings(
-                idle_timeout_s=30.0, command_timeout_s=TIMEOUT_S, send_timeout_s=TIMEOUT_S
+                idle_timeout_s=30.0, command_timeout_s=timeout_s, send_timeout_s=timeout_s
             ),
         )
         async with serving(edge) as address:
@@ -391,6 +415,7 @@ async def running(
                 model=model,
                 whisper=whisper,
                 piper=piper,
+                timeout_s=timeout_s,
                 library=Library(
                     knowledge,
                     documents,

@@ -118,7 +118,7 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
 markers = [
   "integration: needs Docker services (deselect with -m 'not integration')",
-  "live: calls real providers with your own keys (opt-in, never runs in CI)",
+  "live: runs real models or calls real providers, with your own keys or the models of this machine (opt-in, never runs in CI)",
 ]
 
 [tool.coverage.run]

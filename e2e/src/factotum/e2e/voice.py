@@ -11,8 +11,34 @@ how a text sounds, which is theirs to test.
 import io
 import struct
 import wave
+from typing import Protocol
 
 from factotum.contracts.audio import AudioPayload
+
+
+class WhisperDouble(Protocol):
+    """What a test looks at of the engine behind ``whisper_local``, whether it is the stand-in below
+    or the real one under a recorder (``factotum.e2e.speech``)."""
+
+    models: list[str]
+    heard: list[str]
+    languages: list[tuple[str, ...] | None]
+    broken: bool
+
+    def build(self, model: str) -> "WhisperDouble": ...
+
+    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str: ...
+
+
+class PiperDouble(Protocol):
+    """The same of the engine behind ``piper_local``."""
+
+    voices: list[str]
+    spoken: list[str]
+
+    def build(self, voice: str) -> "PiperDouble": ...
+
+    def synthesize_wav(self, text: str) -> bytes: ...
 
 
 def wav_saying(words: str, rate: int, *, seconds: float = 0.0) -> bytes:

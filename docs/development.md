@@ -69,9 +69,10 @@ To add a member, create its folder with a `pyproject.toml` (copy one from `libs/
 ## End-to-end tests
 
 `e2e` holds the tests that need every service at once, and the rig they share (`factotum.e2e`, a
-member of the workspace like the others, since one test module cannot import another). They cost
-what a unit test costs (no Docker, no model, nothing beyond the loopback, a few seconds) and cover
-what one does not: the terminal client talks over a real WebSocket to the edge, and behind the edge
+member of the workspace like the others, since one test module cannot import another). They need no
+model and nothing beyond the loopback (and no Docker, in memory), and take a second or two each:
+more than a unit test, and far less than the stack in containers. They cover what a unit test does
+not: the terminal client talks over a real WebSocket to the edge, and behind the edge
 the conversation, knowledge, actions and model-gateway applications are the real ones, each reached
 through its own HTTP interface. Nothing is replaced above the stores, which are in memory or, as in
 production, the Postgres of `docker compose up` (a database of its own for the test, prepared by the
@@ -133,6 +134,42 @@ They do not cover yet: the containers (the sandbox of the runner has its own tes
 engine), an approval (there is nobody to ask yet), and two tenants (every service is given one
 tenant, so what they show is the owners of a tenant: a person, and the tenant itself for a shared
 device).
+
+### With real speech
+
+`e2e/tests/test_e2e_speech.py` is the same house with the real Whisper and the real Piper where the
+stand-ins are, for what only a real model can show: what is heard of a voice and in which language,
+what is understood of it and attempted because of it (a lamp, a number, a door that asks first and
+opens at a spoken yes, a door that a speaker is refused, a silence), and how what the speaker is
+made to say sounds to somebody who listens, which is a Whisper again. The person who speaks has a
+voice of Piper's of their own, which says the same words the same way each time and reaches the
+device the way a microphone hands it over (16 kHz). What writes the answers and plans the actions is
+still made up, and so is what the skills reach: the right thing having been attempted is what is
+tried, not that it could be done.
+
+They are `live` tests, run by a person and never in CI, and nothing is ever downloaded:
+
+```bash
+FACTOTUM_LIVE_TESTS=1 uv run pytest e2e/tests/test_e2e_speech.py -m live -s
+FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_SPEECH_DEVICE=cuda uv run pytest e2e/tests/test_e2e_speech.py -m live
+```
+
+The models are looked for where they already are, and the tests skip where they are not:
+`FACTOTUM_LIVE_WHISPER_MODEL` names the folder of a faster-whisper model (without it, the snapshot of
+`Systran/faster-whisper-small` in the Hugging Face cache) and `FACTOTUM_LIVE_PIPER_VOICE` the `.onnx`
+file of a voice, with its `.onnx.json` beside it (without it, `it_IT-paola-medium` in
+`~/.cache/factotum/piper`). A name is not a folder: it would be fetched, so it is not found. A
+processor takes a few seconds for each thing heard (about a minute and a half for all of them); on
+the card, ctranslate2 needs cuBLAS 12 on the `PATH` (`FACTOTUM_CUDA_DLL_DIR`, or the folder Ollama
+keeps its own in, which the rig finds), and a card that something else is using is slower than the
+processor. A real model hears a voice a little differently on each device, so what is looked for in
+what it heard is the stem of a word and how much alike two sentences are, never a sentence.
+
+The first runs found what the stand-ins had hidden: the PyAV that was locked could not decode a
+single recording (`av` is held below 19), Whisper left to guess the language took a short command
+for Arabic or Polish half of the time (`options.languages`), and told to hear Italian it wrote the
+credits of a subtitle for a second of silence (what is not speech is now filtered out before it
+listens). See [`model-gateway.md`](model-gateway.md#speech).
 
 ## Trying the model gateway
 

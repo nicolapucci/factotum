@@ -11,6 +11,7 @@ not.
 
 import json
 import re
+import unicodedata
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
@@ -43,10 +44,17 @@ LANGUAGES = ("it", "en")
 """What the house is spoken to in, as its speech-to-text binding says it: the questions of these
 tests are in English and in Italian. The tests with real speech bind Italian only."""
 
-# What the chat model writes when it answers a question, and so what a speaker is made to say.
+# What the chat model writes when it answers a question, and so what a speaker is made to say. It
+# answers in the language of the question.
 CLOSING = "Let me know if there is anything else you need."
 NOT_FOUND = "I did not find that in your documents."
 OFFER = "Is there anything else I can look up for you?"
+FROM_YOUR_DOCUMENTS = "From your documents:"
+
+CLOSING_IT = "Fammi sapere se ti serve altro."
+NOT_FOUND_IT = "Non l'ho trovato nei tuoi documenti."
+OFFER_IT = "Vuoi che cerchi qualcos'altro?"
+FROM_YOUR_DOCUMENTS_IT = "Dai tuoi documenti:"
 
 ROUTER = "To reset the router, hold the reset button for ten seconds."
 """A sentence of a manual: the questions about the router are answered from it."""
@@ -62,24 +70,46 @@ _SOURCES = re.compile(r"=== SOURCES (\w+) ===\n(.*?)\n=== END SOURCES \1 ===", r
 _WORD = re.compile(r"\w{3,}")
 _SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
 
+_ITALIAN = re.compile(
+    r"\b(accendi|spegni|apri|chiudi|alza|abbassa|imposta|metti|luce|lampada"
+    r"|il|lo|gli|una|uno|del|della|dei|delle|nel|nella|per|con|che|come|dove|cosa|quale|qual"
+    r"|chi|perché|si|sono|mi|ti)\b|[àèéìòù]"
+)
+
+
+def is_italian(text: str) -> bool:
+    """Whether a message is in Italian, as far as a stand-in needs to tell: it has a word that is
+    Italian and not English, or an accent."""
+    return _ITALIAN.search(text.casefold()) is not None
+
 
 def answer_from(prompt: str) -> str:
     """What the stand-in chat model writes for a prompt: the sentence of the first source it was
     shown that has the most words of the question in it, quoted and cited, or that it found no
-    source. Two sentences, each long enough to be said alone."""
+    source, in the language of the question. Two sentences, each long enough to be said alone."""
+    question = prompt.rsplit("Message: ", 1)[-1]
+    italian = is_italian(question)
     sources = _SOURCES.search(prompt)
     if sources is None:
-        return f"{NOT_FOUND} {OFFER}"
-    asked = set(_WORD.findall(prompt.rsplit("Message: ", 1)[-1].casefold()))
+        return f"{NOT_FOUND_IT} {OFFER_IT}" if italian else f"{NOT_FOUND} {OFFER}"
+    asked = set(_WORD.findall(question.casefold()))
     _label, _, first = sources.group(2).partition("\n")
     sentences = [s.strip() for s in _SENTENCES.split(first.split("\n\n", 1)[0]) if s.strip()]
     # The most words of the question, and of those the one that says the most: a title that has
     # the same words in it says less than the sentence under it.
     nearest = max(sentences, key=lambda s: (len(asked & set(_WORD.findall(s.casefold()))), len(s)))
-    return f"From your documents: {nearest.rstrip('.')} [1]. {CLOSING}"
+    if italian:
+        return f"{FROM_YOUR_DOCUMENTS_IT} {nearest.rstrip('.')} [1]. {CLOSING_IT}"
+    return f"{FROM_YOUR_DOCUMENTS} {nearest.rstrip('.')} [1]. {CLOSING}"
 
 
-_ITALIAN = re.compile(r"\b(accendi|spegni|apri|chiudi|alza|abbassa|luce|lampada)\b")
+def _plain(text: str) -> str:
+    """A message as a competent reader takes it: in lower case and without accents, so that a word
+    that was heard with the wrong accent is still the word."""
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(letter for letter in decomposed if not unicodedata.combining(letter))
+
+
 _NUMBER = re.compile(r"\d+")
 
 
@@ -87,13 +117,13 @@ def plan_for(shown: str) -> dict[str, Any]:
     """What the small model proposes for a message, in the shape the planner asks for. A question
     is not an action; a command names a skill, and the device if it says which."""
     message = shown.rsplit("Message: ", 1)[-1].strip()
-    text = message.casefold()
+    text = _plain(message)
     plan: dict[str, Any] = {
         "reason": "it asks for nothing to be done",
         "skill": None,
         "device": None,
         "parameters": {},
-        "language": "it" if _ITALIAN.search(text) else "en",
+        "language": "it" if is_italian(message) else "en",
         "question": None,
         "ask": None,
     }
@@ -110,8 +140,8 @@ def plan_for(shown: str) -> dict[str, Any]:
         plan["skill"] = "lamp"
         plan["device"] = "Bedroom lamp" if own else "Living room lamp"
         plan["parameters"] = {"state": state}
-    elif "garage" in text:
-        action = "close" if re.search(r"\b(close|chiudi)\b", text) else "open"
+    elif re.search(r"\bgar", text):  # garage, and the garaf and the garrar that an ear makes of it
+        action = "close" if re.search(r"\b(close|chiud)", text) else "open"
         plan["skill"] = "garage-door"
         plan["device"] = "Garage door"
         plan["parameters"] = {"action": action}
@@ -197,9 +227,17 @@ class HouseholdModel:
 
 
 def bindings(
-    tenant_id: TenantId, *, speech_to_text: bool, text_to_speech: bool
+    tenant_id: TenantId,
+    *,
+    speech_to_text: bool,
+    text_to_speech: bool,
+    whisper_model: str = STT_MODEL,
+    voice: str = VOICE,
+    languages: tuple[str, ...] = LANGUAGES,
 ) -> list[ModelBinding]:
-    """What the tenant bound, the way a person writes it: the speech roles have no address."""
+    """What the tenant bound, the way a person writes it: the speech roles have no address. The
+    model of Whisper, the voice of Piper and the languages are the ones of the stand-ins unless a
+    test with real speech says where its own are."""
 
     def bind(
         role: ModelRole,
@@ -226,10 +264,10 @@ def bindings(
             bind(
                 ModelRole.STT,
                 ProviderKind.WHISPER_LOCAL,
-                STT_MODEL,
-                options=BindingOptions(languages=LANGUAGES),
+                whisper_model,
+                options=BindingOptions(languages=languages),
             )
         )
     if text_to_speech:
-        found.append(bind(ModelRole.TTS, ProviderKind.PIPER_LOCAL, VOICE))
+        found.append(bind(ModelRole.TTS, ProviderKind.PIPER_LOCAL, voice))
     return found

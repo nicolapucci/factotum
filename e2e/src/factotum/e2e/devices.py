@@ -33,9 +33,18 @@ class Device:
     hardware: TerminalDevice
     """What the commands it was given did to it: its volume, its light, its screen."""
 
+    timeout_s: float = TIMEOUT_S
+    """How long it waits for an answer to end."""
+
     def spoken(self) -> list[str]:
-        """What the speaker was made to say, read back out of the clips it was asked to play."""
+        """What the speaker was made to say, read back out of the clips it was asked to play (the
+        clips of the stand-in of Piper: the words are in them)."""
         return [said_in(clip) for clip in self.speaker.played]
+
+    def heard_aloud(self, listener: Callable[[AudioPayload], str]) -> list[str]:
+        """What the speaker was made to say, as somebody who listens to it hears it: a real voice
+        carries its words in sound, and the listener (a Whisper) is who reads them back."""
+        return [listener(clip) for clip in self.speaker.played]
 
     async def says_aloud(self, words: str) -> TurnEnded:
         """Says something with a recording of it, and waits for the answer to end."""
@@ -48,7 +57,7 @@ class Device:
         return await self._answered(await self.client.say(words))
 
     async def _answered(self, identity: str) -> TurnEnded:
-        ended = await asyncio.wait_for(self.client.wait_for_turn(identity), TIMEOUT_S)
+        ended = await asyncio.wait_for(self.client.wait_for_turn(identity), self.timeout_s)
         assert ended is not None, "the connection ended before the answer did"
         return ended
 
@@ -74,7 +83,7 @@ async def joined(
     )
     try:
         await client.connect()
-        yield Device(client, shown, speaker, hardware)
+        yield Device(client, shown, speaker, hardware, house.timeout_s)
     finally:
         await client.close()
 

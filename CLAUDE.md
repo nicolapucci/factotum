@@ -129,12 +129,13 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   also tested as properties with Hypothesis.
 - Wherever data is scoped, test with two tenants.
 - `e2e` puts every service together in one process, with the real code on both sides of every
-  boundary and only the hardware of a device and the models made up. What crosses a service boundary
+  boundary and only the hardware of a device and the models made up (and, as live tests, the real
+  Whisper and Piper: docs/development.md). What crosses a service boundary
   is tested there once, as a person would meet it; a unit test of each side does not show that the two
   fit (the speech roles were broken for every binding written the documented way until one did).
 - Test file names are unique across the whole repository (mypy checks them in one run).
-- Markers: `integration` needs Docker; `live` calls real providers with the user's own keys and never
-  runs in CI.
+- Markers: `integration` needs Docker; `live` runs real models or calls real providers, with the
+  user's own keys or the models of the machine, and never runs in CI.
 
 ## Gotchas
 
@@ -180,8 +181,10 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - Whisper left to guess the language of a short command guesses wrong about half the time (Arabic for
   "apri il garage", Polish for "no, grazie"): bind `stt` with `options.languages`. And faster-whisper
   cannot read a recording with PyAV 19 (it passes `av.open` an argument that was removed), so `av` is
-  held below 19. A stand-in engine showed neither: it took a real model, so a change to the speech
-  path has to be tried with one, not only with the stand-ins.
+  held below 19. Told to hear Italian, Whisper writes the credits of a subtitle for a second of
+  silence ("Sottotitoli e revisione a cura di QTSS"), so what is not speech is filtered out first. A
+  stand-in engine showed none of this: it took a real model, so a change to the speech path has to be
+  tried with one (`e2e/tests/test_e2e_speech.py`), not only with the stand-ins.
 - The keys of `extra=` in a log call must not be attributes of a `LogRecord` (`name`, `message`,
   `args`...): the standard library raises `KeyError`, and only when the level is enabled, which is
   how a session died the first time the log was at INFO.

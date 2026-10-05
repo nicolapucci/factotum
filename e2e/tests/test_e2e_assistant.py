@@ -27,7 +27,9 @@ from factotum.e2e.devices import connected, joined, remembered, until
 from factotum.e2e.house import TIMEOUT_S, running
 from factotum.e2e.models import (
     CLOSING,
+    CLOSING_IT,
     FROM_THE_MANUAL,
+    FROM_YOUR_DOCUMENTS_IT,
     LANGUAGES,
     NOT_FOUND,
     OFFER,
@@ -115,9 +117,10 @@ class TestAskingByVoice:
                 [prompt] = house.model.prompts
                 assert ROUTER_IN_ITALIAN in prompt
                 assert prompt.endswith(f"Message: {question}")
+                # It is answered in the language it was asked in, accents and all.
                 assert speaker.spoken() == [
-                    f"From your documents: {ROUTER_IN_ITALIAN.rstrip('.')}.",
-                    CLOSING,
+                    f"{FROM_YOUR_DOCUMENTS_IT} {ROUTER_IN_ITALIAN.rstrip('.')}.",
+                    CLOSING_IT,
                 ]
 
     async def test_a_question_that_is_typed_is_answered_aloud_too(self) -> None:
