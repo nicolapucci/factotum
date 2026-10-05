@@ -369,13 +369,13 @@ was given:
 
 ```python
 client = DeviceClient(
-    await WebSocketConnection.open(url),   # or a fake: what a test plays the edge on
-    identity,                               # hardware id, credential, capabilities, display
-    renderer,                               # what it shows, or says, of each part
-    CommandRouter(volume, light),           # the hands of the device, a driver for each part
-    voice_sink=speaker,                     # takes the sound as it arrives: asks for voice_stream
+    await WebSocketConnection.open(url),  # or a fake: what a test plays the edge on
+    identity,  # hardware id, credential, capabilities, display
+    renderer,  # what it shows, or says, of each part
+    CommandRouter(volume, light),  # the hands of the device, a driver for each part
+    voice_sink=speaker,  # takes the sound as it arrives: asks for voice_stream
 )
-await client.connect()                      # hello, ready (or Refused)
+await client.connect()  # hello, ready (or Refused)
 lost = await VoiceLoop(microphone).serve(client)
 ```
 
