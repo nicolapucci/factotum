@@ -45,6 +45,7 @@ class TestADeviceThatTheHubPaired:
 
                 assert ended.status is TurnStatus.FINISHED, ended
                 assert speaker.spoken() == SPOKEN_ANSWER
+                assert speaker.understood() == [QUESTION]
                 # The languages are in the binding the hub keeps, and reach the engine from there.
                 assert house.whisper.languages == [LANGUAGES]
 

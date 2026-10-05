@@ -130,6 +130,7 @@ class TestWhatADeviceMayStart:
             await display.says_aloud("Yes.")
 
             assert asked == []  # nothing moved while it was only a question
+            assert display.understood() == [GARAGE, "Yes."]  # what it made of what it was told
             assert display.spoken() == [
                 "Do you really want me to open the garage door?",
                 "The garage door is opening.",

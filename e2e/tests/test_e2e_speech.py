@@ -29,7 +29,8 @@ import pytest
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.edge import TurnStatus
 from factotum.contracts.knowledge import CollectionOwner
-from factotum.e2e.devices import Device, connected
+from factotum.e2e import devices
+from factotum.e2e.devices import Carrier, Device, connected
 from factotum.e2e.house import House, running
 from factotum.e2e.speech import (
     MICROPHONE_RATE,
@@ -62,9 +63,12 @@ QUESTION = "Come si pulisce il filtro della lavatrice?"
 
 
 @pytest.fixture(autouse=True)
-def _where_the_services_keep_what_they_keep() -> Store:
-    """Speech is what these tests are about, and the stores are not: in memory only. (This is the
-    fixture of ``conftest.py`` by the same name, which would run each test on Postgres too.)"""
+def _how_the_house_is_run(monkeypatch: pytest.MonkeyPatch) -> Store:
+    """Speech is what these tests are about, and the stores are not: in memory only. A real model
+    hears the same samples whether they come whole or in chunks (they are put together before it
+    listens), and the way that will be the real one is the stream: that is how it is run. (This is
+    the fixture of ``conftest.py`` by the same name, which would run each test three times.)"""
+    monkeypatch.setattr(devices, "DEFAULT_CARRIER", Carrier.STREAM)
     return Store.MEMORY
 
 
@@ -131,9 +135,11 @@ class TestAQuestionByVoice:
                 ended = await speaker.sends(person.saying(QUESTION))
 
                 assert ended.status is TurnStatus.FINISHED, ended
-                # It was heard in Italian, whatever the model made of the words...
+                # It was heard in Italian, whatever the model made of the words, and the device was
+                # told what it was taken for...
                 [heard] = house.whisper.heard
                 assert_says(heard, "filt", "lavat")
+                assert speaker.understood() == [heard]
                 assert house.whisper.languages == [("it",)]
                 # ...it reached the model that writes the answer with the document in front of it...
                 [prompt] = house.model.prompts
@@ -182,6 +188,7 @@ class TestAnActionByVoice:
             assert ended.status is TurnStatus.FINISHED, ended
             [heard] = house.whisper.heard
             assert_says(heard, "accend", "luc")
+            assert speaker.understood() == [heard]  # what the device was told it was taken for
             # The lamp of the living room was asked for, through the skill that is bound to it (that
             # Home Assistant is made up does not matter: the right thing was attempted).
             assert reached(house) == ["/api/services/light/turn_on light.living_room"]
@@ -273,3 +280,4 @@ class TestSomethingThatIsNotASentence:
 
             assert (ended.status, ended.code) == (TurnStatus.FAILED, "nothing_heard")
             assert house.model.prompts == []
+            assert speaker.understood() == []

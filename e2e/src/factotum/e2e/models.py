@@ -9,6 +9,7 @@ wrong or led astray would, so that what the tests show is that the code decides 
 not.
 """
 
+import asyncio
 import json
 import re
 import unicodedata
@@ -174,6 +175,21 @@ class HouseholdModel:
         self.confirmations: list[str] = []
         """What the reader of a yes or a no showed the model."""
 
+        self.hold_after: int | None = None
+        """When set, an answer goes quiet after this many pieces and does not go on until
+        ``release``: a model that has stopped in the middle of what it was saying, which is when a
+        person speaks over it. (The services are put together with in-process transports, which
+        hand over a response when it is whole: what a device is sent of an answer that is held is
+        nothing, however many pieces were written.)"""
+
+        self.held = asyncio.Event()
+        """Set when an answer has gone quiet."""
+
+        self.release = asyncio.Event()
+        self.abandoned = 0
+        """The answers that were let go of before they were written: what reads a model that has
+        been stopped is not left reading it."""
+
         self._words = FakeEmbedder(dimensions=64)
 
     def native_structured_output(self, resolved: ResolvedBinding) -> bool:
@@ -205,10 +221,20 @@ class HouseholdModel:
         prompt = request.messages[-1].content
         self.prompts.append(prompt)
         written = answer_from(prompt)
-        for start in range(0, len(written), 16):  # a few words at a time, as a model writes
-            yield TextDelta(text=written[start : start + 16])
-        yield UsageEvent(usage=Usage(input_tokens=len(prompt), output_tokens=len(written)))
-        yield FinishEvent(reason=FinishReason.STOP)
+        said = False
+        try:
+            # A few words at a time, as a model writes.
+            for piece, start in enumerate(range(0, len(written), 16)):
+                if piece == self.hold_after:
+                    self.held.set()
+                    await self.release.wait()
+                yield TextDelta(text=written[start : start + 16])
+            said = True
+            yield UsageEvent(usage=Usage(input_tokens=len(prompt), output_tokens=len(written)))
+            yield FinishEvent(reason=FinishReason.STOP)
+        finally:
+            if not said:
+                self.abandoned += 1
 
     async def embed(
         self, client: httpx.AsyncClient, resolved: ResolvedBinding, inputs: Sequence[str]

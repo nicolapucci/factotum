@@ -253,12 +253,15 @@ async def running(
     text_to_speech: bool = True,
     speech: RealSpeech | None = None,
     timeout_s: float = TIMEOUT_S,
+    stream_stall_s: float | None = None,
 ) -> AsyncIterator[House]:
     """The whole assistant, in the example home, with the models the tenant bound. ``auth`` is how
     the services trust each other: the headers of development, or the hub's signed tokens, with
     the home paired in a hub of this process (``factotum.e2e.wiring``). ``storage`` is where they
     keep what they keep (``factotum.e2e.stores``). ``speech`` puts the real Whisper and the real
-    Piper where the stand-ins are (``factotum.e2e.speech``), bound by the paths of their models."""
+    Piper where the stand-ins are (``factotum.e2e.speech``), bound by the paths of their models.
+    ``stream_stall_s`` is how long the edge waits for the next chunk of what a person is saying
+    before it gives up on it, where a test is about that."""
     model = HouseholdModel()
     whisper: WhisperDouble
     piper: PiperDouble
@@ -404,7 +407,10 @@ async def running(
             conversation=ConversationClient(conversation, wiring.principals),
             speech=GatewaySpeech(gateway, wiring.delegation),
             session_settings=quick_settings(
-                idle_timeout_s=30.0, command_timeout_s=timeout_s, send_timeout_s=timeout_s
+                idle_timeout_s=30.0,
+                command_timeout_s=timeout_s,
+                send_timeout_s=timeout_s,
+                **({} if stream_stall_s is None else {"stream_stall_s": stream_stall_s}),
             ),
         )
         async with serving(edge) as address:

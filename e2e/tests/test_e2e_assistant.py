@@ -7,8 +7,9 @@ cannot have: the hardware of the device and the models.
 
 * **The hardware of the device.** A recording is a WAV file that carries the words that were said in
   it (``recording_of``), and a speaker only remembers what it was asked to play. The wake word is a
-  ``FakeVoiceInput`` that hands the terminal one recording after another. This is the mock of the
-  client. A client that streams audio and can be interrupted (ADR 0021) will need one of its own.
+  ``FakeVoiceInput`` that hands the terminal one recording after another. The recording gets to the
+  edge whole, or in the chunks a microphone sends while a person talks (ADR 0022): each test is run
+  both ways (``conftest.py``). Speaking over an answer is in ``test_e2e_speaking_over.py``.
 * **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines:
   the first reads the words out of a recording, the second writes a clip that carries the words it
   was asked to say, so that a test can tell what a speaker was made to say. The chat model writes
@@ -40,7 +41,6 @@ from factotum.e2e.models import (
 )
 from factotum.e2e.voice import recording_of
 from factotum.terminal.cli import converse_by_voice
-from factotum.terminal.testing import FakeVoiceInput
 
 ROUTER_IN_ITALIAN = "Il router è nello studio, accanto alla libreria, perché lì arriva il cavo."
 SAFE = "The code of the safe is 4711."
@@ -60,6 +60,10 @@ class TestAskingByVoice:
                 # allowed...
                 assert (house.whisper.models, house.whisper.heard) == ([STT_MODEL], [QUESTION])
                 assert house.whisper.languages == [LANGUAGES]
+                # ...the device was told what it was taken for, before the answer began...
+                assert speaker.understood() == [QUESTION]
+                kinds = speaker.shown.kinds()
+                assert kinds.index("heard") < kinds.index("speech")
                 # ...it reached the model that wrote the answer, with the manual in front of it...
                 [prompt] = house.model.prompts
                 assert ROUTER in prompt
@@ -82,6 +86,7 @@ class TestAskingByVoice:
                 ended = await display.says_aloud(QUESTION)
 
                 assert ended.status is TurnStatus.FINISHED, ended
+                assert display.understood() == [QUESTION]
                 assert " ".join(display.shown.of("text")) == f"{FROM_THE_MANUAL} [1]. {CLOSING}"
                 [card] = display.shown.of("card")
                 assert card.title == "Sources"
@@ -101,6 +106,7 @@ class TestAskingByVoice:
 
                 assert ended.status is TurnStatus.FINISHED, ended
                 assert house.whisper.heard == [QUESTION]
+                assert speaker.understood() == [QUESTION]
                 assert speaker.spoken() == SPOKEN_ANSWER
 
     async def test_a_question_in_italian_keeps_its_accents_all_the_way(self) -> None:
@@ -114,6 +120,7 @@ class TestAskingByVoice:
 
                 assert ended.status is TurnStatus.FINISHED, ended
                 assert house.whisper.heard == [question]
+                assert speaker.understood() == [question]  # accents and all, as it was said
                 [prompt] = house.model.prompts
                 assert ROUTER_IN_ITALIAN in prompt
                 assert prompt.endswith(f"Message: {question}")
@@ -131,6 +138,7 @@ class TestAskingByVoice:
 
                 assert ended.status is TurnStatus.FINISHED, ended
                 assert house.whisper.heard == []  # nothing was a recording
+                assert speaker.understood() == []  # and so nothing was taken for anything
                 assert speaker.spoken() == SPOKEN_ANSWER
 
     async def test_what_was_heard_is_what_the_conversation_service_remembers(self) -> None:
@@ -158,7 +166,8 @@ class TestAskingByVoice:
         async with running() as house:
             await house.library.add("Home", "Router manual", ROUTER, owner=CollectionOwner.TENANT)
             async with joined(house, "speaker") as speaker:
-                heard = FakeVoiceInput(recording_of(QUESTION), recording_of("Where is it kept?"))
+                # What the microphone hands over is the recordings or the streams, as it is run.
+                heard = speaker.microphone(QUESTION, "Where is it kept?")
                 conversing = asyncio.create_task(
                     converse_by_voice(speaker.client, heard, io.StringIO())
                 )
@@ -173,6 +182,7 @@ class TestAskingByVoice:
                     TurnStatus.FINISHED,
                 ]
                 assert house.whisper.heard == [QUESTION, "Where is it kept?"]
+                assert speaker.understood() == [QUESTION, "Where is it kept?"]
                 assert speaker.spoken() == SPOKEN_ANSWER * 2
 
 
@@ -233,6 +243,7 @@ class TestWhenSomethingIsMissing:
 
             assert (ended.status, ended.code) == (TurnStatus.FAILED, "nothing_heard")
             assert house.model.prompts == []
+            assert speaker.understood() == []  # it was taken for nothing, and is not said to be
 
     async def test_a_speech_model_that_falls_over_ends_that_turn_and_the_next_one_works(
         self,

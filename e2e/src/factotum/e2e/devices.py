@@ -3,24 +3,42 @@ side of a real connection to the edge, with a profile for each (a speaker, a dis
 
 What a person says to one is a recording (``factotum.e2e.voice``) or typed words; what it says back
 is what its speaker was asked to play and what its screen was asked to show; and what a command does
-to it is in ``hardware``.
+to it is in ``hardware``. A recording gets to the edge the way the device carries it: whole in one
+frame, or as the chunks a microphone sends as a person talks (ADR 0022), and a test is run each way.
 """
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import AudioPayload, pcm_of
 from factotum.contracts.conversation import ConversationDetail, ConversationList, Exchange
 from factotum.contracts.edge import TurnEnded
 from factotum.e2e.house import TIMEOUT_S, House
 from factotum.e2e.voice import recording_of, said_in
+from factotum.terminal.audio import AudioStream
 from factotum.terminal.client import DeviceClient
 from factotum.terminal.connection import WebSocketConnection
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import get_profile
-from factotum.terminal.testing import FakeVoiceOutput, RecordingRenderer
+from factotum.terminal.testing import FakeVoiceInput, FakeVoiceOutput, RecordingRenderer
+
+
+class Carrier(StrEnum):
+    """How a recording gets to the edge."""
+
+    CLIP = "clip"
+    """Whole, in one frame, after the person has stopped."""
+
+    STREAM = "stream"
+    """In chunks, from when the person begins to when they stop."""
+
+
+DEFAULT_CARRIER = Carrier.CLIP
+"""How a device hands a recording over unless a test says: the tests of ``e2e/tests`` run each way
+(see its ``conftest.py``), which is what changes this."""
 
 
 @dataclass
@@ -36,6 +54,9 @@ class Device:
     timeout_s: float = TIMEOUT_S
     """How long it waits for an answer to end."""
 
+    carrier: Carrier = Carrier.CLIP
+    """How it hands a recording over."""
+
     def spoken(self) -> list[str]:
         """What the speaker was made to say, read back out of the clips it was asked to play (the
         clips of the stand-in of Piper: the words are in them)."""
@@ -46,17 +67,43 @@ class Device:
         carries its words in sound, and the listener (a Whisper) is who reads them back."""
         return [listener(clip) for clip in self.speaker.played]
 
+    def understood(self) -> list[str]:
+        """What the edge said it took each recording for, before it answered: what the assistant
+        made of what was said, as the device is told it."""
+        return list(self.shown.of("heard"))
+
     async def says_aloud(self, words: str) -> TurnEnded:
         """Says something with a recording of it, and waits for the answer to end."""
         return await self.sends(recording_of(words))
 
     async def sends(self, recording: AudioPayload) -> TurnEnded:
-        return await self._answered(await self.client.say_audio(recording))
+        """Hands a recording over, the way this device does, and waits for the answer to end."""
+        return await self.answered(await self.hands_over(recording))
+
+    async def hands_over(self, recording: AudioPayload) -> str:
+        """Hands a recording over, whole or as the chunks a microphone would send, and returns what
+        it is called, without waiting for the answer."""
+        if self.carrier is Carrier.STREAM:
+            pcm, sample_rate = pcm_of(recording.data)
+            return await self.client.say_audio_stream(AudioStream.of(pcm, sample_rate))
+        return await self.client.say_audio(recording)
+
+    def microphone(self, *words: str) -> FakeVoiceInput:
+        """What a microphone hands the terminal for each wake word that was heard, when somebody
+        says each of these: the recordings, or the streams, according to how this device carries
+        them."""
+        recordings = [recording_of(said) for said in words]
+        if self.carrier is Carrier.CLIP:
+            return FakeVoiceInput(*recordings)
+        return FakeVoiceInput(
+            *(AudioStream.of(*pcm_of(recording.data)) for recording in recordings)
+        )
 
     async def types(self, words: str) -> TurnEnded:
-        return await self._answered(await self.client.say(words))
+        return await self.answered(await self.client.say(words))
 
-    async def _answered(self, identity: str) -> TurnEnded:
+    async def answered(self, identity: str) -> TurnEnded:
+        """Waits for the answer to what was said to end, and says how it did."""
         ended = await asyncio.wait_for(self.client.wait_for_turn(identity), self.timeout_s)
         assert ended is not None, "the connection ended before the answer did"
         return ended
@@ -83,7 +130,7 @@ async def joined(
     )
     try:
         await client.connect()
-        yield Device(client, shown, speaker, hardware, house.timeout_s)
+        yield Device(client, shown, speaker, hardware, house.timeout_s, DEFAULT_CARRIER)
     finally:
         await client.close()
 
