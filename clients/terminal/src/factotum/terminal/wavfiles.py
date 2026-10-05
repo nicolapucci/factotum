@@ -10,7 +10,7 @@ import wave
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from factotum.contracts.audio import AudioPayload, pcm_of
+from factotum.contracts.audio import MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, AudioPayload, pcm_of
 from factotum.terminal.audio import DEFAULT_CHUNK_MS, AudioStream
 
 
@@ -29,9 +29,15 @@ class WavFileInput:
     @staticmethod
     def _read(path: Path) -> tuple[bytes, int]:
         try:
-            return pcm_of(path.read_bytes())
+            pcm, sample_rate = pcm_of(path.read_bytes())
         except ValueError as error:
             raise ValueError(f"{path}: {error}") from None
+        if not MIN_SAMPLE_RATE <= sample_rate <= MAX_SAMPLE_RATE:
+            raise ValueError(
+                f"{path}: {sample_rate} Hz is not a rate that is streamed "
+                f"({MIN_SAMPLE_RATE} to {MAX_SAMPLE_RATE} Hz)"
+            )
+        return pcm, sample_rate
 
     async def listen(self) -> AsyncIterator[AudioStream]:
         for pcm, sample_rate in self._utterances:

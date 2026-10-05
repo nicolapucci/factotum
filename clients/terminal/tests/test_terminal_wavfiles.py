@@ -37,6 +37,17 @@ async def said(source: WavFileInput) -> list[tuple[int, list[bytes]]]:
     ]
 
 
+def a_wav_at(path: Path, rate: int) -> Path:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_writer:
+        wav_writer.setnchannels(1)
+        wav_writer.setsampwidth(2)
+        wav_writer.setframerate(rate)
+        wav_writer.writeframes(bytes(200))
+    path.write_bytes(buffer.getvalue())
+    return path
+
+
 class TestRecordingsInFiles:
     async def test_each_file_is_an_utterance_said_in_the_order_given(self, tmp_path: Path) -> None:
         first = wav_file(tmp_path / "first.wav", b"\x01\x00" * 4000, 16000)
@@ -117,6 +128,26 @@ class TestRecordingsInFiles:
             WavFileInput(path)
 
         assert str(path) in str(refused.value)
+
+    @pytest.mark.parametrize("rate", [4000, 7999, 48001, 96000])
+    def test_a_rate_that_is_not_streamed_is_said_with_the_file_and_not_left_to_the_edge(
+        self, tmp_path: Path, rate: int
+    ) -> None:
+        path = a_wav_at(tmp_path / "question.wav", rate)
+
+        with pytest.raises(ValueError, match="not a rate that is streamed") as refused:
+            WavFileInput(path)
+
+        assert str(path) in str(refused.value)
+        assert f"{rate} Hz" in str(refused.value)
+
+    @pytest.mark.parametrize("rate", [8000, 16000, 22050, 44100, 48000])
+    async def test_every_rate_that_is_streamed_is_taken(self, tmp_path: Path, rate: int) -> None:
+        path = a_wav_at(tmp_path / "question.wav", rate)
+
+        [(said_at, _)] = await said(WavFileInput(path))
+
+        assert said_at == rate
 
 
 def clip(pcm: bytes, rate: int = 22050) -> AudioPayload:
