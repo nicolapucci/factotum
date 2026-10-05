@@ -32,6 +32,7 @@ from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.edge import (
     MAX_FRAME_BYTES,
     PROTOCOL_VERSION,
+    Feature,
     Hello,
     Ready,
     decode_edge_frame,
@@ -39,11 +40,13 @@ from factotum.contracts.edge import (
 )
 from factotum.contracts.identity import Owner, Principal, Subject
 from factotum.contracts.ids import CollectionId, ConversationId, DocumentId, ExchangeId
+from factotum.contracts.speech import SynthesisFormat, SynthesisSamples
 from factotum.contracts.testing import make_system_device, make_tenant_id, make_user_id
 from factotum.edge.api import create_app
+from factotum.edge.ports import Disconnected
 from factotum.edge.registry import FileDeviceRegistry
 from factotum.edge.router import Sessions
-from factotum.edge.session import Disconnected, Session, SessionSettings
+from factotum.edge.session import Session, SessionSettings
 
 Frame = Any
 """A frame the edge sent, decoded (any of the models of ``factotum.contracts.edge``)."""
@@ -205,20 +208,39 @@ class FakeConversation:
 
 
 DEFAULT_CLIP = AudioPayload(sample_rate=16000, data=b"spoken-aloud")
+DEFAULT_SOUND = (SynthesisFormat(sample_rate=16000), SynthesisSamples(data=b"spoken-aloud"))
+"""What the voice gives for a sentence that nothing was scripted for."""
+
 DEFAULT_TRANSCRIPTION = "what was said"
+
+VoiceStep = SynthesisFormat | SynthesisSamples | Exception | Wait | Hang | asyncio.Event
 
 
 class FakeSpeech:
     """The model gateway's speech roles, answering as told. Without a script, ``transcribe``
     returns ``DEFAULT_TRANSCRIPTION`` and ``synthesize`` returns ``DEFAULT_CLIP``, so a test that
     only cares that *something* was heard or spoken need not script either. A transcription that is
-    scripted as ``HANG`` never ends: a model that is still listening."""
+    scripted as ``HANG`` never ends: a model that is still listening.
+
+    The voice of a stream (``synthesize_stream``) gives ``DEFAULT_SOUND`` for a sentence, or what
+    was scripted for it with ``will_stream``, and keeps how each stream ended."""
 
     def __init__(self) -> None:
         self.transcriptions: list[tuple[Owner, AudioPayload]] = []
         self.syntheses: list[tuple[Owner, str]] = []
+        self.voices: list[tuple[Owner, str]] = []
+        """The sentences a stream of sound was asked for."""
+
+        self.open_voices = 0
+        """Streams begun and not yet over."""
+
+        self.endings: list[str] = []
+        """How each stream ended: ``completed``, ``failed`` (it raised), ``cancelled`` (the task
+        that read it was) or ``closed`` (whoever read it let it go before its end)."""
+
         self._transcribe_script: list[str | Exception | Hang] = []
         self._synthesize_script: list[AudioPayload | Exception] = []
+        self._stream_script: list[Sequence[VoiceStep]] = []
 
     def will_transcribe(self, *outcomes: str | Exception | Hang) -> "FakeSpeech":
         self._transcribe_script.extend(outcomes)
@@ -226,6 +248,13 @@ class FakeSpeech:
 
     def will_synthesize(self, *outcomes: AudioPayload | Exception) -> "FakeSpeech":
         self._synthesize_script.extend(outcomes)
+        return self
+
+    def will_stream(self, *steps: VoiceStep) -> "FakeSpeech":
+        """What the voice does for the next sentence it is asked for: the format and the samples
+        it gives, an error to raise when it is reached, a ``Wait`` to let time pass, ``HANG`` to
+        go no further or an ``asyncio.Event`` that it goes on when it is set."""
+        self._stream_script.append(steps)
         return self
 
     async def transcribe(self, owner: Owner, audio: AudioPayload) -> str:
@@ -246,6 +275,41 @@ class FakeSpeech:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+    def synthesize_stream(
+        self, owner: Owner, text: str
+    ) -> AsyncGenerator[SynthesisFormat | SynthesisSamples]:
+        return self._stream(owner, text)
+
+    async def _stream(
+        self, owner: Owner, text: str
+    ) -> AsyncGenerator[SynthesisFormat | SynthesisSamples]:
+        self.voices.append((owner, text))
+        script = self._stream_script.pop(0) if self._stream_script else DEFAULT_SOUND
+        self.open_voices += 1
+        ending = "closed"
+        try:
+            for step in script:
+                if isinstance(step, Exception):
+                    raise step
+                if isinstance(step, Wait):
+                    await asyncio.sleep(step.seconds)
+                elif isinstance(step, Hang):
+                    await asyncio.Event().wait()
+                elif isinstance(step, asyncio.Event):
+                    await step.wait()  # a gate: the voice goes on when the test says so
+                else:
+                    yield step
+            ending = "completed"
+        except asyncio.CancelledError:
+            ending = "cancelled"
+            raise
+        except Exception:
+            ending = "failed"
+            raise
+        finally:
+            self.open_voices -= 1
+            self.endings.append(ending)
 
 
 TEST = ServiceSettings(_env_file=None, environment=Environment.TEST)
@@ -286,6 +350,7 @@ def hello(
     display: DisplayInfo | None = None,
     hardware_id: str | None = None,
     protocol_version: int = PROTOCOL_VERSION,
+    features: Iterable[Feature] = (),
 ) -> Hello:
     """What a device says first: by default what it is registered as, and its credential."""
     record, issued = device
@@ -295,6 +360,7 @@ def hello(
         token=token or issued,
         capabilities=frozenset(record.capabilities if capabilities is None else capabilities),
         display=display,
+        features=frozenset(features),
     )
 
 

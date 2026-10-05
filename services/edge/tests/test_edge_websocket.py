@@ -18,12 +18,14 @@ from factotum.contracts.edge import (
     Ack,
     CloseCode,
     CommandRequest,
+    Feature,
     Ping,
     Utterance,
     decode_edge_frame,
     encode_frame,
 )
-from factotum.edge.testing import Rig, forgotten, hello, serving
+from factotum.contracts.speech import SynthesisFormat, SynthesisSamples
+from factotum.edge.testing import FakeSpeech, Rig, answer, forgotten, hello, serving
 
 
 async def next_frame(ws: ClientConnection, timeout_s: float = 2.0) -> Any:
@@ -135,6 +137,97 @@ class TestADeviceOnARealConnection:
 
             assert closed.value.rcvd is not None
             assert closed.value.rcvd.code == CloseCode.GOING_AWAY
+
+
+class TestAVoiceOnARealConnection:
+    async def test_a_device_that_takes_one_gets_the_sound_of_the_answer_as_frames(self) -> None:
+        speech = FakeSpeech().will_stream(
+            SynthesisFormat(sample_rate=22050),
+            SynthesisSamples(data=bytes(range(256))),
+            SynthesisSamples(data=bytes(range(255, -1, -1))),
+        )
+        async with (
+            Rig(speech=speech) as rig,
+            serving(rig) as edge,
+            connect(edge.websocket_url) as ws,
+        ):
+            await ws.send(encode_frame(hello(rig.devices[0], features=[Feature.VOICE_STREAM])))
+            ready = await next_frame(ws)
+            rig.conversation.scripts.append(answer("Hold the reset button for ten seconds."))
+
+            await ws.send(encode_frame(Utterance(id="u1", text="hello")))
+            frames: list[Any] = []
+            while not frames or frames[-1].type != "turn_ended":
+                frames.append(await next_frame(ws))
+
+            assert ready.features == {Feature.VOICE_STREAM}
+            assert [frame.type for frame in frames] == [
+                "part",
+                "part",
+                "voice_start",
+                "voice_chunk",
+                "voice_chunk",
+                "voice_end",
+                "turn_ended",
+            ]
+            chunks = [frame for frame in frames if frame.type == "voice_chunk"]
+            assert b"".join(chunk.data for chunk in chunks) == bytes(range(256)) + bytes(
+                range(255, -1, -1)
+            )
+
+    async def test_the_sound_arrives_as_it_is_made_and_not_when_the_sentence_is_all_said(
+        self,
+    ) -> None:
+        gate = asyncio.Event()
+        speech = FakeSpeech().will_stream(
+            SynthesisFormat(sample_rate=22050),
+            SynthesisSamples(data=b"AAAA"),
+            gate,  # the voice makes no more until the test says so
+            SynthesisSamples(data=b"BBBB"),
+        )
+        async with (
+            Rig(speech=speech) as rig,
+            serving(rig) as edge,
+            connect(edge.websocket_url) as ws,
+        ):
+            await ws.send(encode_frame(hello(rig.devices[0], features=[Feature.VOICE_STREAM])))
+            await next_frame(ws)
+            rig.conversation.scripts.append(answer("Hold the reset button for ten seconds."))
+
+            await ws.send(encode_frame(Utterance(id="u1", text="hello")))
+            frames: list[Any] = []
+            while not frames or frames[-1].type != "voice_chunk":
+                frames.append(await next_frame(ws))
+
+            # The first of the sound is on the device, and the voice is still making the rest.
+            assert [frame.type for frame in frames] == [
+                "part",
+                "part",
+                "voice_start",
+                "voice_chunk",
+            ]
+            assert frames[-1].data == b"AAAA"
+            gate.set()
+            while frames[-1].type != "turn_ended":
+                frames.append(await next_frame(ws))
+            assert [frame.type for frame in frames[4:]] == [
+                "voice_chunk",
+                "voice_end",
+                "turn_ended",
+            ]
+            assert frames[4].data == b"BBBB"
+
+    async def test_a_device_that_does_not_take_one_is_sent_a_clip_as_before(self) -> None:
+        async with Rig(speech=FakeSpeech()) as rig, serving(rig) as edge:
+            async with connect(edge.websocket_url) as ws:
+                ready = await greeted(ws, rig)
+                await ws.send(encode_frame(Utterance(id="u1", text="hello")))
+                kinds: list[str] = []
+                while "turn_ended" not in kinds:
+                    kinds.append((await next_frame(ws)).type)
+
+            assert ready.features == frozenset()
+            assert kinds == ["part", "part", "turn_ended"]
 
 
 class TestACommandOverARealConnection:

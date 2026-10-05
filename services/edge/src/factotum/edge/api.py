@@ -18,9 +18,10 @@ from factotum.contracts.edge import MAX_FRAME_BYTES, CommandRequest, ConnectedDe
 from factotum.contracts.errors import CapabilityNotSupportedError, DeviceNotFoundError
 from factotum.contracts.ids import DeviceId
 from factotum.edge.conversation import TurnSource
+from factotum.edge.ports import Disconnected, SpeechSource
 from factotum.edge.registry import DeviceRegistry
 from factotum.edge.router import EdgeDevice, Sessions
-from factotum.edge.session import Disconnected, Session, SessionSettings, SpeechSource
+from factotum.edge.session import Session, SessionSettings
 from factotum.web import Authenticator, Caller, create_base_app
 
 MAX_BODY_BYTES = 64 * 1024

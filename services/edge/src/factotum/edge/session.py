@@ -15,6 +15,10 @@ Things it holds to, because a device is a small computer on a home network and m
 * A stream of audio is bounded: by its size, by how long the device may be quiet in the middle of
   it, and by the order of its chunks. Whatever ends one without an answer says how, once
   (ADR 0022).
+* What an answer says aloud is a clip in each ``speech`` part, to a device that did not say it takes
+  a voice as a stream, and to one that did a track of sound that is made and sent while the text of
+  the answer is still being written (``factotum.edge.voice``, ADR 0023). Either way the text of a
+  sentence is sent as soon as it is whole, and nothing of the answer comes after its ``turn_ended``.
 * A device that says nothing for too long, or cannot be written to, is gone. Its turn is stopped,
   its commands are answered as offline, and it is forgotten by the edge.
 * What goes wrong inside is the device's to be told in a code, never in a stack trace.
@@ -35,6 +39,7 @@ from factotum.contracts.commands import CommandResult, CommandStatus, DeviceComm
 from factotum.contracts.conversation import MAX_MESSAGE_CHARS, Failed
 from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.edge import (
+    FEATURE_NEEDS,
     PROTOCOL_VERSION,
     Ack,
     AudioChunk,
@@ -46,6 +51,7 @@ from factotum.contracts.edge import (
     CloseCode,
     CommandFrame,
     ErrorFrame,
+    Feature,
     FromEdge,
     Heard,
     Hello,
@@ -65,28 +71,12 @@ from factotum.contracts.ids import DeviceId, TenantId
 from factotum.contracts.response import ResponsePart, Speech
 from factotum.edge.conversation import TurnSource
 from factotum.edge.parts import TurnParts
+from factotum.edge.ports import Disconnected, SpeechSource, Wire
 from factotum.edge.registry import DeviceRegistry, principal_of
 from factotum.edge.settings import EdgeSettings
+from factotum.edge.voice import Voice
 
 logger = logging.getLogger("factotum.edge")
-
-
-class Disconnected(Exception):  # noqa: N818 - it says what happened to the device, not what failed
-    """The device is gone: its connection closed, or a frame could not be sent to it."""
-
-
-class Wire(Protocol):
-    """What a session needs of a connection: text frames in and out, and a way to end it."""
-
-    async def receive(self) -> str:
-        """The next frame. Raises ``Disconnected`` when the connection is over."""
-        ...
-
-    async def send(self, text: str) -> None:
-        """Send a frame. Raises ``Disconnected`` when it cannot be sent."""
-        ...
-
-    async def close(self, code: int, reason: str = "") -> None: ...
 
 
 class SessionDirectory(Protocol):
@@ -95,16 +85,6 @@ class SessionDirectory(Protocol):
     async def attach(self, session: "Session") -> None: ...
 
     def detach(self, session: "Session") -> None: ...
-
-
-class SpeechSource(Protocol):
-    """What a session needs to turn a recording into words, and words into one, for the owner the
-    principal acts as. ``None`` where a session is given none: a recording (an ``audio_utterance``,
-    or a stream of audio) is then refused, and a ``Speech`` part goes out as text alone."""
-
-    async def transcribe(self, owner: Owner, audio: AudioPayload) -> str: ...
-
-    async def synthesize(self, owner: Owner, text: str) -> AudioPayload: ...
 
 
 class SessionSettings:
@@ -191,6 +171,7 @@ class Session:
         self.record: SystemDeviceRecord | None = None
         self.principal: Principal | None = None
         self.capabilities: frozenset[Capability] = frozenset()
+        self.features: frozenset[Feature] = frozenset()
         self.display: DisplayInfo | None = None
 
     # ---- what the rest of the edge asks of a session ----
@@ -288,6 +269,9 @@ class Session:
         self.record = record
         self.principal = principal_of(record, user_roles=frozenset({Role.MEMBER}))
         self.capabilities = allowed
+        # A feature is taken by a device that may do what it needs (a voice is for a speaker it is
+        # registered to have), whatever it declared.
+        self.features = frozenset(f for f in hello.features if FEATURE_NEEDS[f] in allowed)
         self.display = (hello.display or record.display) if Capability.DISPLAY in allowed else None
         await self._directory.attach(self)
         await self._send(
@@ -300,6 +284,7 @@ class Session:
                 unregistered=hello.capabilities - record.capabilities,
                 display=self.display,
                 heartbeat_s=self._settings.heartbeat_s,
+                features=self.features,
             )
         )
         logger.info(
@@ -309,6 +294,7 @@ class Session:
                 "device_name": record.name,
                 "session": self.session_id,
                 "capabilities": sorted(c.value for c in allowed),
+                "features": sorted(f.value for f in self.features),
             },
         )
         return True
@@ -619,51 +605,74 @@ class Session:
             return part
         return part.model_copy(update={"audio": audio})
 
+    def _voice_for(self, utterance_id: str) -> Voice | None:
+        """The voice that says an answer as it is made, for a device that takes one as a stream.
+        None for a device that does not (it is sent a clip in each ``speech`` part) and for an edge
+        that has no speech (it is sent the words alone)."""
+        if Feature.VOICE_STREAM not in self.features or self._speech is None:
+            return None
+        assert self.principal is not None  # noqa: S101 - a session that answers has said hello
+        return Voice(
+            speech=self._speech,
+            owner=Owner.of_subject(self.principal.acts_as),
+            utterance_id=utterance_id,
+            send=self._send,
+            session_id=self.session_id,
+        )
+
     async def _answer(self, utterance_id: str, text: str) -> None:
         assert self.principal is not None  # noqa: S101 - a session that answers has said hello
         parts = TurnParts(self.capabilities)
+        voice = self._voice_for(utterance_id)
         seq = 0
         status, code, message = TurnStatus.FINISHED, None, None
 
         async def deliver(items: list[ResponsePart]) -> None:
             nonlocal seq
             for part in items:
-                if isinstance(part, Speech):
+                if isinstance(part, Speech) and voice is None:
                     part = await self._spoken(part)
                 await self._send(PartFrame(utterance_id=utterance_id, seq=seq, part=part))
+                if isinstance(part, Speech) and voice is not None:
+                    # The words went first, and the sound that follows them does not hold up the
+                    # text of what comes next: it is made while the answer is still being written.
+                    voice.say(seq, part.text)
                 seq += 1
 
         try:
-            events = self._conversation.turn(self.principal, text)
-            async with contextlib.aclosing(events):
-                async for event in events:
-                    await deliver(parts.feed(event))
-                    if isinstance(event, Failed):
-                        status, code, message = TurnStatus.FAILED, event.code, event.message
-            await deliver(parts.finish())
+            try:
+                events = self._conversation.turn(self.principal, text)
+                async with contextlib.aclosing(events):
+                    async for event in events:
+                        await deliver(parts.feed(event))
+                        if isinstance(event, Failed):
+                            status, code, message = TurnStatus.FAILED, event.code, event.message
+                await deliver(parts.finish())
+            except Disconnected:
+                raise
+            except FactotumError as error:
+                status, code, message = TurnStatus.FAILED, error.code, error.message
+                await deliver(parts.failure(error.code))
+            except Exception:
+                logger.exception("an answer failed", extra={"session": self.session_id})
+                status, code, message = TurnStatus.FAILED, "internal_error", "the answer failed"
+                await deliver(parts.failure(code))
+            if voice is not None:
+                await voice.finish()  # the last of the sound is sent before the turn is over
+            await self._send(
+                TurnEnded(utterance_id=utterance_id, status=status, code=code, message=message)
+            )
         except asyncio.CancelledError:
+            if voice is not None:
+                await voice.abort()  # no sound follows the end of a turn
             with contextlib.suppress(Disconnected):
                 await self._send(TurnEnded(utterance_id=utterance_id, status=TurnStatus.CANCELLED))
             raise
         except Disconnected:
             return
-        except FactotumError as error:
-            status, code, message = TurnStatus.FAILED, error.code, error.message
-            try:
-                await deliver(parts.failure(error.code))
-            except Disconnected:
-                return
-        except Exception:
-            logger.exception("an answer failed", extra={"session": self.session_id})
-            status, code, message = TurnStatus.FAILED, "internal_error", "the answer failed"
-            try:
-                await deliver(parts.failure(code))
-            except Disconnected:
-                return
-        with contextlib.suppress(Disconnected):
-            await self._send(
-                TurnEnded(utterance_id=utterance_id, status=status, code=code, message=message)
-            )
+        finally:
+            if voice is not None:
+                await voice.abort()  # a voice is never left making sound for a turn that is over
 
     async def _send(self, frame: FromEdge) -> None:
         if self._closed:
