@@ -179,7 +179,8 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   have none, and a person writes their binding without one (`base_url=None`): a test of speech must too.
   The first ones did not, and a `KeyError` for the address went unseen until an end-to-end test.
 - Whisper left to guess the language of a short command guesses wrong about half the time (Arabic for
-  "apri il garage", Polish for "no, grazie"): bind `stt` with `options.languages`. And faster-whisper
+  "apri il garage", Polish for "no, grazie"): an `stt` binding hears Italian unless its
+  `options.languages` lists others (`null` there brings the guessing back). And faster-whisper
   cannot read a recording with PyAV 19 (it passes `av.open` an argument that was removed), so `av` is
   held below 19. Told to hear Italian, Whisper writes the credits of a subtitle for a second of
   silence ("Sottotitoli e revisione a cura di QTSS"), so what is not speech is filtered out first. A

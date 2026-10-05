@@ -322,6 +322,30 @@ bindings:
 
         assert speech.options.languages == ("it",)
 
+    def test_a_speech_binding_that_names_no_language_hears_italian(self) -> None:
+        text = """
+bindings:
+  - role: stt
+    provider: whisper_local
+    model: small
+"""
+        [speech] = load_bindings(text, tenant_id=TENANT)
+
+        assert speech.options.languages == ("it",)
+
+    def test_the_guess_is_left_to_the_model_only_when_the_file_says_so(self) -> None:
+        text = """
+bindings:
+  - role: stt
+    provider: whisper_local
+    model: small
+    options:
+      languages: null
+"""
+        [speech] = load_bindings(text, tenant_id=TENANT)
+
+        assert speech.options.languages is None
+
     def test_a_file_that_still_declares_a_locality_is_refused_and_not_ignored(self) -> None:
         # Where a model runs is not something the system records or enforces (ADR 0010): a file
         # that says so would let its author believe that something protects the documents.

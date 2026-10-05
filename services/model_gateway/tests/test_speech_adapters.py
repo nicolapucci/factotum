@@ -38,7 +38,7 @@ def wav_bytes(sample_rate: int = 22050) -> bytes:
 
 
 def whisper_binding(
-    model: str = "base", *, languages: tuple[str, ...] | None = None
+    model: str = "base", *, options: BindingOptions | None = None
 ) -> ResolvedBinding:
     binding = make_model_binding(
         tenant_id=make_tenant_id(),
@@ -46,7 +46,7 @@ def whisper_binding(
         model=model,
         base_url=None,
         secret_ref=None,
-        options=BindingOptions(languages=languages),
+        options=options,
     )
     return resolved(binding)
 
@@ -98,16 +98,25 @@ class TestWhisperLocalAdapter:
         assert text == "hold the button for ten seconds"
         assert engine.asked == [b"raw-wav-bytes"]
 
-    @pytest.mark.parametrize("languages", [None, ("it",), ("it", "en")])
+    @pytest.mark.parametrize("languages", [None, ("it",), ("it", "en"), ("en",)])
     async def test_the_languages_the_binding_allows_go_to_the_engine(
         self, languages: tuple[str, ...] | None
     ) -> None:
         engine = FakeWhisperEngine()
         adapter = WhisperLocalAdapter(engine_factory=lambda model: engine)
+        binding = whisper_binding(options=BindingOptions(languages=languages))
 
-        await adapter.transcribe(None, whisper_binding(languages=languages), audio())  # type: ignore[arg-type]
+        await adapter.transcribe(None, binding, audio())  # type: ignore[arg-type]
 
         assert engine.languages == [languages]
+
+    async def test_a_binding_that_says_nothing_of_languages_is_listened_to_in_italian(self) -> None:
+        engine = FakeWhisperEngine()
+        adapter = WhisperLocalAdapter(engine_factory=lambda model: engine)
+
+        await adapter.transcribe(None, whisper_binding(), audio())  # type: ignore[arg-type]
+
+        assert engine.languages == [("it",)]
 
     async def test_an_engine_is_built_once_per_model_size_and_reused(self) -> None:
         built: list[str] = []

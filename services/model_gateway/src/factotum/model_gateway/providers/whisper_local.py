@@ -8,9 +8,9 @@ Hugging Face the first time that size has not already been cached; point ``cache
 directory of your own to control where (``FACTOTUM_GATEWAY_SPEECH_CACHE_DIR``). A path is never
 downloaded, a name is.
 
-The binding's ``options.languages`` say which languages may be spoken: left to itself, Whisper
-guesses the language of a short command from all of its own and often gets it wrong, and what it
-writes is then in that language, or in its script.
+The binding's ``options.languages`` say which languages may be spoken (Italian, when it says
+nothing): left to itself, Whisper guesses the language of a short command from all of its own and
+often gets it wrong, and what it writes is then in that language, or in its script.
 """
 
 import asyncio

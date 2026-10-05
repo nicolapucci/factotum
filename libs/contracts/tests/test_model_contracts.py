@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.models import (
     ADDRESS_REQUIRED,
+    DEFAULT_SPEECH_LANGUAGES,
     HOSTED_PROVIDERS,
     BindingOptions,
     ModelBinding,
@@ -65,8 +66,21 @@ class TestBindingOptions:
         with pytest.raises(ValidationError, match="verbose"):
             BindingOptions.model_validate({"verbose": True})
 
-    def test_no_language_is_the_default_and_leaves_the_guess_to_the_model(self) -> None:
-        assert BindingOptions().languages is None
+    def test_italian_is_what_is_heard_unless_the_binding_says_otherwise(self) -> None:
+        assert BindingOptions().languages == DEFAULT_SPEECH_LANGUAGES == ("it",)
+
+    def test_a_binding_stored_before_languages_were_a_choice_hears_italian_too(self) -> None:
+        # What the hub keeps is the binding as JSON: a row written without the option has none.
+        stored = BindingOptions.model_validate_json('{"max_input_tokens": 4096}')
+
+        assert stored.languages == ("it",)
+
+    def test_leaving_the_guess_to_the_model_is_asked_for_and_is_kept(self) -> None:
+        options = BindingOptions(languages=None)
+
+        assert options.languages is None
+        assert BindingOptions.model_validate({"languages": None}).languages is None
+        assert BindingOptions.model_validate_json(options.model_dump_json()).languages is None
 
     @pytest.mark.parametrize("written", [["it"], ["it", "en"], ("it",), ["haw"]])
     def test_languages_written_as_a_list_are_kept_as_a_tuple_of_codes(

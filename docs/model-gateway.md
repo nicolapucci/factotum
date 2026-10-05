@@ -117,12 +117,14 @@ bindings:
     model: it_IT-paola-medium
 ```
 
-`options.languages` says which languages are spoken to the device, as the codes Whisper uses. Left
-to guess among all of its own, Whisper often picks one that nobody spoke for a short command: with
-the Italian voice of Piper speaking, 7 of 15 commands and answers came out in Spanish, Arabic,
-Polish or Persian ("apri il garage" as «أبيل غراف»), which nothing downstream can route. One
-language is forced; several limit the guess to them, at the cost of one more pass of the model over
-the recording to see which of them it hears best; none leaves the guess to the model.
+`options.languages` says which languages are spoken to the device, as the codes Whisper uses, and
+**is Italian when the binding does not say**. Left to guess among all of its own, Whisper often picks
+one that nobody spoke for a short command: with the Italian voice of Piper speaking, 7 of 15
+commands and answers came out in Spanish, Arabic, Polish or Persian ("apri il garage" as «أبيل
+غراف»), which nothing downstream can route. One language is forced; several limit the guess to
+them, at the cost of one more pass of the model over the recording to see which of them it hears
+best; `languages: null`, written out, leaves the guess to the model. A household that speaks
+English too binds `[it, en]`.
 
 The engine for a binding's model is built the first time it is actually asked to transcribe or to
 synthesize, not at startup: a deployment that never binds either role never loads one. Building it
