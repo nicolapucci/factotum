@@ -550,7 +550,9 @@ as well (a question by voice answered aloud from a document, a person speaking o
 the way back to the model that was writing it) is in `e2e`, with the real conversation, knowledge
 and model-gateway services ([`development.md`](development.md#end-to-end-tests)), where a probe that
 is no client reads the frames the edge sent and a voice is served from the gateway on a real
-socket.
+socket. A series of more than eighty commands, said to three devices of the example home at once and
+each on the one connection it holds, is judged from what the planner proposed to what each device
+did and what the audit trail says ([`development.md`](development.md#end-to-end-tests)).
 
 ## Measured
 

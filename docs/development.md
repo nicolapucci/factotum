@@ -152,6 +152,37 @@ meanwhile; a lamp that is one person's own and that the shared speaker is never 
 that names something to do, which is answered and runs nothing and whose planner never reads a
 document; and the audit trail of it all, with the device each step came from.
 
+**A series of commands** (`test_e2e_series.py`, `factotum.e2e.series`) says the corpus that a model
+that plans is measured against (`factotum.actions.plan_cases`: 82 messages in English and in
+Italian, about the example skills, said to the kitchen speaker, the living room display and a
+phone) one after another, to the three devices at once, each on the one connection it holds for the
+whole series, and four more where the corpus is silent (a phone that has two lamps to choose from, a
+speaker that is told of a lamp that is not its own). Each message comes with what the code must make
+of it: done, asked about first, refused, asked for what is missing, or left as a question. What is
+looked at, for every one, is what the whole assistant did: what the actions service made of it (it
+is recorded as it is said: `House.acts`), the skill that ran and what it was given (the values, the
+hosts it may reach, the secrets it was granted and no others), what Home Assistant was asked, what
+each device was told to do and has done (a volume, an announcement on the device that was named and
+no other), and, after all of it, the audit trail, which must say exactly what was done, refused and
+asked about and nothing else, and every client, which must have seen no rule of the protocol broken
+and every voice that was streamed to its end. A question that asks first is answered with a yes at
+the display, which may start what cannot be undone, and with a no at the phone, which leaves the
+door shut. The planner is a stand-in that proposes what a competent one would for the message that
+was *meant* (`HouseholdModel.proposal`, the proposal for *now*, never a queue: a message that does not
+reach the planner leaves nothing for the next), and a model that writes the plan of a skill that is
+only instructions does the same (`HouseholdModel.writing`, as strictly as the gateway checks it); the
+planner is shown every skill (`running(offer_every_skill=True)`), since the stand-in that gives words
+a direction cannot tell that "bump it up to eighty" is near the volume. What is real is everything
+after it, and that is what breaking the code on purpose shows: ten ways (a yes that is not asked for,
+a device that may start what it may not, a command given to the device that was spoken to and not
+the one that was named, commands that are not given, the first device taken for the one named, the
+values that a skill does not require dropped, a trail that forgets what was answered, a hearing that
+is told something else, a hardware that does not take its volume, a message that lacks a value run
+all the same) were each noticed, one of them only once the series had a phone with two lamps. The
+skill that reaches the weather does it over https, which the stand-in of the web does not speak, so
+the runner of the house prints what it would have (`HouseRunner.canned`) and keeps the job it was
+given.
+
 A document can be a file: a PDF is uploaded as a person uploads it, read by the knowledge service in
 a process of its own, and answered from with the page it is on; a Word file with its heading; an
 Italian one with its accents from the page to the speaker; a PDF that is broken fails where it was
@@ -182,7 +213,12 @@ made to say sounds to somebody who listens, which is a Whisper again. The person
 voice of Piper's of their own, which says the same words the same way each time and reaches the
 device the way a microphone hands it over (16 kHz). What writes the answers and plans the actions is
 still made up, and so is what the skills reach: the right thing having been attempted is what is
-tried, not that it could be done.
+tried, not that it could be done. The tests about the garage door give the stand-in of the planner
+what a competent one would propose (`HouseholdModel.proposal`) instead of leaving it to read what
+Whisper heard, because what they are about is what is done with a door (it asks, a yes opens it, a
+no and a "maybe" do not, a speaker is refused), and Whisper hears "garage" said the Italian way as
+something else (below): they used to pass whatever it heard, since a door that nobody understood
+was a door that stayed shut.
 
 They are `live` tests, run by a person and never in CI, and nothing is ever downloaded. They run
 with the recording streamed, the way that will be the real one: a real model hears the same samples
@@ -194,13 +230,14 @@ FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_SPEECH_DEVICE=cuda uv run pytest e2e/tests/t
 ```
 
 The models are looked for where they already are, and the tests skip where they are not:
-`FACTOTUM_LIVE_WHISPER_MODEL` names the folder of a faster-whisper model (without it, the snapshot of
-`Systran/faster-whisper-small` in the Hugging Face cache) and `FACTOTUM_LIVE_PIPER_VOICE` the `.onnx`
-file of a voice, with its `.onnx.json` beside it (without it, `it_IT-paola-medium` in
-`~/.cache/factotum/piper`). A name is not a folder: it would be fetched, so it is not found. A
-processor takes a few seconds for each thing heard (about a minute and a half for all of them); on
-the card, ctranslate2 needs cuBLAS 12 on the `PATH` (`FACTOTUM_CUDA_DLL_DIR`, or the folder Ollama
-keeps its own in, which the rig finds), and a card that something else is using is slower than the
+`FACTOTUM_LIVE_WHISPER_MODEL` names the folder of a faster-whisper model (without it, the biggest of
+the snapshots of `Systran/faster-whisper-large-v3`, `-medium` and `-small` in the Hugging Face cache)
+and `FACTOTUM_LIVE_PIPER_VOICE` the `.onnx` file of a voice, with its `.onnx.json` beside it (without
+it, `it_IT-paola-medium` in `~/.cache/factotum/piper`). A name is not a folder: it would be fetched,
+so it is not found. A processor takes seconds for each thing heard: the ten tests above take a
+minute and a half with `small`, two and a half with `medium` and four with `large-v3`; on the card,
+ctranslate2 needs cuBLAS 12 on the `PATH` (`FACTOTUM_CUDA_DLL_DIR`, or the folder Ollama keeps its
+own in, which the rig finds), and a card that something else is using is slower than the
 processor. A real model hears a voice a little differently on each device, so what is looked for in
 what it heard is the stem of a word and how much alike two sentences are, never a sentence.
 
@@ -209,6 +246,44 @@ single recording (`av` is held below 19), Whisper left to guess the language too
 for Arabic or Polish half of the time (`options.languages`), and told to hear Italian it wrote the
 credits of a subtitle for a second of silence (what is not speech is now filtered out before it
 listens). See [`model-gateway.md`](model-gateway.md#speech).
+
+#### A series of commands, said in Italian
+
+`e2e/tests/test_e2e_speech_series.py` says the Italian part of the series above (26 commands: lamps,
+the volume, the garage door, the weather, the air, an announcement, a scene for a movie, the router,
+and questions that look like them) to the three devices with that voice, through the real Whisper,
+the way a microphone hands it over, and judges everything that the series with stand-in speech
+judges, for the message that was *meant*. What it adds is what was *heard*: each command must be
+nearer to what was said than to any other of the series (a reader who knows the commands takes each
+for the one that was said), a yes and a no are heard as what they are, and what the planner was
+shown to read is what the device was told it was taken for. `-s` prints a line for each command,
+with how alike what was heard is to what was said.
+
+```bash
+FACTOTUM_LIVE_TESTS=1 uv run pytest e2e/tests/test_e2e_speech_series.py -s
+FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_WHISPER_MODEL=/path/to/a/model uv run pytest e2e/tests/test_e2e_speech_series.py -s
+```
+
+Measured on the processor of this machine (2026-10-05), with the 25 commands of the series that were
+there when the three were compared (the same Piper voice for all):
+
+| Whisper | On disk | Time | Heard as said (alike ≥ 0.95) | Mean | Heard worst |
+| --- | --- | --- | --- | --- | --- |
+| `small` | 0.46 GB | 1 min 40 | 15 of 25 | 0.91 | "apri il garage" as "Appigara!", "alza il volume a 70" as "Adds al volume 60", "riavvia il router" as "e avvia l'ute." |
+| `medium` | 1.5 GB | 3 min 28 | 16 of 25 | 0.92 | "riavvia il router" as "Ja, via Lutte!", "apri il garage" as "A pigara!" |
+| `large-v3` | 2.9 GB | 6 min 14 | 20 of 25 | 0.96 | "riavvia il router" as "e a via lute", "apri il garage" as "A Pilgara" |
+
+What it shows. The bigger the model, the more commands are heard as they were said, and a number,
+which is what a command like the volume is about, was wrong only with `small` ("a 70" as "a 60"). A
+command that Whisper writes another way is not a command heard wrong ("metti la luce al 50 per
+cento" came back as "al 50%" from all three). And two commands are heard badly by every size: "apri
+il garage" and "riavvia il router", the two with a word of English that the voice says the Italian
+way. A person may say them in a way that Whisper knows better than this voice does, and nothing
+here shows whether they do; what is certain is that a command is not understood because it was
+heard well once. Nothing biases Whisper toward the words of the home yet (the names of its devices
+and skills, given to the model as a prompt or as hotwords, would), which is the first thing to try
+if a real microphone does the same, and the series is what would show that it helped. It is also
+why the rig takes the biggest model it finds.
 
 ## Trying the model gateway
 

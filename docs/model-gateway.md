@@ -126,6 +126,14 @@ them, at the cost of one more pass of the model over the recording to see which 
 best; `languages: null`, written out, leaves the guess to the model. A household that speaks
 English too binds `[it, en]`.
 
+**The size is what is heard against how long it takes.** The same 25 commands in Italian, said by
+the voice of Piper's and heard on a processor, were heard as they were said by 15 with `small`, 16
+with `medium` and 20 with `large-v3` (a minute and forty seconds, three and a half and six, for all
+of them), and `small` heard "alza il volume a 70" as "a 60" (the measurement and what it did not
+settle, the words of English in a command, are in
+[`development.md`](development.md#a-series-of-commands-said-in-italian)). The example binding keeps
+`small` because it is the one that fits everywhere; bind a bigger size where there is room for it.
+
 ### A voice as a stream
 
 `POST /v1/synthesize` with `stream: true` answers in server-sent events, as `/v1/chat` does, while

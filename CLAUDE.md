@@ -148,7 +148,14 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   Whisper and Piper: docs/development.md). What crosses a service boundary
   is tested there once, as a person would meet it; a unit test of each side does not show that the two
   fit (the speech roles were broken for every binding written the documented way until one did). Each
-  of its tests runs with a recording sent whole and with it streamed (ADR 0022).
+  of its tests runs with a recording sent whole and with it streamed (ADR 0022), and the voice of
+  the answer a clip or a stream (ADR 0023).
+- **A command that a person can say is a case of the corpus** (`factotum.actions.plan_cases`), and the
+  series of `e2e` says every one of them to the three devices of the example home and judges what the
+  whole assistant did (`factotum.e2e.series`: the decision, what ran and with what, what a device was
+  told and did, the audit trail, no rule of the protocol broken). A new skill, or a new way for an
+  action to come out, is added there, with what the code must make of it, and not only tested on its
+  own.
 - Test file names are unique across the whole repository (mypy checks them in one run).
 - Markers: `integration` needs Docker; `live` runs real models or calls real providers, with the
   user's own keys or the models of the machine, and never runs in CI.
@@ -183,6 +190,16 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   number as `{"value": 42}`): a field that may be a text says `anyOf` its types. It cost a whole
   class of skills (every plain-text body was written as JSON) before a test with skills that nothing
   was tuned on showed it; the tests now refuse a part of the shape that has no `type` or `anyOf`.
+- What the stand-in of a model writes in a test (`HouseholdModel.proposal`, `.writing`) has to fit
+  what the gateway makes a model answer with, or it is no answer at all: a `GET` written without
+  `headers` is `invalid_structured_output` three times over, and the skill is a skill that failed.
+  `factotum.e2e.series` checks its plans against the schema in its own tests.
+- Whisper hears a loanword that a voice says the Italian way as something else, whatever its size
+  (measured with Piper's `it_IT-paola-medium` and the 25 Italian commands of the series: "apri il
+  garage" came back as "A pigara!" and "riavvia il router" as "Ja, via Lutte!"; `small` heard "a 70" as
+  "a 60", and `large-v3` heard every number). The names of what is in the home are what a command is
+  about, and nothing biases the model toward them yet (an `initial_prompt` or hotwords of the home's
+  devices and skills would): do not take a command that was heard well once for one that is.
 - Tests import `--import-mode=importlib`: one test module cannot import another, so what tests share
   lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`,
   `factotum.client_core.testing`: the fakes of every port of a client, and `ClientRig`).
