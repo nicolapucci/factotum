@@ -63,7 +63,7 @@ flowchart TD
 
 | Service | Responsibility | What it does not know |
 | --- | --- | --- |
-| `edge` (*implemented* for text, and for a basic voice: one recording in, one spoken answer out) | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement, turning a recording into words and an answer into one through the gateway | documents |
+| `edge` (*implemented* for text, and for voice: what a person says streams in as they say it and stops the answer that is going on, and a spoken answer is a clip for each sentence) | WebSocket API for system devices: authentication, sessions, a versioned protocol, capability-aware routing of response parts, device commands with acknowledgement, turning a recording into words and an answer into one through the gateway | documents |
 | `conversation` (*implemented* for text) | One conversation turn: retrieval from `knowledge` (and later the web) with timeouts and partial degradation, context budgeting, streamed answers with citations, and no history unless the message refers to it, when what was said is looked up in a log; later routing with structured output and the action path (skill selection, parameter extraction, confirmation) | which model or provider it uses, and any key |
 | `knowledge` (*implemented*) | Ingestion (loaders, chunking, embeddings through the gateway), storage and hybrid retrieval in Postgres + pgvector, document lifecycle, ownership | which model produces the embeddings |
 | `model-gateway` | The only place that knows providers, addresses and keys. A normalized API for chat (streaming, structured output), embeddings, speech and web search; retries, timeouts, typed errors, redaction | conversations and document content (it only sees them in transit) |
@@ -369,7 +369,7 @@ answer and other things than actions, voice.
 | 7b | `hub`: a device's pairing, the external devices a skill is bound to | done |
 | 7c | `hub`: model bindings, the gateway reading them from it, a real delegation for `actions`, `conversation` and `knowledge` | done |
 | 7d | `hub`: skill secrets, the actions service reading them from it | done |
-| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway, one recording and one spoken answer at a time — a temporary version; still owed: a real stream of audio, barge-in, and the Raspberry Pi client | beta |
+| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway; what a person says streams in to the edge and interrupts the answer as it begins (ADR 0022), a spoken answer is a clip for each sentence; still owed: the answer streamed out, hearing a wake word over the device's own voice, and the Raspberry Pi client | beta |
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |
 

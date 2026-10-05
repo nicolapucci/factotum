@@ -38,6 +38,9 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s -k li
 uv run pytest -m integration services/runner/tests/test_runner_sandbox_engine.py
 # the edge, and a device in a terminal (docs/edge.md; needs config/devices.dev.yaml and the services):
 uv run factotum-terminal --profile smart-display
+# the same with no hardware: a recording in a file is streamed as a microphone would, and what is
+# said comes back as a file (the client that tests the whole stack)
+uv run factotum-terminal --profile speaker --wav-in question.wav --wav-out answer.wav
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```
@@ -132,7 +135,8 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   boundary and only the hardware of a device and the models made up (and, as live tests, the real
   Whisper and Piper: docs/development.md). What crosses a service boundary
   is tested there once, as a person would meet it; a unit test of each side does not show that the two
-  fit (the speech roles were broken for every binding written the documented way until one did).
+  fit (the speech roles were broken for every binding written the documented way until one did). Each
+  of its tests runs with a recording sent whole and with it streamed (ADR 0022).
 - Test file names are unique across the whole repository (mypy checks them in one run).
 - Markers: `integration` needs Docker; `live` runs real models or calls real providers, with the
   user's own keys or the models of the machine, and never runs in CI.
@@ -186,6 +190,20 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   silence ("Sottotitoli e revisione a cura di QTSS"), so what is not speech is filtered out first. A
   stand-in engine showed none of this: it took a real model, so a change to the speech path has to be
   tried with one (`e2e/tests/test_e2e_speech.py`), not only with the stand-ins.
+- A client over a connection that is gone must not say anything into it, and a test cannot always
+  tell: an in-memory connection that was dropped still takes a frame where a real one raises, so a
+  loop that says the next thing as the connection ends waits for ever for its answer (a run over
+  several files did). Do not patch `asyncio.sleep` in a test while a client is connected: its
+  heartbeat sleeps with it.
+- The services of `e2e` are joined by `httpx.ASGITransport`, which hands a response over when it is
+  whole: nothing there shows an answer arriving a sentence at a time (the real sockets of the edge's
+  own tests do). What can be shown there is that an answer that is being written is cut, and its
+  model let go of (`HouseholdModel.hold_after`, `abandoned`).
 - The keys of `extra=` in a log call must not be attributes of a `LogRecord` (`name`, `message`,
   `args`...): the standard library raises `KeyError`, and only when the level is enabled, which is
   how a session died the first time the log was at INFO.
+- A script that rewrites a source file for a mutation test has to write bytes: `Path.write_text` on
+  Windows turns `\n` into `\r\n`, and git then warns of the line endings of a file that was never
+  meant to change. And a subprocess that is killed must be killed with its tree (`taskkill /F /T`):
+  `uv run pytest` is `uv`, which starts `pytest`, which starts `python`, and the last one holds the
+  pipe.

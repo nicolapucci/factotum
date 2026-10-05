@@ -52,4 +52,6 @@ an answer precisely as it does to a chat message.
   with a real stream of audio over the edge's WebSocket, and lets a wake word heard while an answer
   is playing interrupt it where it is, not only between turns. Both are additive changes to the
   contracts and to the edge, the same kind ADR 0013 already described, and do not change this
-  decision's placement of the wake word or of speech-to-text and text-to-speech.
+  decision's placement of the wake word or of speech-to-text and text-to-speech. (The stream in,
+  and speaking over an answer as it begins, are decided in [ADR
+  0022](0022-audio-in-is-streamed-to-the-edge-and-the-device-ends-the-utterance.md).)

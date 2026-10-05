@@ -27,4 +27,4 @@ the old one instead of rewriting history.
 | [0019](0019-model-bindings-in-the-hub-still-only-a-reference-to-a-key.md) | Model bindings in the hub: still only a reference to a key |
 | [0020](0020-skill-secrets-in-the-hub-plaintext-not-encrypted.md) | Skill secrets in the hub: plaintext, not encrypted |
 | [0021](0021-voice-wake-word-on-the-device-speech-through-the-gateway.md) | Voice: the wake word stays on the device, speech goes through the gateway |
-| [0022](0022-audio-in-is-streamed-to-the-edge-and-the-device-ends-the-utterance.md) | Audio in: a stream of chunks to the edge, and the device ends the utterance (proposed) |
+| [0022](0022-audio-in-is-streamed-to-the-edge-and-the-device-ends-the-utterance.md) | Audio in: a stream of chunks to the edge, and the device ends the utterance |

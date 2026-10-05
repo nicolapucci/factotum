@@ -83,8 +83,8 @@ What is made up is what a unit test cannot have:
 
 - **The hardware of the device.** A recording is a WAV file that carries the words that were said in
   it, the speaker remembers what it was asked to play, and the wake word is a `FakeVoiceInput` that
-  hands the terminal one recording after another. That is the mock of the client: a client that
-  streams audio and can be interrupted (ADR 0021) will need a stand-in of its own.
+  hands the terminal one recording (or one stream) after another. The recording gets to the edge
+  whole, or in the chunks a microphone sends as a person talks (ADR 0022): see below.
 - **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines
   (the first reads the words out of a recording, the second writes a clip that carries the words it
   was asked to say, so a test reads what a speaker was made to say). The chat model answers from the
@@ -100,11 +100,28 @@ uv run pytest e2e                         # in memory, and in Postgres where the
 uv run pytest e2e -m "not integration"    # in memory only
 ```
 
+Every test runs three ways: with the services keeping what they keep in memory and a recording sent
+to the edge whole (`memory-clip`), the same with the recording streamed as a microphone sends it
+(`memory-stream`), and in the Postgres of `docker compose up` with it streamed (`postgres-stream`,
+an integration test). What a store does and how a recording gets to the edge have nothing to do with
+each other, so they are not run in every combination (the fixture is in `e2e/tests/conftest.py`, and
+a module that is about one way overrides it). A device says what the edge understood of what it was
+told (`Device.understood()`: the `heard` frames it was sent), so a test can look at what the
+assistant made of a recording and not only at what it did.
+
 They cover a question answered aloud from the documents (asked by voice, or typed, on a speaker and
 on a screen with a speaker), what was heard being what the conversation keeps, the wake-word loop of
 the terminal, who may hear which document read out (a person's own phone against the shared speaker),
 the longest recording a microphone makes, Italian with its accents, and each thing that may be
 missing (no speech-to-text model, no text-to-speech model, a silence, a model that falls over).
+
+A person speaking over the answer is in `test_e2e_speaking_over.py`: the stand-in model goes quiet
+in the middle of an answer, a stream begins, and the answer is stopped at once, all the way back to
+the model that was writing it, before the person has finished; what they say is heard and answered;
+and one who begins and goes quiet is told (`stream_stalled`) and may begin again. What the rig shows
+of an answer that is held is nothing, whatever was written: the services are put together with
+in-process transports, which hand a response over when it is whole (the sentence by sentence arrival
+of an answer is shown on the real sockets of the edge's own tests).
 
 They cover what is asked to be done too, in the example home: a lamp switched through Home Assistant
 with the token of the home and a script that was given only what it declared, the volume of the
@@ -147,7 +164,9 @@ device the way a microphone hands it over (16 kHz). What writes the answers and 
 still made up, and so is what the skills reach: the right thing having been attempted is what is
 tried, not that it could be done.
 
-They are `live` tests, run by a person and never in CI, and nothing is ever downloaded:
+They are `live` tests, run by a person and never in CI, and nothing is ever downloaded. They run
+with the recording streamed, the way that will be the real one: a real model hears the same samples
+whichever way they came, since they are put together before it listens.
 
 ```bash
 FACTOTUM_LIVE_TESTS=1 uv run pytest e2e/tests/test_e2e_speech.py -m live -s
@@ -214,6 +233,13 @@ cp config/devices.example.yaml config/devices.dev.yaml
 FACTOTUM_POSTGRES_PASSWORD=dev FACTOTUM_ENVIRONMENT=development \
     docker compose --profile services up -d --build --wait
 uv run factotum-terminal --profile smart-display      # or speaker, screen, player, phone
+```
+
+With no hardware and no key, a recording in a file can be said to it and what the assistant says
+kept (the client that tests the whole stack; see [`edge.md`](edge.md#the-terminal-client)):
+
+```bash
+uv run factotum-terminal --profile speaker --wav-in question.wav --wav-out answer.wav
 ```
 
 The tests of the terminal run against a real edge served by uvicorn on a loopback port, so they need
