@@ -103,7 +103,7 @@ no address, no key, so a binding needs neither `base_url` nor `secret_ref`. `mod
 model size (`whisper_local`: `tiny`, `base`, `small`...) or a Piper voice name (`piper_local`:
 `it_IT-paola-medium`...), or a path to one already on disk. Chat, streaming and embeddings are not
 what either is for: asking one for them is `role_not_supported`, the same as Anthropic and
-embeddings.
+embeddings. What a voice says may be asked for whole or as a stream (below).
 
 ```yaml
 bindings:
@@ -125,6 +125,29 @@ commands and answers came out in Spanish, Arabic, Polish or Persian ("apri il ga
 them, at the cost of one more pass of the model over the recording to see which of them it hears
 best; `languages: null`, written out, leaves the guess to the model. A household that speaks
 English too binds `[it, en]`.
+
+### A voice as a stream
+
+`POST /v1/synthesize` with `stream: true` answers in server-sent events, as `/v1/chat` does, while
+the voice is making its sound ([ADR
+0023](decisions/0023-audio-out-the-voice-of-an-answer-is-streamed-from-the-gateway-to-the-device.md)):
+
+| Event | Says |
+| --- | --- |
+| `format` | `sample_rate` (and `pcm_s16le`: 16-bit little-endian samples, one channel): first, and only when the voice has sound to give |
+| `samples` | `data`: whole samples, base64, at most 64 KiB; about a tenth of a second at a time |
+| `done` | the voice has said it all |
+| `error` | `code`, `message`: it failed after it had begun |
+
+Only `done` says a voice is whole: a stream that ends without it, or with an `error`, was cut off
+(`GatewaySpeech.synthesize_stream` raises it, typed, and never ends as if it had finished). A voice
+that cannot begin (no `tts` binding, a provider that is down after its retries) is an HTTP error with
+its own status, as for a chat, and a voice with nothing to say is `done` alone. Piper makes one
+piece of audio for each sentence, each on a thread of its own and only when the next is asked for;
+the gateway puts the pieces together (a provider may end one in the middle of a sample) and cuts
+them into chunks, so whatever a provider hands over, a client sees the same stream. Closing the
+connection stops the voice: the sentence that was being made is finished and thrown away, and no
+other is made. The profile of the `tts` role says `streaming: true`.
 
 The engine for a binding's model is built the first time it is actually asked to transcribe or to
 synthesize, not at startup: a deployment that never binds either role never loads one. Building it
@@ -238,7 +261,7 @@ authenticator (`x-factotum-dev-subject: user|tenant`), so **the gateway refuses 
 | `POST /v1/chat` | `ChatRequest` → `ChatResult`, or server-sent events with `stream: true` |
 | `POST /v1/embeddings` | `EmbeddingRequest` → `EmbeddingResult` (`vectors`, `dimensions`, `space_id`, `usage`) |
 | `POST /v1/transcribe` | `TranscribeRequest` (`audio`) → `TranscribeResult` (`text`, blank if nothing was understood) |
-| `POST /v1/synthesize` | `SynthesizeRequest` (`text`) → `SynthesizeResult` (`audio`) |
+| `POST /v1/synthesize` | `SynthesizeRequest` (`text`) → `SynthesizeResult` (`audio`), or server-sent events with `stream: true` |
 | `GET /v1/profiles/{role}` | → `Profile` |
 | `GET /healthz`, `GET /readyz` | → `{"status": "ok"}` |
 
@@ -306,7 +329,8 @@ FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/model_gateway/tests/live -k
 ## Adding a provider
 
 1. A module in `providers/` with a class that satisfies `ProviderAdapter`: `kind`,
-   `native_structured_output`, `chat`, `chat_stream`, `embed`, `transcribe` and `synthesize`. A
+   `native_structured_output`, `chat`, `chat_stream`, `embed`, `transcribe`, `synthesize` and
+   `synthesize_stream` (a provider that makes the clip whole yields it as one `SpeechPiece`). A
    provider that does not offer one of these raises `role_not_supported` (`base.role_not_supported`)
    rather than pretending; `whisper_local` and `piper_local` do this for everything but speech. Use
    the plumbing of `providers/base.py` (typed errors from statuses, redaction, the two stream

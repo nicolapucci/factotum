@@ -2,6 +2,7 @@
 which order, what is made while the text goes on, and what stops it."""
 
 import asyncio
+import gc
 import json
 import logging
 from collections.abc import Callable
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 
 from factotum.contracts.capabilities import Capability
+from factotum.contracts.conversation import Delta
 from factotum.contracts.edge import (
     AudioStart,
     Cancel,
@@ -538,6 +540,28 @@ class TestInterruptingTheSound:
             assert rig.conversation.open == 0
             assert len(rig.sessions) == 0
 
+    async def test_a_device_that_is_gone_while_the_voice_is_stuck_does_not_leave_it_making_sound(
+        self,
+    ) -> None:
+        speech = FakeSpeech().will_stream(SynthesisFormat(sample_rate=22050), HANG)
+        async with Rig(speech=speech) as rig:
+            connected = await rig.connect(features=STREAMING)
+            # The first sentence is whole as soon as the word after it is written; the rest of the
+            # answer takes its time.
+            sentences = answer(FIRST + " Then")
+            sentences[-1:-1] = [Wait(0.3), Delta(text=" let it go and wait two minutes.")]
+            rig.conversation.scripts.append(sentences)
+            connected.wire.say(Utterance(id="u1", text="how do I reset the router?"))
+            await connected.wire.wait_for("voice_start")
+
+            connected.wire.send_fails = True  # the second sentence cannot be sent to it
+            await eventually(lambda: speech.open_voices == 0)
+
+            assert speech.endings == ["cancelled"]  # the voice was stopped, not left to stall
+            assert rig.conversation.open == 0
+            connected.wire.hang_up()
+            await connected.task
+
     async def test_a_device_that_cannot_be_written_to_in_the_middle_of_the_sound_is_gone(
         self,
     ) -> None:
@@ -644,3 +668,47 @@ class TestTheVoiceOfAnAnswerOnItsOwn:
 
         assert [f.type for f in send.frames] == ["voice_start"]
         assert [text for _, text in speech.voices] == ["one"]  # the second was never asked for
+        # The voice that was being listened to is let go of at once, not whenever it is collected.
+        assert (speech.open_voices, speech.endings) == (0, ["closed"])
+
+    async def test_it_ends_quietly_and_leaves_no_error_for_the_loop_to_report(self) -> None:
+        reported: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(
+            lambda loop, context: reported.append(context)
+        )
+        speech = FakeSpeech()
+        voice = voice_with(speech, RecordedSend(fails_after=1))
+        voice.say(0, "one")
+
+        await voice.finish()
+        del voice
+        gc.collect()  # a task that raised and was never asked is reported when it is collected
+        await asyncio.sleep(0)
+
+        assert reported == []
+
+    async def test_what_is_said_to_a_voice_that_was_finished_with_nothing_said_is_not_made(
+        self,
+    ) -> None:
+        speech = FakeSpeech()
+        send = RecordedSend()
+        voice = voice_with(speech, send)
+
+        await voice.finish()
+        voice.say(0, "too late")
+        await asyncio.sleep(0.05)
+
+        assert speech.voices == []
+        assert send.frames == []
+
+    async def test_what_is_said_to_a_voice_that_was_aborted_is_not_made_either(self) -> None:
+        speech = FakeSpeech()
+        send = RecordedSend()
+        voice = voice_with(speech, send)
+
+        await voice.abort()
+        voice.say(0, "too late")
+        await asyncio.sleep(0.05)
+
+        assert speech.voices == []
+        assert send.frames == []

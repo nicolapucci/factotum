@@ -123,6 +123,18 @@ of an answer that is held is nothing, whatever was written: the services are put
 in-process transports, which hand a response over when it is whole (the sentence by sentence arrival
 of an answer is shown on the real sockets of the edge's own tests).
 
+The voice of an answer that is streamed out (ADR 0023) is in `test_e2e_voice_out.py`, which reads
+what the edge sent through a **probe** (`factotum.e2e.probe`): a device seen from the wire, with no
+client library between the test and the edge, that says hello with `voice_stream` (or without), says
+a question the way the carrier of the test does and keeps every frame it is sent. It shows the words
+and their sound in the order the protocol promises (a track of chunks of a tenth of a second, whole
+samples, each labelled with its part, ended before the turn), a device that did not ask for a voice
+being sent clips, a house with no voice bound, a voice that is made slowly (the stand-in of Piper can
+be held: the words do not wait for it) and a person who speaks over it (the sound stops where it
+is). `test_e2e_voice_wire.py` serves the gateway on a real socket, which the services of the house
+are not, and shows what they cannot: a sentence arrives before the next is made, and a listener that
+goes away leaves the voice where it was.
+
 They cover what is asked to be done too, in the example home: a lamp switched through Home Assistant
 with the token of the home and a script that was given only what it declared, the volume of the
 device that was spoken to, a garage door that the kitchen speaker is refused (in English and in

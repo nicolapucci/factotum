@@ -73,7 +73,9 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   sent of an answer is the edge's choice, by what the device declared it can render, and a part it
   cannot render is never sent to it (ADR 0013). A connection answers one utterance at a time and a
   new one interrupts the answer to the last; the last connection of a device wins. What a device is
-  and whom it acts for come from the registry, never from what it says.
+  and whom it acts for come from the registry, never from what it says. The sound of an answer is
+  sent only to a device that said it takes it (`features`), is made on a task of its own so that the
+  words never wait for it, and never follows the `turn_ended` of its turn (ADR 0023).
 - The development file of devices, the development file of secrets, the development authentication,
   the development delegation of one service to another (`DevDelegation`, `DevPrincipalDelegation`),
   the enabling of a folder of skills by reading it and the runner itself refuse to be built outside
@@ -197,8 +199,15 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   heartbeat sleeps with it.
 - The services of `e2e` are joined by `httpx.ASGITransport`, which hands a response over when it is
   whole: nothing there shows an answer arriving a sentence at a time (the real sockets of the edge's
-  own tests do). What can be shown there is that an answer that is being written is cut, and its
-  model let go of (`HouseholdModel.hold_after`, `abandoned`).
+  own tests do, and so does `e2e/tests/test_e2e_voice_wire.py`, which serves the gateway on one).
+  What can be shown there is that an answer that is being written is cut, and its model let go of
+  (`HouseholdModel.hold_after`, `abandoned`), and that a voice that is made slowly neither holds
+  back the words nor survives a person speaking over it (`StandInPiper.hold_after`: the thread that
+  waits is waited for when the test ends, so a test that holds it lets it go in a `finally`).
+- Piper loads its voice when it is first asked to say something, 4.9 s on a processor: whatever
+  waits for the gateway waits more than httpx's default of five seconds for every call. The edge's
+  client did, and the first answer after a start would have been words with no sound
+  (`FACTOTUM_EDGE_GATEWAY_TIMEOUT_S`, default 60).
 - The keys of `extra=` in a log call must not be attributes of a `LogRecord` (`name`, `message`,
   `args`...): the standard library raises `KeyError`, and only when the level is enabled, which is
   how a session died the first time the log was at INFO.

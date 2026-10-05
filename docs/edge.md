@@ -8,18 +8,20 @@ what became of it. It **knows no document and no key**: what an answer says is t
 service's business; what a device is sent of it, and whether it is heard or spoken aloud, is the
 edge's.
 
-*Implemented*: the protocol (text; since slice 8 a recording in and a spoken answer out; and since
+*Implemented*: the protocol (text; since slice 8 a recording in and a spoken answer out; since
 [ADR 0022](decisions/0022-audio-in-is-streamed-to-the-edge-and-the-device-ends-the-utterance.md)
 what a person says streamed in as they say it, which stops the answer that is going on the moment
-they begin), sessions, answers adapted to what a device can do, interruption, commands with an
+they begin; and since
+[ADR 0023](decisions/0023-audio-out-the-voice-of-an-answer-is-streamed-from-the-gateway-to-the-device.md)
+the sound of the answer streamed out, to a device that says it takes it), sessions, answers adapted to what a device can do, interruption, commands with an
 acknowledgement, a registry of devices read from a file (development) or from the hub, which
 registers and pairs them (slice 7b, [`hub.md`](hub.md)), an HTTP API, a container image, a terminal
 client that is a device (`factotum-terminal`, with `--voice` for a real microphone and speaker, and
 `--wav-in` and `--wav-out` for none), and (slice 5b) the `actions` service giving a device the
 commands a skill answers with, through the endpoint below, once it has decided that the device may
-have something done ([`actions.md`](actions.md)). *Not yet*: the answer streamed out in chunks (a
-spoken answer is a clip for each sentence), partial transcripts, the edge deciding where speech
-ends, and a device hearing its wake word over its own voice (see the limits, below).
+have something done ([`actions.md`](actions.md)). *Not yet*: partial transcripts, the edge
+deciding where speech ends, pacing the sound it sends, and a device hearing its wake word over its
+own voice (see the limits, below).
 
 The reasons behind the design are in
 [ADR 0013](decisions/0013-the-edge-typed-parts-filtered-by-what-a-device-can-render.md).
@@ -53,7 +55,7 @@ it.
 
 | Frame | Says |
 | --- | --- |
-| `hello` | `protocol_version`, `hardware_id`, `token` (the credential of the device), `capabilities`, optional `display` (`width`, `height`, `touch`) and `client` (software and version, for the logs). It is the first frame, and the only time the credential is sent |
+| `hello` | `protocol_version`, `hardware_id`, `token` (the credential of the device), `capabilities`, optional `display` (`width`, `height`, `touch`), `client` (software and version, for the logs) and `features` (what it takes beyond version 1: `voice_stream`, which needs `audio_out`; left out when there is none). It is the first frame, and the only time the credential is sent |
 | `utterance` | `id`, `text`: what a person said, as text. Only a device with `audio_in` can start a conversation |
 | `audio_utterance` | `id`, `audio` (format, sample rate, the recording as bytes): what a person said, recorded after the device's own wake word. The edge transcribes it through the model gateway and runs the result through the same turn an `utterance` would; blank or untranscribable ends the turn, `failed` (`nothing_heard`), instead of asking the conversation service to answer silence. Needs `audio_in`, the same as `utterance` |
 | `audio_start` | `id`, `format` (`pcm_s16le`: 16-bit little-endian samples, one channel, no container), `sample_rate` (8000 to 48000; 16000 is what the models read): a person has begun to talk to the device. It stops the answer to the last utterance at once and opens a stream (below). Needs `audio_in`, and an edge that has speech |
@@ -68,9 +70,12 @@ it.
 
 | Frame | Says |
 | --- | --- |
-| `ready` | The device is known: `session_id`, `device_id`, `name`, `capabilities` (what it declared, of what it is registered for), `unregistered` (what it declared without being registered for: ignored, and said, so that whoever installs a device finds out), `heartbeat_s` |
+| `ready` | The device is known: `session_id`, `device_id`, `name`, `capabilities` (what it declared, of what it is registered for), `unregistered` (what it declared without being registered for: ignored, and said, so that whoever installs a device finds out), `heartbeat_s`, and `features` (what the edge will do for it of what it declared: left out when there is none) |
 | `heard` | `utterance_id`, `text`: what a recording (a clip or a stream) was taken for, said before the answer to it begins. Only a device that sent a recording is told, and what a device can render does not filter it: it is not a part of the answer. A recording that was taken for nothing is not heard; its turn ends `failed` (`nothing_heard`) |
 | `part` | `utterance_id`, `seq` (0, 1, 2... with no gap), `part`: one piece of the answer, of a kind the device can render (below) |
+| `voice_start` | `utterance_id`, `format` (`pcm_s16le`), `sample_rate`: the sound of the answer begins. Only a device that declared `voice_stream` is sent any of the three (below) |
+| `voice_chunk` | `utterance_id`, `seq` (0, 1, 2... with no gap, in a track), `part_seq` (the `seq` of the `speech` part whose sound this is), `data` (whole samples, base64, at most 64 KiB; about a tenth of a second is what is sent) |
+| `voice_end` | `utterance_id`: the sound is all sent |
 | `turn_ended` | `utterance_id`, `status` (`finished`, `failed`, `cancelled`) and, for a failure, a stable `code` and a `message` |
 | `command` | `id`, `command`: something to do (the command vocabulary of the design: `speak`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `show_card`, `clear_display`, `set_led`). The device answers with an `ack` |
 | `pong` | Me too |
@@ -100,7 +105,8 @@ a sentence; and a citation marker is kept with the sentence it follows.
 Since slice 8, a `speech` part sent to a device that declared `audio_out` also carries `audio` (the
 sentence, synthesized through the model gateway's `tts` role): the device plays it, or speaks the
 text itself, or both. Without a `tts` binding, `audio` is left out and only the text travels, exactly
-as before slice 8.
+as before slice 8. A device that says it takes `voice_stream` is sent the same part with no `audio`,
+and the sound as chunks, apart (next section).
 
 When the answer cannot be given the device is told in words it can render, chosen by why: *I have no
 model to answer with yet* (`chat_not_configured`), *That is too long for me to answer*
@@ -180,6 +186,55 @@ sequenceDiagram
   stalled stream alive. The edge keeps the samples of a stream in memory only, at most what a clip
   may hold, until it ends or is dropped: nothing is written to disk, and no audio is logged (a
   dropped stream is logged with its code).
+
+### Audio out: a stream
+
+A device with a speaker that says in its `hello` that it takes `voice_stream` is not sent a clip in
+each `speech` part: it is sent the words of each sentence at once, and the sound of them as the voice
+makes it ([ADR
+0023](decisions/0023-audio-out-the-voice-of-an-answer-is-streamed-from-the-gateway-to-the-device.md)).
+
+```mermaid
+sequenceDiagram
+    participant D as Device
+    participant E as Edge
+    participant G as Model gateway
+    D->>E: hello (features: voice_stream)
+    E-->>D: ready (features: voice_stream)
+    D->>E: audio_start... audio_end (a question)
+    E-->>D: heard, part (searching)
+    E-->>D: part: speech 1 (the words, no audio)
+    E->>G: POST /v1/synthesize {text, stream: true}
+    G-->>E: format, samples, samples... (as the voice makes them)
+    E-->>D: voice_start, voice_chunk 0, 1, 2...
+    E-->>D: part: speech 2 (the words go on while the sound of 1 is made)
+    G-->>E: ... done
+    E-->>D: voice_chunk... (part_seq 2) , voice_end
+    E-->>D: turn_ended (finished)
+```
+
+- **Negotiated, and nothing is taken away.** The edge answers with the `features` it will do (what
+  the device declared, of what it has and of what the device is registered for: a device that is not
+  registered for `audio_out` is not sent a voice whatever it said). A device that declared none is
+  sent a clip in each `speech` part, as before; an empty set of features is not put in a frame, so
+  that a device or an edge from before them still reads every frame. A `hello` with `features` is a
+  frame an edge from before them does not know: upgrade the edge first.
+- **The words do not wait for the sound.** A sentence is sent as soon as it is whole, as it always
+  was, and its sound is made on a task of its own while the text of the answer goes on; the sound of
+  a sentence is made when the one before has been said. `part_seq` on a chunk says which `speech`
+  part it is the sound of, so that a screen can show each sentence as it is spoken.
+- **A track, from `voice_start` to `voice_end`.** The sound of an answer is one track: play the
+  chunks one after the other with no gap. A voice that changes its rate in the middle of an answer
+  (another was bound) ends the track and begins another, counted from 0 again.
+- **Everything of a voice comes before the end of its turn**, and nothing after it: a turn that ends
+  cut short (`cancelled`, `failed`) has no `voice_end`, and its `turn_ended` ends the track. A device
+  that is speaking over the answer stops its own playback and sends `audio_start` (or a `cancel`);
+  what is still in flight for the turn it left is ignored by its `utterance_id`.
+- **A sentence that cannot be said has no sound**, and its words were sent: the next is tried. With
+  no `tts` bound there is no voice and no warning; any other failure is logged with its code.
+- **The edge does not pace.** It sends a frame as the voice makes it, faster than it plays, and
+  the socket holds it back; the device buffers what it has not played yet (a minute of speech at
+  22 kHz is 2.6 MB).
 
 ### Sessions
 
@@ -295,6 +350,8 @@ Read from the environment (`FACTOTUM_*`) and, in development, from `.env`; every
 | `FACTOTUM_EDGE_TURN_TIMEOUT_S` | `130` | how long the conversation service may be silent while it answers: a little more than its own limit on its model, so that the reason is its |
 | `FACTOTUM_EDGE_SEND_TIMEOUT_S` | `10` | how long sending one frame to a device may take |
 | `FACTOTUM_EDGE_STREAM_STALL_S` | `5` | how long a stream of audio may wait for its next chunk before it is dropped (a device sends one every 100 to 200 ms) |
+| `FACTOTUM_EDGE_GATEWAY_URL` | none | where the model gateway is, for a recording to be heard and an answer to be said. Without it a recording is refused and a spoken answer is words alone |
+| `FACTOTUM_EDGE_GATEWAY_TIMEOUT_S` | `60` | how long the gateway may be silent while it hears a recording or says a sentence: Piper takes 4.9 s to say its first sentence after a start (it loads its voice then), and a bigger Whisper longer than that to read a recording on a processor. Connecting gives up after three seconds |
 
 The edge has no database, no model and no key. It runs uvicorn with the WebSocket implementation
 that is not deprecated (`websockets-sansio`) and a limit of one frame of the protocol, whatever a
@@ -423,10 +480,15 @@ way plus as a property (however the samples are cut into chunks, what is listene
 and with the clock: a stall is a few hundredths of a second. The terminal client is tested against
 an edge served the same way, so that the two halves of the protocol are shown to fit, including a
 person who speaks over an answer on a real socket, and where speech ends is a function that is given
-frames as a microphone hands them over. What needs everything behind the edge as well (a question
-by voice answered aloud from a document, a person speaking over an answer, all the way back to the
-model that was writing it) is in `e2e`, with the real conversation, knowledge and model-gateway
-services ([`development.md`](development.md#end-to-end-tests)).
+frames as a microphone hands them over. A voice is tested the same way on the other side: the
+session over an in-memory wire with a voice that is told what to do (frames, an error, a wait, a
+gate that the test opens), and on a real socket with a gate in the voice, which shows the first of
+the sound on the device while the voice has not made the rest. What needs everything behind the edge
+as well (a question by voice answered aloud from a document, a person speaking over an answer, all
+the way back to the model that was writing it) is in `e2e`, with the real conversation, knowledge
+and model-gateway services ([`development.md`](development.md#end-to-end-tests)), where a probe that
+is no client reads the frames the edge sent and a voice is served from the gateway on a real
+socket.
 
 ## Measured
 
@@ -472,15 +534,19 @@ the conversation service drops from the citations but a screen shows as written 
   on without something (the documents, the past, the actions service); the edge drops them, so a
   device answers as if nothing had been missing. What a device should say about it is a decision
   about the voice, not about the protocol.
-- **What a person says streams in; what the assistant says does not stream out.** The first sound
-  of an answer is still heard after its first sentence has been written and synthesized: a `speech`
-  part carries one clip for a sentence. Not yet, and each additive to the protocol ([ADR
-  0022](decisions/0022-audio-in-is-streamed-to-the-edge-and-the-device-ends-the-utterance.md)):
-  chunks of audio out, partial transcripts while a person is still talking (the model of the
-  gateway takes a clip, and a window of 30 s whatever its length, so a stream does not make its
-  transcription shorter; what it gives is the moment the edge learns that somebody is speaking),
-  and the edge deciding where speech ends (a model for it is the gateway's to name; a stream is
-  what it would be decided on).
+- **What a person says and what the assistant says both stream.** The first sound of an answer
+  is heard when its first sentence has been written and the voice has made the first piece of it
+  (Piper makes one for each sentence: the time to the first sound is a sentence's, as it was; what
+  changed is that nothing after it waits and a stop is immediate). Not yet, and each additive to the
+  protocol: pacing what is sent (a device that cannot hold a minute of speech has no way to say so),
+  making the sentence after the one being sent while it is sent, partial transcripts while a person
+  is still talking (the model of the gateway takes a clip, and a window of 30 s whatever its length,
+  so a stream does not make its transcription shorter; what it gives is the moment the edge learns
+  that somebody is speaking), and the edge deciding where speech ends (a model for it is the
+  gateway's to name; a stream is what it would be decided on).
+- **The first answer after a start is slow to be heard.** Piper loads its voice when it is first asked
+  to say something, and that took 4.9 s; the sound of the first sentence begins then. Warming the voice
+  up when the gateway starts is not done.
 - **The echo of a speaker in its own microphone is the device's.** A device that listens while an
   answer plays and stops it to send the stream of whoever speaks over it has to cancel what it is
   playing out of what it hears before it can hear a wake word; it is the first thing a real device
@@ -489,7 +555,8 @@ the conversation service drops from the citations but a screen shows as written 
   to the edge, shown on a real socket and end to end.
 - **Where a stream and a whole recording differ.** Only the stream interrupts before it is over; the
   clip is the simpler way in, and the one a device that does not stream, and every test that does
-  not care, use.
+  not care, use. The same goes for the voice out: a clip in each `speech` part is what a device that
+  did not say `voice_stream` is sent.
 - **No TLS.** The edge speaks `ws://`. The compose port is on loopback; what puts it on a network
   (a reverse proxy with certificates) is a deployment matter (slice 10).
 - **One process holds the connections.** A command reaches a device only through the edge process
