@@ -9,6 +9,9 @@ dependencies = [
   "factotum-web",
   "fastapi>=0.115",
   "faster-whisper>=1.0",
+  # faster-whisper 1.2.1, the newest, calls av.open(metadata_errors=...), which PyAV 19 removed: with
+  # it no recording can be read at all. Lift the bound when faster-whisper stops passing it.
+  "av>=11,<19",
   "httpx>=0.28",
   "jsonschema>=4.23",
   "piper-tts>=1.8",

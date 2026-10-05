@@ -1,6 +1,10 @@
 """Helpers for testing adapters and the gateway without a network."""
 
+import io
 import json
+import math
+import struct
+import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, Self
 
@@ -93,6 +97,20 @@ class FakeServer:
         """The JSON body of the last request."""
         body: dict[str, Any] = json.loads(self.request.content)
         return body
+
+
+def a_tone_wav(rate: int, *, seconds: float = 0.5, channels: int = 1) -> bytes:
+    """A tone, as a WAV file at the sample rate of a microphone or of a voice: what matters to a
+    test of what reads a recording is that the file is a real one."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(rate)
+        for n in range(int(rate * seconds)):
+            sample = struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * n / rate)))
+            wav_file.writeframes(sample * channels)
+    return buffer.getvalue()
 
 
 def ask(text: str = "hello", **fields: Any) -> ChatRequest:
@@ -251,6 +269,7 @@ __all__ = [
     "ScriptedAdapter",
     "Sleeps",
     "TrackedClients",
+    "a_tone_wav",
     "ask",
     "collect_events",
     "events",
