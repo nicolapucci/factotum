@@ -10,6 +10,7 @@ how a text sounds, which is theirs to test.
 
 import io
 import struct
+import threading
 import wave
 from collections.abc import Iterator
 from typing import Protocol
@@ -108,6 +109,17 @@ class StandInPiper:
     def __init__(self) -> None:
         self.voices: list[str] = []
         self.spoken: list[str] = []
+        self.hold_after: int | None = None
+        """When set, a voice that makes its sound in pieces goes quiet once it has been asked for
+        this many sentences, and does not go on until ``release``: a voice that is slow, which is
+        when a person speaks over it."""
+
+        self.held = threading.Event()
+        """Set when a sentence is being held: the thread that makes it waits."""
+
+        self.release = threading.Event()
+        """What lets a held sentence go on. A test that holds one lets it go before it ends, or the
+        thread that waits is waited for."""
 
     def build(self, voice: str) -> "StandInPiper":
         self.voices.append(voice)
@@ -119,7 +131,11 @@ class StandInPiper:
 
     def synthesize_pieces(self, text: str) -> Iterator[SpeechPiece]:
         """The same words as a voice that makes them in pieces: one piece that lasts a quarter of a
-        second, so that the gateway cuts it into more than one chunk of a tenth of a second."""
+        second, so that the gateway cuts it into more than one chunk of a tenth of a second. It is
+        made when it is asked for, on the thread that asks."""
         self.spoken.append(text)
+        if self.hold_after is not None and len(self.spoken) > self.hold_after:
+            self.held.set()
+            self.release.wait(timeout=30)  # a test that forgot to let it go does not wait for ever
         pcm, rate = pcm_of(wav_saying(text, 22_050, seconds=0.25))
-        return iter([SpeechPiece(sample_rate=rate, pcm=pcm)])
+        yield SpeechPiece(sample_rate=rate, pcm=pcm)

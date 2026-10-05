@@ -11,6 +11,7 @@ FACTOTUM_LIVE_WHISPER_MODEL, FACTOTUM_LIVE_PIPER_VOICE and FACTOTUM_LIVE_SPEECH_
 
 import io
 import os
+import time
 import wave
 from collections.abc import AsyncIterator
 
@@ -18,8 +19,9 @@ import pytest
 
 from factotum.common.devauth import DEV_TENANT_ID
 from factotum.common.urlguard import UrlPolicy
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import AudioPayload, wav_of
 from factotum.contracts.models import ModelRole, ProviderKind
+from factotum.contracts.speech import SynthesisDone, SynthesisFormat, SynthesisSamples
 from factotum.contracts.testing import make_model_binding, make_tenant_principal
 from factotum.model_gateway.bindings import InMemoryBindingRepository
 from factotum.model_gateway.core import ModelGateway, default_adapters, guarded_clients
@@ -88,6 +90,36 @@ async def test_text_becomes_a_wav_that_becomes_recognizable_text_again() -> None
     assert audio.format.value == "wav"
     assert len(audio.data) > 1000
     assert "ciao" in heard.lower() or "stai" in heard.lower()
+
+
+async def test_a_text_is_made_into_sound_a_sentence_at_a_time_and_says_the_same_words() -> None:
+    said = "Ciao, come stai oggi? Io sto molto bene, grazie. Tu cosa hai fatto ieri sera?"
+    made = gateway()
+
+    started = time.monotonic()
+    events = []
+    first_sound_at = None
+    async for event in made.synthesize_stream(PRINCIPAL, said):
+        events.append(event)
+        if isinstance(event, SynthesisSamples) and first_sound_at is None:
+            first_sound_at = time.monotonic() - started
+    finished_at = time.monotonic() - started
+
+    assert isinstance(events[0], SynthesisFormat)
+    assert isinstance(events[-1], SynthesisDone)
+    rate = events[0].sample_rate
+    pcm = b"".join(e.data for e in events if isinstance(e, SynthesisSamples))
+    chunks = [e for e in events if isinstance(e, SynthesisSamples)]
+    print(
+        f"\n{len(chunks)} chunks, {len(pcm) / 2 / rate:.1f} s of sound at {rate} Hz; the first "
+        f"chunk after {first_sound_at:.2f} s, the last after {finished_at:.2f} s"
+    )
+    heard = await made.transcribe(PRINCIPAL, wav_of(pcm, rate))
+    print(f"heard: {heard!r}")
+
+    assert first_sound_at is not None and first_sound_at < finished_at  # not all at the end
+    assert len(chunks) > 3  # three sentences, each more than a tenth of a second
+    assert "ciao" in heard.lower() or "bene" in heard.lower()
 
 
 def silent_wav(seconds: float = 1.0, sample_rate: int = 16000) -> AudioPayload:
