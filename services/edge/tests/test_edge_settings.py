@@ -47,6 +47,12 @@ class TestDefaults:
         assert settings.edge_stream_stall_s == 5
         assert settings.edge_stream_stall_s < settings.edge_idle_timeout_s / 2
 
+    def test_the_gateway_is_given_longer_than_a_voice_takes_to_load_for_the_first_time(
+        self,
+    ) -> None:
+        # Piper takes about five seconds to load, and a bigger Whisper longer to read a recording.
+        assert load().edge_gateway_timeout_s >= 30
+
 
 class TestReadingTheEnvironment:
     def test_the_variables_are_the_field_names_with_the_prefix(
@@ -105,6 +111,8 @@ class TestWhatIsRefused:
             {"edge_command_timeout_s": -1},
             {"edge_turn_timeout_s": 0},
             {"edge_send_timeout_s": 0},
+            {"edge_gateway_timeout_s": 0},
+            {"edge_gateway_timeout_s": 601},
             {"edge_stream_stall_s": 0},
             {"edge_stream_stall_s": 61},
         ],

@@ -43,6 +43,20 @@ def _file_registry(settings: EdgeSettings) -> DeviceRegistry:
     )
 
 
+def gateway_client_for(settings: EdgeSettings) -> httpx.AsyncClient | None:
+    """The client that asks the model gateway to hear and to say, or None where the edge has no
+    gateway to ask. It is patient: the first sentence of a voice that is not loaded yet takes
+    seconds before its first sound."""
+    if settings.edge_gateway_url is None:
+        return None
+    return httpx.AsyncClient(
+        base_url=str(settings.edge_gateway_url),
+        timeout=httpx.Timeout(
+            connect=3.0, read=settings.edge_gateway_timeout_s, write=10.0, pool=5.0
+        ),
+    )
+
+
 def build_app(settings: EdgeSettings) -> FastAPI:
     authenticator = authenticator_for(settings, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
     delegation = principal_delegation_for(settings)
@@ -61,10 +75,9 @@ def build_app(settings: EdgeSettings) -> FastAPI:
     else:
         registry = _file_registry(settings)
 
-    gateway_client: httpx.AsyncClient | None = None
+    gateway_client = gateway_client_for(settings)
     speech: GatewaySpeech | None = None
-    if settings.edge_gateway_url is not None:
-        gateway_client = httpx.AsyncClient(base_url=str(settings.edge_gateway_url))
+    if gateway_client is not None:
         speech = GatewaySpeech(gateway_client, delegation_for(settings, SINGLE_TENANT_ID))
 
     @asynccontextmanager

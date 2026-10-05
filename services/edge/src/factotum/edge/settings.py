@@ -35,6 +35,13 @@ class EdgeSettings(ServiceSettings):
     device that sends an audio_utterance or declares audio_out. Without one, a recording is
     refused and a Speech part always goes out as text alone."""
 
+    edge_gateway_timeout_s: float = Field(default=60.0, gt=0, le=600)
+    """How long the model gateway may be silent while it hears a recording or says a sentence. The
+    voice that says one has to be loaded the first time it is asked (Piper takes about five seconds
+    on a processor), and a recording is read by a Whisper of which the bigger models take longer
+    than that: a wait that is too short turns the first answer after a start into words with no
+    sound."""
+
     edge_hello_timeout_s: float = Field(default=10.0, gt=0, le=120)
     """How long a connection may take to say who it is before it is closed."""
 

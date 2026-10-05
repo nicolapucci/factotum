@@ -15,7 +15,7 @@ from factotum.common.tokens import MIN_SECRET_BYTES
 from factotum.contracts.edge import MAX_FRAME_BYTES
 from factotum.contracts.errors import AuthError
 from factotum.edge import __main__ as entry
-from factotum.edge.app import build_app
+from factotum.edge.app import build_app, gateway_client_for
 from factotum.edge.settings import EdgeSettings
 
 DEVICES = """
@@ -40,6 +40,30 @@ def devices_file(tmp_path: Path) -> Path:
     path = tmp_path / "devices.dev.yaml"
     path.write_text(DEVICES, encoding="utf-8")
     return path
+
+
+class TestTheClientOfTheGateway:
+    def test_without_a_gateway_there_is_no_client_to_ask_it_with(self) -> None:
+        assert gateway_client_for(settings_for()) is None
+
+    def test_it_asks_the_gateway_where_it_is_and_is_patient_with_it(self) -> None:
+        settings = settings_for(
+            edge_gateway_url="http://gateway.test:8081", edge_gateway_timeout_s=45
+        )
+
+        client = gateway_client_for(settings)
+
+        assert client is not None
+        assert str(client.base_url) == "http://gateway.test:8081/"
+        assert client.timeout.read == 45
+        assert client.timeout.connect == 3  # a gateway that is not there is found out soon
+
+    def test_the_default_is_longer_than_httpxs_own_five_seconds(self) -> None:
+        client = gateway_client_for(settings_for(edge_gateway_url="http://gateway.test:8081"))
+
+        assert client is not None
+        assert client.timeout.read is not None
+        assert client.timeout.read > 5
 
 
 class TestStartingUp:
