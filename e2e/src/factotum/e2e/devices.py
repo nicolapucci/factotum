@@ -1,10 +1,14 @@
-"""The devices of the example home, as a person would meet them: the terminal client, on the far
-side of a real connection to the edge, with a profile for each (a speaker, a display, a phone).
+"""The devices of the example home, as a person would meet them: the client of the core
+(``factotum.client_core``) with the hardware of the terminal, on the far side of a real connection
+to the edge, with a profile for each (a speaker, a display, a phone).
 
 What a person says to one is a recording (``factotum.e2e.voice``) or typed words; what it says back
 is what its speaker was asked to play and what its screen was asked to show; and what a command does
-to it is in ``hardware``. A recording gets to the edge the way the device carries it: whole in one
-frame, or as the chunks a microphone sends as a person talks (ADR 0022), and a test is run each way.
+to it is in ``hardware``. The way a device carries sound is how a test is run, each way: a recording
+gets to the edge whole in one frame and the voice of the answer comes back as a clip in each
+sentence, or what a person says is sent as the chunks a microphone sends as they say it (ADR 0022)
+and the voice of the answer is taken as a stream (ADR 0023), which a speaker is given as it
+arrives.
 """
 
 import asyncio
@@ -13,32 +17,37 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 
+from factotum.client_core import AudioStream, DeviceClient, WebSocketConnection
+from factotum.client_core.testing import (
+    FakeSpeaker,
+    FakeVoiceInput,
+    FakeVoiceOutput,
+    RecordingRenderer,
+)
 from factotum.contracts.audio import AudioPayload, pcm_of
 from factotum.contracts.conversation import ConversationDetail, ConversationList, Exchange
 from factotum.contracts.edge import TurnEnded
 from factotum.e2e.house import TIMEOUT_S, House
 from factotum.e2e.voice import recording_of, said_in
-from factotum.terminal.audio import AudioStream
-from factotum.terminal.client import DeviceClient
-from factotum.terminal.connection import WebSocketConnection
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import get_profile
-from factotum.terminal.testing import FakeVoiceInput, FakeVoiceOutput, RecordingRenderer
 
 
 class Carrier(StrEnum):
-    """How a recording gets to the edge."""
+    """How sound gets to the edge and back from it."""
 
     CLIP = "clip"
-    """Whole, in one frame, after the person has stopped."""
+    """A recording is sent whole, in one frame, after the person has stopped; the voice of the
+    answer is a clip in each sentence, which a speaker plays whole."""
 
     STREAM = "stream"
-    """In chunks, from when the person begins to when they stop."""
+    """What a person says is sent in chunks, from when they begin to when they stop; the voice of
+    the answer is taken as a stream, which a speaker is given as it arrives."""
 
 
 DEFAULT_CARRIER = Carrier.CLIP
-"""How a device hands a recording over unless a test says: the tests of ``e2e/tests`` run each way
-(see its ``conftest.py``), which is what changes this."""
+"""How a device carries sound unless a test says: the tests of ``e2e/tests`` run each way (see its
+``conftest.py``), which is what changes this."""
 
 
 @dataclass
@@ -47,7 +56,10 @@ class Device:
 
     client: DeviceClient
     shown: RecordingRenderer
-    speaker: FakeVoiceOutput
+    speaker: FakeVoiceOutput | FakeSpeaker
+    """What plays: clips whole, or (when the carrier is the stream) what it is given as it
+    arrives."""
+
     hardware: TerminalDevice
     """What the commands it was given did to it: its volume, its light, its screen."""
 
@@ -57,15 +69,22 @@ class Device:
     carrier: Carrier = Carrier.CLIP
     """How it hands a recording over."""
 
+    def sentences(self) -> list[AudioPayload]:
+        """What the speaker was made to say, a clip for each sentence: the clips that it was asked
+        to play, or the sound that it was given, sentence by sentence."""
+        if isinstance(self.speaker, FakeSpeaker):
+            return self.speaker.sentences()
+        return list(self.speaker.played)
+
     def spoken(self) -> list[str]:
-        """What the speaker was made to say, read back out of the clips it was asked to play (the
-        clips of the stand-in of Piper: the words are in them)."""
-        return [said_in(clip) for clip in self.speaker.played]
+        """What the speaker was made to say, read back out of its sentences (the clips of the
+        stand-in of Piper: the words are in them)."""
+        return [said_in(clip) for clip in self.sentences()]
 
     def heard_aloud(self, listener: Callable[[AudioPayload], str]) -> list[str]:
         """What the speaker was made to say, as somebody who listens to it hears it: a real voice
         carries its words in sound, and the listener (a Whisper) is who reads them back."""
-        return [listener(clip) for clip in self.speaker.played]
+        return [listener(clip) for clip in self.sentences()]
 
     def understood(self) -> list[str]:
         """What the edge said it took each recording for, before it answered: what the assistant
@@ -103,9 +122,11 @@ class Device:
         return await self.answered(await self.client.say(words))
 
     async def answered(self, identity: str) -> TurnEnded:
-        """Waits for the answer to what was said to end, and says how it did."""
+        """Waits for the answer to what was said to end, and for what was received of its sound to
+        be played, and says how the answer ended."""
         ended = await asyncio.wait_for(self.client.wait_for_turn(identity), self.timeout_s)
         assert ended is not None, "the connection ended before the answer did"
+        await asyncio.wait_for(self.client.wait_until_played(), self.timeout_s)
         return ended
 
 
@@ -118,7 +139,10 @@ async def joined(
     (``client.run()``). It presents the credential it was given when it was paired (the hub's) or
     the one of its profile, unless ``credential`` says another."""
     profile = get_profile(name)
-    shown, speaker = RecordingRenderer(), FakeVoiceOutput()
+    carrier = DEFAULT_CARRIER
+    shown = RecordingRenderer()
+    speaker: FakeVoiceOutput | FakeSpeaker
+    speaker = FakeSpeaker() if carrier is Carrier.STREAM else FakeVoiceOutput()
     hardware = TerminalDevice(profile.capabilities, shown)
     client = DeviceClient(
         await WebSocketConnection.open(house.edge_url),
@@ -126,11 +150,12 @@ async def joined(
         shown,
         hardware,
         token=credential or house.tokens.get(profile.hardware_id),
-        voice_output=speaker,
+        voice_output=None if carrier is Carrier.STREAM else speaker,
+        voice_sink=speaker if isinstance(speaker, FakeSpeaker) else None,
     )
     try:
         await client.connect()
-        yield Device(client, shown, speaker, hardware, house.timeout_s, DEFAULT_CARRIER)
+        yield Device(client, shown, speaker, hardware, house.timeout_s, carrier)
     finally:
         await client.close()
 

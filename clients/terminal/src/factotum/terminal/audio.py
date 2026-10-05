@@ -1,26 +1,24 @@
-"""Audio for the terminal client: what a person says as a stream of chunks, and what is played.
+"""The hardware of the terminal that listens and speaks: a real microphone watched by a wake word,
+and a real speaker (``--voice``).
 
-A device sends the edge what a person says as it hears it (``audio_start``, a chunk for each piece,
-``audio_end``: ADR 0022), so what supplies it is an ``AudioStream``: the rate of the samples and the
-samples as they come, until the person has stopped. Where they come from is all that tells a real
-microphone from a file (``factotum.terminal.wavfiles``): the client that will be on a Raspberry Pi
-and the one that tests the whole stack send the same frames.
-
-Everything below the protocols that needs real hardware is exercised by hand, never by the unit
-tests: a test gives a session a fake instead (``factotum.terminal.testing``), and the logic of
-where speech ends is a function that a test gives frames to (``capture_speech``). ``sounddevice``
-and ``pvporcupine`` are imported only once a ``MicrophoneInput`` or ``SpeakerOutput`` is actually
-built, so running the terminal client without ``--voice`` never needs them installed.
+What a client does with them is the core's (``factotum.client_core``): the shapes of a microphone
+and of a speaker (``VoiceInput``, ``VoiceOutput``, ``VoiceSink``), what a person says as a stream
+(``AudioStream``) and the loop that sends it. Everything here that needs real hardware is exercised
+by hand, never by the unit tests: a test gives a session a fake instead
+(``factotum.client_core.testing``), and the logic of where speech ends is a function that a test
+gives frames to (``capture_speech``). ``sounddevice`` and ``pvporcupine`` are imported only once a
+``MicrophoneInput`` or ``SpeakerOutput`` is actually built, so running the terminal client without
+``--voice`` never needs them installed.
 """
 
 import asyncio
 import io
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
-from factotum.contracts.audio import MAX_CHUNK_BYTES, AudioPayload
+from factotum.client_core.audio import DEFAULT_CHUNK_MS, AudioStream
+from factotum.contracts.audio import AudioPayload
 
 DEFAULT_WAKE_WORD = "jarvis"
 """One of Porcupine's built-in keywords (``pvporcupine.KEYWORDS``); there is no "factotum" one."""
@@ -28,55 +26,6 @@ DEFAULT_WAKE_WORD = "jarvis"
 ACCESS_KEY_VARIABLE = "PICOVOICE_ACCESS_KEY"
 """A free key from https://console.picovoice.ai/: Porcupine needs one even for a built-in
 keyword."""
-
-DEFAULT_CHUNK_MS = 100
-"""How much of what a person says is in each chunk: a device sends 100 to 200 ms at a time."""
-
-
-@dataclass(frozen=True, slots=True)
-class AudioStream:
-    """What a person is saying, as a microphone hands it over: the rate of the samples (16-bit
-    little-endian, one channel) and the samples as they come, a chunk at a time, until the person
-    has stopped talking. Whoever takes it reads ``chunks`` to the end, or closes it."""
-
-    sample_rate: int
-    chunks: AsyncGenerator[bytes]
-
-    @classmethod
-    def of(
-        cls,
-        pcm: bytes,
-        sample_rate: int,
-        *,
-        chunk_ms: int = DEFAULT_CHUNK_MS,
-        realtime: bool = False,
-    ) -> "AudioStream":
-        """Samples that were recorded, handed over a chunk at a time: as fast as they are taken, or
-        at the pace of a microphone (each chunk after the time it takes to say it)."""
-        return cls(sample_rate, _cut(pcm, sample_rate, chunk_ms, realtime))
-
-
-async def _cut(
-    pcm: bytes, sample_rate: int, chunk_ms: int, realtime: bool
-) -> AsyncGenerator[bytes]:
-    # Whole samples (two bytes), and never more than a chunk may carry.
-    size = min(max(2, sample_rate * 2 * chunk_ms // 1000 // 2 * 2), MAX_CHUNK_BYTES)
-    for start in range(0, len(pcm), size):
-        chunk = pcm[start : start + size]
-        if realtime:
-            await asyncio.sleep(len(chunk) / 2 / sample_rate)
-        yield chunk
-
-
-class VoiceInput(Protocol):
-    def listen(self) -> AsyncIterator[AudioPayload | AudioStream]:
-        """What a person says, each time they say it: a whole recording once they have stopped, or
-        a stream that is begun as soon as they start (ADR 0022: the way the real device does it)."""
-        ...
-
-
-class VoiceOutput(Protocol):
-    async def play(self, audio: AudioPayload) -> None: ...
 
 
 async def capture_speech(

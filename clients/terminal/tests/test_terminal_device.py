@@ -1,6 +1,7 @@
 import pytest
 from pydantic import AnyHttpUrl
 
+from factotum.client_core.testing import RecordingRenderer
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
@@ -18,7 +19,6 @@ from factotum.contracts.commands import (
     Stop,
 )
 from factotum.terminal.device import TerminalDevice
-from factotum.terminal.testing import RecordingRenderer
 
 EVERYTHING = frozenset(Capability)
 RADIO = AnyHttpUrl("https://radio.example.org/stream")

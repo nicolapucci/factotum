@@ -4,12 +4,12 @@ version = "0.0.0"
 description = "A Factotum device in a terminal: it connects to the edge as a system device with a profile (a speaker, a screen...) and shows what that device could render."
 requires-python = ">=3.13"
 dependencies = [
+  "factotum-client-core",
   "factotum-contracts",
   "numpy>=1.26",
   "pvporcupine>=3.0",
   "pydantic>=2.11",
   "sounddevice>=0.5",
-  "websockets>=15",
 ]
 
 [project.scripts]
@@ -23,4 +23,5 @@ build-backend = "hatchling.build"
 packages = ["src/factotum"]
 
 [tool.uv.sources]
+factotum-client-core = { workspace = true }
 factotum-contracts = { workspace = true }

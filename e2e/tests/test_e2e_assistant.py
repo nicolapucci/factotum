@@ -8,8 +8,10 @@ cannot have: the hardware of the device and the models.
 * **The hardware of the device.** A recording is a WAV file that carries the words that were said in
   it (``recording_of``), and a speaker only remembers what it was asked to play. The wake word is a
   ``FakeVoiceInput`` that hands the terminal one recording after another. The recording gets to the
-  edge whole, or in the chunks a microphone sends while a person talks (ADR 0022): each test is run
-  both ways (``conftest.py``). Speaking over an answer is in ``test_e2e_speaking_over.py``.
+  edge whole, or in the chunks a microphone sends while a person talks (ADR 0022), and the voice of
+  the answer comes back as a clip in each sentence or as a stream that the speaker is given as it
+  arrives (ADR 0023): each test is run both ways (``conftest.py``). Speaking over an answer is in
+  ``test_e2e_speaking_over.py``.
 * **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines:
   the first reads the words out of a recording, the second writes a clip that carries the words it
   was asked to say, so that a test can tell what a speaker was made to say. The chat model writes
@@ -20,11 +22,12 @@ These are the questions answered from documents. What is asked to be done is in
 """
 
 import asyncio
-import io
 
+from factotum.client_core import VoiceLoop
+from factotum.client_core.testing import FakeSpeaker
 from factotum.contracts.edge import CloseCode, TurnStatus
 from factotum.contracts.knowledge import CollectionOwner
-from factotum.e2e.devices import connected, joined, remembered, until
+from factotum.e2e.devices import Carrier, connected, joined, remembered, until
 from factotum.e2e.house import TIMEOUT_S, running
 from factotum.e2e.models import (
     CLOSING,
@@ -40,7 +43,6 @@ from factotum.e2e.models import (
     VOICE,
 )
 from factotum.e2e.voice import recording_of
-from factotum.terminal.cli import converse_by_voice
 
 ROUTER_IN_ITALIAN = "Il router è nello studio, accanto alla libreria, perché lì arriva il cavo."
 SAFE = "The code of the safe is 4711."
@@ -76,6 +78,25 @@ class TestAskingByVoice:
                 assert speaker.shown.of("text") == []
                 assert speaker.shown.of("card") == []
                 assert speaker.shown.of("violation") == []
+
+    async def test_the_voice_comes_back_the_way_the_device_carries_it(self) -> None:
+        async with running() as house:
+            await house.library.add("Home", "Router manual", ROUTER, owner=CollectionOwner.TENANT)
+            async with connected(house, "speaker") as speaker:
+                ended = await speaker.says_aloud(QUESTION)
+
+                assert ended.status is TurnStatus.FINISHED, ended
+                assert speaker.spoken() == SPOKEN_ANSWER  # whichever way it came
+                if speaker.carrier is Carrier.STREAM:
+                    # One track, given to the speaker as the voice made it, and ended.
+                    assert isinstance(speaker.speaker, FakeSpeaker)
+                    [track] = speaker.speaker.tracks
+                    assert (track.sample_rate, track.finished) == (22_050, True)
+                    assert speaker.speaker.played == []  # no clip was sent, so none was played
+                    assert speaker.client.features
+                else:
+                    assert len(speaker.speaker.played) == len(SPOKEN_ANSWER)  # a clip each
+                    assert not speaker.client.features
 
     async def test_a_screen_with_a_speaker_shows_the_answer_and_where_it_comes_from_and_says_it(
         self,
@@ -168,9 +189,7 @@ class TestAskingByVoice:
             async with joined(house, "speaker") as speaker:
                 # What the microphone hands over is the recordings or the streams, as it is run.
                 heard = speaker.microphone(QUESTION, "Where is it kept?")
-                conversing = asyncio.create_task(
-                    converse_by_voice(speaker.client, heard, io.StringIO())
-                )
+                conversing = asyncio.create_task(VoiceLoop(heard).serve(speaker.client))
                 await until(lambda: len(speaker.shown.of("turn_ended")) == 2)
                 await house.sessions.close_all()
                 lost = await asyncio.wait_for(conversing, TIMEOUT_S)
@@ -225,7 +244,7 @@ class TestWhenSomethingIsMissing:
 
             assert (ended.status, ended.code) == (TurnStatus.FAILED, "stt_not_configured")
             assert house.model.prompts == []
-            assert speaker.speaker.played == []
+            assert speaker.sentences() == []
 
     async def test_without_a_text_to_speech_model_the_answer_comes_without_a_voice(self) -> None:
         async with running(text_to_speech=False) as house:
@@ -235,7 +254,7 @@ class TestWhenSomethingIsMissing:
 
                 assert ended.status is TurnStatus.FINISHED, ended
                 assert speaker.shown.of("speech") == SPOKEN_ANSWER
-                assert speaker.speaker.played == []
+                assert speaker.sentences() == []
 
     async def test_a_recording_of_silence_is_not_a_question(self) -> None:
         async with running() as house, connected(house, "speaker") as speaker:

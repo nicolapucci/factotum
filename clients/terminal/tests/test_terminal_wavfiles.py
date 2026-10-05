@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from factotum.client_core import AudioStream
 from factotum.contracts.audio import AudioPayload, wav_of
-from factotum.terminal.audio import AudioStream
 from factotum.terminal.wavfiles import WavFileInput, WavFileOutput
 
 

@@ -5,6 +5,7 @@ description = "The end-to-end tests of Factotum: every service put together in o
 requires-python = ">=3.13"
 dependencies = [
   "factotum-actions",
+  "factotum-client-core",
   "factotum-common",
   "factotum-contracts",
   "factotum-conversation",
@@ -23,6 +24,7 @@ dependencies = [
   "python-docx>=1.1",
   "reportlab>=5.0.1",
   "uvicorn>=0.32",
+  "websockets>=15",
 ]
 
 [build-system]
@@ -34,6 +36,7 @@ packages = ["src/factotum"]
 
 [tool.uv.sources]
 factotum-actions = { workspace = true }
+factotum-client-core = { workspace = true }
 factotum-common = { workspace = true }
 factotum-contracts = { workspace = true }
 factotum-conversation = { workspace = true }

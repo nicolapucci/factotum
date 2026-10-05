@@ -147,7 +147,7 @@ class TestAQuestionByVoice:
                 # ...and what was written was said, in the voice that was bound, and is understood
                 # by somebody who listens: the sentence of the document, in Italian.
                 assert len(house.piper.spoken) == 2, house.piper.spoken
-                assert all(seconds(clip) > 0.5 for clip in speaker.speaker.played)
+                assert all(seconds(clip) > 0.5 for clip in speaker.sentences())
                 assert_understood(listens(speech, speaker), house.piper.spoken)
 
     async def test_a_question_that_is_typed_is_answered_aloud_in_the_same_voice(
@@ -192,7 +192,7 @@ class TestAnActionByVoice:
             # The lamp of the living room was asked for, through the skill that is bound to it (that
             # Home Assistant is made up does not matter: the right thing was attempted).
             assert reached(house) == ["/api/services/light/turn_on light.living_room"]
-            assert speaker.speaker.played, "nothing was said about it"
+            assert speaker.sentences(), "nothing was said about it"
 
     async def test_a_number_that_was_said_is_the_number_that_is_set(
         self, speech: RealSpeech, person: Person
@@ -224,7 +224,7 @@ class TestAnActionByVoice:
             # What was asked first is what the planner proposes for a door that needs a yes, said
             # in Italian (how a small model hears the loanword in it is not what is tried here).
             assert house.piper.spoken[0] == "Vuoi davvero che apra il garage?"
-            assert seconds(display.speaker.played[0]) > 0.8
+            assert seconds(display.sentences()[0]) > 0.8
             assert plain(house.whisper.heard[-1]).split()[:1] == ["si"], house.whisper.heard
             assert reached(house) == ["/api/services/cover/open_cover cover.garage"]
 
@@ -265,7 +265,7 @@ class TestAnActionByVoice:
 
             assert ended.status is TurnStatus.FINISHED, ended
             assert reached(house) == []
-            assert speaker.speaker.played, "the refusal was not said"
+            assert speaker.sentences(), "the refusal was not said"
 
 
 class TestSomethingThatIsNotASentence:

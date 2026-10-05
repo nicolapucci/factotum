@@ -3,14 +3,13 @@ chunks a microphone sends, and say what the edge took it for."""
 
 import pytest
 
+from factotum.client_core import AudioStream, DeviceClient
+from factotum.client_core.testing import FakeVoiceOutput, MemoryConnection, RecordingRenderer
 from factotum.contracts.audio import AudioPayload, pcm_of
 from factotum.e2e.devices import Carrier, Device
 from factotum.e2e.voice import recording_of
-from factotum.terminal.audio import AudioStream
-from factotum.terminal.client import DeviceClient
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import get_profile
-from factotum.terminal.testing import FakeVoiceOutput, MemoryConnection, RecordingRenderer
 
 QUESTION = "How do I reset the router?"
 

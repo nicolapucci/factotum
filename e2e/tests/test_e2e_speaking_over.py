@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from factotum.client_core import AudioStream
 from factotum.contracts.audio import pcm_of
 from factotum.contracts.edge import TurnStatus
 from factotum.contracts.knowledge import CollectionOwner
@@ -20,7 +21,6 @@ from factotum.e2e.house import running
 from factotum.e2e.models import ROUTER, SPOKEN_ANSWER
 from factotum.e2e.stores import Store
 from factotum.e2e.voice import recording_of
-from factotum.terminal.audio import AudioStream
 
 QUESTION = "How do I reset the router?"
 FOLLOW_UP = "What is the reset button for?"

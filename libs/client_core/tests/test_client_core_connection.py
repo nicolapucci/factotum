@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import pytest
 from websockets.asyncio.server import ServerConnection, serve
 
-from factotum.terminal.connection import (
+from factotum.client_core.connection import (
     CLOSED_ABNORMALLY,
     ConnectionLost,
     CouldNotConnect,

@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "factotum",
     "factotum-actions",
+    "factotum-client-core",
     "factotum-common",
     "factotum-contracts",
     "factotum-conversation",
@@ -635,6 +636,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "factotum-client-core"
+version = "0.0.0"
+source = { editable = "libs/client_core" }
+dependencies = [
+    { name = "factotum-contracts" },
+    { name = "pydantic" },
+    { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "websockets", specifier = ">=15" },
+]
+
+[[package]]
 name = "factotum-common"
 version = "0.0.0"
 source = { editable = "libs/common" }
@@ -736,6 +754,7 @@ source = { editable = "e2e" }
 dependencies = [
     { name = "asyncpg" },
     { name = "factotum-actions" },
+    { name = "factotum-client-core" },
     { name = "factotum-common" },
     { name = "factotum-contracts" },
     { name = "factotum-conversation" },
@@ -753,12 +772,14 @@ dependencies = [
     { name = "python-docx" },
     { name = "reportlab" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "factotum-actions", editable = "services/actions" },
+    { name = "factotum-client-core", editable = "libs/client_core" },
     { name = "factotum-common", editable = "libs/common" },
     { name = "factotum-contracts", editable = "libs/contracts" },
     { name = "factotum-conversation", editable = "services/conversation" },
@@ -776,6 +797,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.1" },
     { name = "reportlab", specifier = ">=5.0.1" },
     { name = "uvicorn", specifier = ">=0.32" },
+    { name = "websockets", specifier = ">=15" },
 ]
 
 [[package]]
@@ -976,22 +998,22 @@ name = "factotum-terminal"
 version = "0.0.0"
 source = { editable = "clients/terminal" }
 dependencies = [
+    { name = "factotum-client-core" },
     { name = "factotum-contracts" },
     { name = "numpy" },
     { name = "pvporcupine" },
     { name = "pydantic" },
     { name = "sounddevice" },
-    { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "factotum-client-core", editable = "libs/client_core" },
     { name = "factotum-contracts", editable = "libs/contracts" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pvporcupine", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "sounddevice", specifier = ">=0.5" },
-    { name = "websockets", specifier = ">=15" },
 ]
 
 [[package]]

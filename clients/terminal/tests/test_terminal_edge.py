@@ -15,6 +15,14 @@ from pathlib import Path
 import httpx
 import pytest
 
+from factotum.client_core import (
+    AudioStream,
+    ConnectionLost,
+    DeviceClient,
+    Refused,
+    WebSocketConnection,
+)
+from factotum.client_core.testing import RecordingRenderer, never
 from factotum.common.devauth import DEVICE_HEADER
 from factotum.contracts.audio import pcm_of, wav_of
 from factotum.contracts.capabilities import Capability
@@ -22,6 +30,7 @@ from factotum.contracts.cards import Card
 from factotum.contracts.commands import CommandStatus, ShowCard
 from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.edge import CloseCode, CommandRequest, TurnStatus
+from factotum.contracts.speech import SynthesisFormat, SynthesisSamples
 from factotum.edge.testing import (
     HANG,
     FakeSpeech,
@@ -33,13 +42,10 @@ from factotum.edge.testing import (
     make_device,
     serving,
 )
-from factotum.terminal.audio import AudioStream
 from factotum.terminal.cli import Options, run
-from factotum.terminal.client import DeviceClient, Refused
-from factotum.terminal.connection import ConnectionLost, WebSocketConnection
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import PROFILES, get_profile
-from factotum.terminal.testing import RecordingRenderer, Typed, never
+from factotum.terminal.testing import Typed
 
 ANSWER = "Hold the button for ten seconds [1]. Then let go."
 
@@ -267,9 +273,12 @@ class TestTheCommandLineWithFiles:
         question = tmp_path / "question.wav"
         question.write_bytes(wav_of(PERSON * 5, 16000).data)
         answer_file = tmp_path / "answer.wav"
-        voice = wav_of(b"\x05\x00" * 100, 22050)
+        sound = (SynthesisFormat(sample_rate=22050), SynthesisSamples(data=b"\x05\x00" * 100))
         speech = (
-            FakeSpeech().will_transcribe("how do I reset the router?").will_synthesize(voice, voice)
+            FakeSpeech()
+            .will_transcribe("how do I reset the router?")
+            .will_stream(*sound)
+            .will_stream(*sound)
         )
         async with Rig(*registered("speaker"), speech=speech) as rig, serving(rig) as edge:
             rig.conversation.scripts.append(answer(ANSWER, sources=[citation()]))

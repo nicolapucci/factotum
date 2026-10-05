@@ -1,34 +1,44 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from pydantic import AnyHttpUrl
 
+from factotum.client_core import (
+    AudioStream,
+    CannotConverse,
+    CommandRouter,
+    ConnectionLost,
+    DeviceClient,
+    Refused,
+)
+from factotum.client_core.testing import SCREEN, FakeVoiceOutput, RecordingCommands
+from factotum.client_core.testing import ClientRig as Rig
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
+    CommandResult,
     CommandStatus,
     LedPattern,
     Pause,
+    PlayUrl,
     SetLed,
     SetVolume,
     ShowCard,
 )
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
+    ClientInfo,
     CommandFrame,
     ErrorFrame,
     Heard,
     PartFrame,
     Pong,
-    Ready,
     TurnEnded,
     TurnStatus,
 )
-from factotum.contracts.ids import DeviceId
 from factotum.contracts.response import (
     CardPart,
     CommandPart,
@@ -38,46 +48,8 @@ from factotum.contracts.response import (
     StatusState,
     Text,
 )
-from factotum.terminal.audio import AudioStream
-from factotum.terminal.client import CannotConverse, DeviceClient, Refused
-from factotum.terminal.connection import ConnectionLost
-from factotum.terminal.device import TerminalDevice
-from factotum.terminal.profiles import Profile, get_profile
-from factotum.terminal.testing import FakeVoiceOutput, MemoryConnection, RecordingRenderer
 
 RECORDING = AudioPayload(sample_rate=16000, data=b"raw-microphone-bytes")
-
-
-class Rig:
-    def __init__(
-        self, profile: str = "speaker", *, voice_output: FakeVoiceOutput | None = None
-    ) -> None:
-        self.profile = get_profile(profile)
-        self.connection = MemoryConnection()
-        self.shown = RecordingRenderer()
-        self.hardware = TerminalDevice(self.profile.capabilities, self.shown)
-        self.client = DeviceClient(
-            self.connection, self.profile, self.shown, self.hardware, voice_output=voice_output
-        )
-
-    def ready(self, **changes: Any) -> Ready:
-        fields: dict[str, Any] = {
-            "protocol_version": PROTOCOL_VERSION,
-            "session_id": "s1",
-            "device_id": DeviceId(uuid4()),
-            "name": "Kitchen speaker",
-            "capabilities": self.profile.capabilities,
-        }
-        return Ready(**{**fields, **changes})
-
-    async def connected(self, **changes: Any) -> "Rig":
-        self.connection.say(self.ready(**changes))
-        await self.client.connect()
-        return self
-
-    async def running(self) -> "asyncio.Task[Any]":
-        await self.connected()
-        return asyncio.create_task(self.client.run())
 
 
 def part(seq: int, what: Any, utterance: str = "u1") -> PartFrame:
@@ -99,22 +71,51 @@ class TestSayingHello:
 
         [hello] = rig.connection.frames("hello")
         assert (hello.hardware_id, hello.token, hello.protocol_version) == (
-            "living-room-01",
-            "living-room-dev-token",
+            "smart-display-01",
+            "smart-display-credential",
             PROTOCOL_VERSION,
         )
-        assert hello.capabilities == rig.profile.capabilities
-        assert hello.display == rig.profile.display
-        assert (hello.client.name if hello.client else None) == "factotum-terminal"
+        assert hello.capabilities == rig.identity.capabilities
+        assert hello.display == SCREEN
+        assert (hello.client.name if hello.client else None) == "factotum-client-core"
+        await rig.client.close()
+
+    async def test_the_software_that_it_is_can_be_said(self) -> None:
+        rig = Rig()
+        client = DeviceClient(
+            rig.connection,
+            rig.identity,
+            rig.shown,
+            CommandRouter(rig.hands),
+            client=ClientInfo(name="factotum-terminal", version="1.2.3"),
+        )
+        rig.connection.say(rig.ready())
+
+        await client.connect()
+
+        [hello] = rig.connection.frames("hello")
+        assert hello.client is not None
+        assert (hello.client.name, hello.client.version) == ("factotum-terminal", "1.2.3")
+        await client.close()
+
+    async def test_a_device_with_no_voice_sink_asks_for_no_feature(self) -> None:
+        rig = Rig()
+        rig.connection.say(rig.ready())
+
+        await rig.client.connect()
+
+        [hello] = rig.connection.frames("hello")
+        assert hello.features == frozenset()
+        assert "features" not in rig.connection.sent[0]  # nothing is said, as before there were any
         await rig.client.close()
 
     async def test_another_identity_can_be_presented(self) -> None:
         rig = Rig()
         client = DeviceClient(
             rig.connection,
-            rig.profile,
+            rig.identity,
             rig.shown,
-            rig.hardware,
+            CommandRouter(rig.hands),
             hardware_id="lab-9",
             token="lab-credential",
         )
@@ -245,6 +246,20 @@ class TestWhatAnAnswerIsMadeOf:
         assert any("media_player" in v for v in rig.shown.of("violation"))
         running.cancel()
 
+    async def test_media_in_an_answer_is_played_by_a_device_that_plays_media(self) -> None:
+        rig = Rig("player")  # a media player, with no microphone to speak into
+        running = await rig.running()
+        identity = await rig.client.say("hello", force=True)
+        url = AnyHttpUrl("https://radio.example.org/s")
+
+        rig.connection.say(part(0, MediaPart(url=url, title="Radio")))
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        await rig.client.wait_for_turn(identity)
+
+        assert rig.hands.commands == [PlayUrl(url=url, title="Radio")]
+        assert rig.shown.of("violation") == []
+        running.cancel()
+
     async def test_a_command_in_an_answer_is_run_and_a_failing_one_is_said(self) -> None:
         rig = Rig("speaker")
         running = await rig.running()
@@ -255,9 +270,23 @@ class TestWhatAnAnswerIsMadeOf:
         rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
         await rig.client.wait_for_turn(identity)
 
-        assert rig.hardware.state.volume == 30
-        assert rig.hardware.state.led_pattern is LedPattern.BLINK
+        assert rig.hands.commands == [SetVolume(level=30), SetLed(pattern=LedPattern.BLINK)]
         assert rig.shown.of("violation") == []
+        running.cancel()
+
+    async def test_a_command_in_an_answer_that_fails_is_said_as_the_edges_bug(self) -> None:
+        hands = RecordingCommands(
+            CommandResult(status=CommandStatus.FAILED, detail="the light is broken")
+        )
+        rig = Rig("speaker", hands=hands)
+        running = await rig.running()
+        identity = await rig.client.say("hello")
+
+        rig.connection.say(part(0, CommandPart(command=SetLed(pattern=LedPattern.BLINK))))
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        await rig.client.wait_for_turn(identity)
+
+        assert rig.shown.of("violation") == ["a command in the answer failed: the light is broken"]
         running.cancel()
 
     async def test_an_answer_that_failed_or_was_stopped_is_shown_as_it_ended(self) -> None:
@@ -383,7 +412,7 @@ class TestCommandsFromTheEdge:
         [ack] = await rig.connection.wait_for("ack")
 
         assert (ack.id, ack.result.status) == ("c1", CommandStatus.OK)
-        assert rig.hardware.state.volume == 70
+        assert rig.hands.commands == [SetVolume(level=70)]
         running.cancel()
 
     async def test_what_the_hardware_cannot_do_is_answered_as_unsupported(self) -> None:
@@ -394,13 +423,18 @@ class TestCommandsFromTheEdge:
         [ack] = await rig.connection.wait_for("ack")
 
         assert ack.result.status is CommandStatus.UNSUPPORTED
+        assert rig.hands.commands == []  # none of its hands has a speaker to turn up
         running.cancel()
 
     async def test_what_goes_wrong_is_answered_as_failed(self) -> None:
-        rig = Rig("player")
+        hands = RecordingCommands(
+            CommandResult(status=CommandStatus.FAILED, detail="nothing is playing"),
+            capabilities=frozenset({Capability.AUDIO_OUT, Capability.MEDIA_PLAYER}),
+        )
+        rig = Rig("player", hands=hands)
         running = await rig.running()
 
-        rig.connection.say(CommandFrame(id="c1", command=Pause()))  # nothing is playing
+        rig.connection.say(CommandFrame(id="c1", command=Pause()))
         [ack] = await rig.connection.wait_for("ack")
 
         assert (ack.result.status, ack.result.detail) == (
@@ -417,7 +451,7 @@ class TestCommandsFromTheEdge:
         [ack] = await rig.connection.wait_for("ack")
 
         assert ack.result.succeeded
-        assert rig.hardware.state.card == Card(title="Recipe")
+        assert rig.hands.commands == [ShowCard(card=Card(title="Recipe"))]
         running.cancel()
 
     async def test_an_answer_that_cannot_be_sent_does_not_end_the_client(self) -> None:
@@ -429,7 +463,7 @@ class TestCommandsFromTheEdge:
         await settle()
 
         assert not running.done()
-        assert rig.hardware.state.volume == 70
+        assert rig.hands.commands == [SetVolume(level=70)]
         running.cancel()
 
 
@@ -903,9 +937,3 @@ class TestSayingGoodbye:
 
         assert len(rig.connection.frames("bye")) == 1
         assert rig.connection.closed is True
-
-
-def test_the_profile_is_the_one_asked_for() -> None:
-    profile: Profile = get_profile("player")
-
-    assert Capability.MEDIA_PLAYER in profile.capabilities

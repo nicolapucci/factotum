@@ -12,6 +12,7 @@ only the hub has to say: a credential it did not issue, and a call that comes wi
 
 import pytest
 
+from factotum.client_core import Refused
 from factotum.common.devauth import SUBJECT_HEADER
 from factotum.common.tokens import encode_token
 from factotum.contracts.edge import TurnStatus
@@ -21,7 +22,6 @@ from factotum.e2e.devices import connected
 from factotum.e2e.house import House, running
 from factotum.e2e.models import LANGUAGES, NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
 from factotum.e2e.wiring import HA_TOKEN, TENANT, Auth
-from factotum.terminal.client import Refused
 
 HOME_ASSISTANT = "http://homeassistant.local:8123"
 QUESTION = "How do I reset the router?"

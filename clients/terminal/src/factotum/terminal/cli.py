@@ -35,23 +35,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from factotum.contracts.audio import AudioPayload
+from factotum.client_core import (
+    CannotConverse,
+    Connection,
+    ConnectionLost,
+    CouldNotConnect,
+    DeviceClient,
+    Refused,
+    VoiceInput,
+    VoiceLoop,
+    VoiceOutput,
+    VoiceSink,
+    WebSocketConnection,
+)
 from factotum.contracts.capabilities import Capability
 from factotum.terminal.audio import (
     ACCESS_KEY_VARIABLE,
     DEFAULT_WAKE_WORD,
-    AudioStream,
     MicrophoneInput,
     SpeakerOutput,
-    VoiceInput,
-    VoiceOutput,
-)
-from factotum.terminal.client import CannotConverse, DeviceClient, Refused
-from factotum.terminal.connection import (
-    Connection,
-    ConnectionLost,
-    CouldNotConnect,
-    WebSocketConnection,
 )
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import DEFAULT_PROFILE, PROFILES, Profile, get_profile
@@ -214,60 +216,6 @@ async def converse(
     return listening.result() if lost else None
 
 
-async def converse_by_voice(
-    client: DeviceClient, voice_input: VoiceInput, out: TextIO
-) -> ConnectionLost | None:
-    """The terminal's side of it, with a voice instead of a keyboard: wait for what a person says,
-    send it (as it is said when it comes as a stream, which is how a real microphone hands it
-    over; whole when it is a recording), and wait for the answer before listening again. A device
-    that listens while an answer plays, and stops it to send the stream of whoever speaks over it,
-    has to cancel the echo of its own speaker first, which is the device's (ADR 0022). Returns how
-    the connection ended, if it was not the person who ended it, and when what is said is over
-    (the files of ``--wav-in`` end) the person has left.
-    """
-    listening = asyncio.create_task(client.run())
-    heard = aiter(voice_input.listen())
-    lost = False
-    try:
-        while True:
-            said = await _heard_or_lost(heard, listening)
-            if said is None:
-                break
-            try:
-                if isinstance(said, AudioStream):
-                    identity = await client.say_audio_stream(said)
-                else:
-                    identity = await client.say_audio(said)
-            except ConnectionLost:
-                lost = True
-                break
-            await client.wait_for_turn(identity)
-    finally:
-        lost = lost or listening.done()
-        await client.close()
-        await asyncio.wait({listening})
-    return listening.result() if lost else None
-
-
-async def _heard_or_lost(
-    heard: AsyncIterator[AudioPayload | AudioStream],
-    listening: "asyncio.Task[ConnectionLost | None]",
-) -> AudioPayload | AudioStream | None:
-    """What a person says next, or None when there is no more of it or the connection is gone
-    (which is not to wait for a wake word in order to be noticed)."""
-    waiting = asyncio.ensure_future(anext(heard, None))
-    await asyncio.wait({waiting, listening}, return_when=asyncio.FIRST_COMPLETED)
-    if not listening.done():
-        return waiting.result()
-    # The connection is gone, and what may have been heard in the same moment has nobody to be
-    # said to: it would be sent to nothing, and its answer waited for.
-    waiting.cancel()
-    await asyncio.wait({waiting})
-    if not waiting.cancelled():
-        waiting.exception()  # of no use now, and not to be left unretrieved
-    return None
-
-
 async def _typed_or_lost(
     typed: AsyncIterator[str | None], listening: asyncio.Task[ConnectionLost | None]
 ) -> str | None:
@@ -338,12 +286,14 @@ async def run(
     open_connection: Callable[[str], Awaitable[Connection]] | None = None,
     voice_input: VoiceInput | None = None,
     voice_output: VoiceOutput | None = None,
+    voice_sink: VoiceSink | None = None,
 ) -> int:
     """Connect as the device of the profile and converse. The exit code says how it went.
 
-    ``voice_input`` and ``voice_output`` stand in for a real microphone and speaker in tests;
-    ``--voice`` without either builds the real ones (``factotum.terminal.audio``), and ``--wav-in``
-    and ``--wav-out`` the ones that are files (``factotum.terminal.wavfiles``).
+    ``voice_input``, ``voice_output`` and ``voice_sink`` stand in for a real microphone and speaker
+    in tests (a speaker that takes a track of sound as it arrives asks the edge for its voice as a
+    stream, ADR 0023); ``--voice`` without them builds the real ones (``factotum.terminal.audio``),
+    and ``--wav-in`` and ``--wav-out`` the ones that are files (``factotum.terminal.wavfiles``).
     """
     out = out or sys.stdout
     renderer = ConsoleRenderer(out)
@@ -373,10 +323,11 @@ async def run(
         sys.stderr.write(f"factotum-terminal: {error}\n")
         return 1
     speaker = voice_output
+    sink = voice_sink
     wav_out: WavFileOutput | None = None
-    if speaker is None:
+    if speaker is None and sink is None:
         if options.wav_out is not None:
-            speaker = wav_out = WavFileOutput(options.wav_out)
+            speaker = sink = wav_out = WavFileOutput(options.wav_out)
         elif options.voice:
             speaker = SpeakerOutput()
     device = TerminalDevice(options.profile.capabilities, renderer)
@@ -388,6 +339,7 @@ async def run(
         hardware_id=options.hardware_id,
         token=options.token,
         voice_output=speaker,
+        voice_sink=sink,
     )
     try:
         await client.connect()
@@ -410,7 +362,7 @@ async def run(
                 "after the wake word"
             )
         assert voice_input is not None  # noqa: S101 - made above, or given
-        lost = await converse_by_voice(client, voice_input, out)
+        lost = await VoiceLoop(voice_input).serve(client)
     else:
         if Capability.AUDIO_IN in options.profile.capabilities:
             renderer.notice("type what you would say (/help)")

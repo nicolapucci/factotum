@@ -9,6 +9,13 @@ from uuid import uuid4
 
 import pytest
 
+from factotum.client_core import Connection, CouldNotConnect
+from factotum.client_core.testing import (
+    FakeVoiceInput,
+    FakeVoiceOutput,
+    MemoryConnection,
+    never,
+)
 from factotum.contracts.audio import AudioPayload, wav_of
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import SetVolume, ShowCard
@@ -35,15 +42,8 @@ from factotum.terminal.cli import (
     run,
     stdin_lines,
 )
-from factotum.terminal.connection import Connection, CouldNotConnect
 from factotum.terminal.profiles import get_profile
-from factotum.terminal.testing import (
-    FakeVoiceInput,
-    FakeVoiceOutput,
-    MemoryConnection,
-    Typed,
-    never,
-)
+from factotum.terminal.testing import Typed
 
 RECORDING = AudioPayload(sample_rate=16000, data=b"raw-microphone-bytes")
 

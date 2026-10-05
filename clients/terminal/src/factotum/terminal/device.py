@@ -8,6 +8,7 @@ with what became of it, which is the point of the acknowledgement.
 
 from dataclasses import dataclass, field
 
+from factotum.client_core.ports import Renderer
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
@@ -25,7 +26,6 @@ from factotum.contracts.commands import (
     Speak,
     Stop,
 )
-from factotum.terminal.render import Renderer
 
 
 @dataclass
@@ -50,10 +50,16 @@ class DeviceState:
 
 
 class TerminalDevice:
+    """The hands of a device in a terminal: a ``factotum.client_core.CommandDriver``."""
+
     def __init__(self, capabilities: frozenset[Capability], renderer: Renderer) -> None:
         self._capabilities = capabilities
         self._renderer = renderer
         self.state = DeviceState()
+
+    @property
+    def capabilities(self) -> frozenset[Capability]:
+        return self._capabilities
 
     async def execute(self, command: DeviceCommand) -> CommandResult:
         """Run a command, and say what became of it."""

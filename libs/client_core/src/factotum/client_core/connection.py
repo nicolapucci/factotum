@@ -1,6 +1,6 @@
 """What the client needs of a connection to the edge: frames in and out, and a way to end it.
 
-The real one is a WebSocket; the tests use one in memory (``factotum.terminal.testing``).
+The real one is a WebSocket; the tests use one in memory (``factotum.client_core.testing``).
 """
 
 from typing import Protocol

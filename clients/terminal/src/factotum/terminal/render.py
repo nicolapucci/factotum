@@ -7,7 +7,7 @@ each thing, with a tag that says which part of the device is at work: ``[say]`` 
 reads on any console.
 """
 
-from typing import Protocol, TextIO
+from typing import TextIO
 
 from factotum.contracts.cards import Card
 from factotum.contracts.edge import ErrorFrame, TurnEnded, TurnStatus
@@ -17,41 +17,9 @@ _TAG = 9
 """The width of the column of tags."""
 
 
-class Renderer(Protocol):
-    def speech(self, text: str) -> None: ...
-
-    def text(self, text: str) -> None: ...
-
-    def card(self, card: Card) -> None: ...
-
-    def media(self, title: str | None, url: str) -> None: ...
-
-    def status(self, state: StatusState) -> None: ...
-
-    def event(self, what: str) -> None:
-        """A command that was run on the device: the volume, a light, the music."""
-        ...
-
-    def heard(self, text: str) -> None:
-        """What the edge took a recording for, before it answers it."""
-        ...
-
-    def turn_ended(self, ended: TurnEnded) -> None: ...
-
-    def error(self, error: ErrorFrame) -> None:
-        """The edge said something is wrong."""
-        ...
-
-    def violation(self, what: str) -> None:
-        """The edge did something the protocol does not allow: a bug, and worth saying loudly."""
-        ...
-
-    def notice(self, what: str) -> None:
-        """Something about the client itself: connected, disconnected."""
-        ...
-
-
 class ConsoleRenderer:
+    """A ``factotum.client_core.Renderer`` that writes to a terminal."""
+
     def __init__(self, out: TextIO) -> None:
         self._out = out
 

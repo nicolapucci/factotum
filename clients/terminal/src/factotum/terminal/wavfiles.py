@@ -10,8 +10,8 @@ import wave
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from factotum.client_core.audio import DEFAULT_CHUNK_MS, AudioStream
 from factotum.contracts.audio import MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, AudioPayload, pcm_of
-from factotum.terminal.audio import DEFAULT_CHUNK_MS, AudioStream
 
 
 class WavFileInput:
@@ -45,8 +45,11 @@ class WavFileInput:
 
 
 class WavFileOutput:
-    """A speaker that writes what it is asked to play into a WAV file, one clip after the other.
-    The file is whole after each clip, so that what was said is there however the run ends."""
+    """A speaker that writes what it is asked to play into a WAV file, one clip or track after the
+    other: it plays a clip whole (``VoiceOutput``) and takes a track of sound as it arrives
+    (``VoiceSink``, ADR 0023), so it is what the client that tests the whole stack speaks to either
+    way. The file is whole after each clip and each track, and after a track that is given up on,
+    so that what was said is there however the run ends."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -58,14 +61,39 @@ class WavFileOutput:
         """How much was said."""
         return len(self._pcm) / 2 / self._rate if self._rate else 0.0
 
-    async def play(self, audio: AudioPayload) -> None:
-        pcm, rate = pcm_of(audio.data)
+    def _one_rate(self, rate: int, what: str) -> None:
         if self._rate not in (None, rate):
-            raise ValueError(f"a file holds one rate: {self._rate} Hz, and this clip is {rate} Hz")
+            raise ValueError(
+                f"a file holds one rate: {self._rate} Hz, and this {what} is {rate} Hz"
+            )
         self._rate = rate
-        self._pcm.extend(pcm)
+
+    def _write(self) -> None:
+        assert self._rate is not None  # noqa: S101 - only called once something was given
         with wave.open(str(self.path), "wb") as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
-            wav_file.setframerate(rate)
+            wav_file.setframerate(self._rate)
             wav_file.writeframes(bytes(self._pcm))
+
+    # a clip, whole
+    async def play(self, audio: AudioPayload) -> None:
+        pcm, rate = pcm_of(audio.data)
+        self._one_rate(rate, "clip")
+        self._pcm.extend(pcm)
+        self._write()
+
+    # a track, as it arrives
+    async def begin(self, sample_rate: int) -> None:
+        self._one_rate(sample_rate, "track")
+
+    async def write(self, pcm: bytes) -> None:
+        self._pcm.extend(pcm)
+
+    async def finish(self) -> None:
+        if self._rate is not None:
+            self._write()
+
+    async def abort(self) -> None:
+        if self._rate is not None:
+            self._write()  # what was given before the person spoke over it was said
