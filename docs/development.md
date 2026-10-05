@@ -39,8 +39,11 @@ skills/           example skills (folders with a SKILL.md and their scripts)
 libs/web/         what the HTTP interfaces share: errors, authentication, body limits
 libs/db/          the Postgres pool, migrations and the harness for tests against a real database
 libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
+libs/client_core/ what every client of the edge shares: the protocol, the sound of an answer, the
+                  conversation by voice, staying connected, and the ports that hardware plugs into
 services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions, runner, egress, hub)
-clients/          the devices that talk to the edge (so far: terminal, a device in a terminal)
+clients/          the devices that talk to the edge, made of the client core (so far: terminal, a
+                  device in a terminal)
 e2e/              the end-to-end tests, and the rig they share: every service in one process,
                   from a device to the models
 config/           example configuration, such as the model bindings
@@ -72,7 +75,8 @@ To add a member, create its folder with a `pyproject.toml` (copy one from `libs/
 member of the workspace like the others, since one test module cannot import another). They need no
 model and nothing beyond the loopback (and no Docker, in memory), and take a second or two each:
 more than a unit test, and far less than the stack in containers. They cover what a unit test does
-not: the terminal client talks over a real WebSocket to the edge, and behind the edge
+not: a client of the client core (with the hardware of the terminal) talks over a real WebSocket
+to the edge, and behind the edge
 the conversation, knowledge, actions and model-gateway applications are the real ones, each reached
 through its own HTTP interface. Nothing is replaced above the stores, which are in memory or, as in
 production, the Postgres of `docker compose up` (a database of its own for the test, prepared by the
@@ -82,9 +86,11 @@ home is the example one, `config/devices.example.yaml`, with the skills of `skil
 What is made up is what a unit test cannot have:
 
 - **The hardware of the device.** A recording is a WAV file that carries the words that were said in
-  it, the speaker remembers what it was asked to play, and the wake word is a `FakeVoiceInput` that
-  hands the terminal one recording (or one stream) after another. The recording gets to the edge
-  whole, or in the chunks a microphone sends as a person talks (ADR 0022): see below.
+  it, the speaker remembers what it was asked to play (a clip, or the sound as it was given it:
+  `FakeVoiceOutput`, `FakeSpeaker`), and the wake word is a `FakeVoiceInput` that hands the client one
+  recording (or one stream) after another. Sound gets to the edge whole and comes back as a clip in
+  each sentence, or goes in as the chunks a microphone sends as a person talks (ADR 0022) and comes
+  back as a stream that the speaker is given as it arrives (ADR 0023): see below.
 - **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines
   (the first reads the words out of a recording, the second writes a clip that carries the words it
   was asked to say, so a test reads what a speaker was made to say). The chat model answers from the
@@ -100,11 +106,13 @@ uv run pytest e2e                         # in memory, and in Postgres where the
 uv run pytest e2e -m "not integration"    # in memory only
 ```
 
-Every test runs three ways: with the services keeping what they keep in memory and a recording sent
-to the edge whole (`memory-clip`), the same with the recording streamed as a microphone sends it
-(`memory-stream`), and in the Postgres of `docker compose up` with it streamed (`postgres-stream`,
-an integration test). What a store does and how a recording gets to the edge have nothing to do with
-each other, so they are not run in every combination (the fixture is in `e2e/tests/conftest.py`, and
+Every test runs three ways: with the services keeping what they keep in memory and the device
+carrying sound as clips (a recording sent to the edge whole, the voice a clip in each sentence:
+`memory-clip`), the same with it carried as streams (the recording as a microphone sends it, the voice
+as a stream that the speaker is given as it arrives: `memory-stream`), and in the Postgres of
+`docker compose up` with streams (`postgres-stream`, an integration test). What a store does and how
+sound gets to the edge and back have nothing to do with each other, so they are not run in every
+combination (the fixture is in `e2e/tests/conftest.py`, and
 a module that is about one way overrides it). A device says what the edge understood of what it was
 told (`Device.understood()`: the `heard` frames it was sent), so a test can look at what the
 assistant made of a recording and not only at what it did.

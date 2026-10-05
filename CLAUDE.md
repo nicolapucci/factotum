@@ -121,6 +121,16 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   is given the *names* of secrets and never a value, and never anything that came from a document or
   a page. Do not feed the answer of a request back to a model, do not add a step that runs code,
   and do not let a model choose a host that was not granted.
+- **A client is the core and the ports of its device** (ADR 0024). What every client does of the
+  protocol (`hello`, the parts of an answer, commands and their `ack`, the sound of an answer, speaking
+  over it, a stream sent as a person speaks, staying connected) is `factotum.client_core` and nowhere
+  else: a client has the hardware of its device and none of the protocol, and the core has no
+  `sounddevice`, no `numpy` and no terminal. A client declares what it was given and nothing more
+  (`voice_stream` only with a sink and a speaker; the capabilities of its `Identity`). The sound that
+  plays is cut *before* the edge is told that the person speaks or cancels, what is still in flight
+  for an answer that was left is dropped in silence (it is nobody's bug), and what the edge gets wrong
+  is a `violation`, said loudly. `stay_connected` does not ask again of an edge that refused the
+  device or replaced it with its twin. Do not copy the protocol into a client.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
@@ -174,7 +184,8 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   class of skills (every plain-text body was written as JSON) before a test with skills that nothing
   was tuned on showed it; the tests now refuse a part of the shape that has no `type` or `anyOf`.
 - Tests import `--import-mode=importlib`: one test module cannot import another, so what tests share
-  lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`).
+  lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`,
+  `factotum.client_core.testing`: the fakes of every port of a client, and `ClientRig`).
 - Starlette's `TestClient` is unusable here (its deprecation warning is an error): what needs a
   WebSocket runs on a real one, with uvicorn (`ws="websockets-sansio"`, the implementation that is
   not deprecated) and the `websockets` client, as `factotum.edge.testing.serving` does.

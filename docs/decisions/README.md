@@ -29,3 +29,4 @@ the old one instead of rewriting history.
 | [0021](0021-voice-wake-word-on-the-device-speech-through-the-gateway.md) | Voice: the wake word stays on the device, speech goes through the gateway |
 | [0022](0022-audio-in-is-streamed-to-the-edge-and-the-device-ends-the-utterance.md) | Audio in: a stream of chunks to the edge, and the device ends the utterance |
 | [0023](0023-audio-out-the-voice-of-an-answer-is-streamed-from-the-gateway-to-the-device.md) | Audio out: the voice of an answer is streamed, from the gateway through the edge to the device |
+| [0024](0024-the-client-core-one-implementation-of-the-protocol-for-every-client.md) | The client core: one implementation of the protocol for every client |

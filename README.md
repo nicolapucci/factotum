@@ -48,7 +48,7 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 | [`docs/model-gateway.md`](docs/model-gateway.md) | The model gateway: bindings, providers, structured output, streaming, API |
 | [`docs/knowledge.md`](docs/knowledge.md) | The knowledge service: from a file to a passage, hybrid search, ownership, API, what was measured |
 | [`docs/conversation.md`](docs/conversation.md) | The conversation service: a turn with no history, the log searched when a message refers to it, API, what was measured |
-| [`docs/edge.md`](docs/edge.md) | The edge: the protocol of the devices, what each is sent, commands, the terminal client, API, what was measured |
+| [`docs/edge.md`](docs/edge.md) | The edge: the protocol of the devices, what each is sent, commands, the client core and the terminal client, API, what was measured |
 | [`docs/actions.md`](docs/actions.md) | The actions service: skills, choosing one, deciding, confirmations and approvals, running them, the audit trail, API, what was measured |
 | [`docs/skills.md`](docs/skills.md) | Writing skills: the `SKILL.md`, scripts, and instructions that a model turns into a plan (the language of a plan, what is checked, what a small model does with it) |
 | [`docs/runner.md`](docs/runner.md) | The runner and the egress proxy: a container for each run, the grant that says where it may go, secrets, how it is deployed and tested, what was measured |

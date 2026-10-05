@@ -2,7 +2,8 @@
 
 Status: **Slices 0 to 6 are implemented, and slices 7a-7d**: the foundations and shared contracts, the
 `model-gateway`, `knowledge`, `conversation`, `edge`, `actions`, `runner`, `egress` and `hub`
-services, and a terminal client that is a device. Of the hub, its tenant, its users, the tokens every
+services, a client core that every device's software is made of, and a terminal client that is a
+device. Of the hub, its tenant, its users, the tokens every
 service checks, a device's pairing, the external devices a skill is bound to, the models bound to a
 role, and now the secrets a skill is given are there: its spaces and linked accounts are not slices
 of their own yet, and a skill that needs a linked account or an approval does not run until they are.
@@ -167,8 +168,11 @@ connection answers one utterance at a time and speaking over an answer interrupt
 connection of a device wins. Commands go over the same connection and come back with a result
 (`ok`, `failed`, `unsupported`, `timeout`, `offline`); inside the platform a connected device is a
 `SystemDevice`. The hub registers and pairs them (slice 7b, [`hub.md`](hub.md)); without it, devices
-are registered in a YAML file and the edge only runs in development. `factotum-terminal` is a device
-in a terminal, with a profile for each kind of device.
+are registered in a YAML file and the edge only runs in development. What every client does of the
+protocol is one library, `factotum.client_core` ([ADR 0024](decisions/0024-the-client-core-one-implementation-of-the-protocol-for-every-client.md)):
+a client is that and the ports of what its device has (a microphone, a speaker, a screen, hands for a
+volume), and declares what it was given. `factotum-terminal` is a device in a terminal, with a
+profile for each kind of device.
 
 **External devices** (lights, a TV...) are registered by hand, through the hub, and have no built-in
 methods: everything they can do is supplied by skills the user explicitly binds to them. A
@@ -369,7 +373,7 @@ answer and other things than actions, voice.
 | 7b | `hub`: a device's pairing, the external devices a skill is bound to | done |
 | 7c | `hub`: model bindings, the gateway reading them from it, a real delegation for `actions`, `conversation` and `knowledge` | done |
 | 7d | `hub`: skill secrets, the actions service reading them from it | done |
-| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway; what a person says streams in to the edge and interrupts the answer as it begins (ADR 0022), and the sound of the answer streams out, from the gateway through the edge to a device that says it takes it (ADR 0023); still owed: the client core that every client shares, the real client for a PC and a Raspberry Pi, and hearing a wake word over the device's own voice | beta |
+| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway; what a person says streams in to the edge and interrupts the answer as it begins (ADR 0022), and the sound of the answer streams out, from the gateway through the edge to a device that says it takes it (ADR 0023); the client core that every client shares (ADR 0024); still owed: the real client for a PC and a Raspberry Pi, and hearing a wake word over the device's own voice | beta |
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |
 

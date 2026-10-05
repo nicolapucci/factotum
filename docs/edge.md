@@ -15,9 +15,11 @@ they begin; and since
 [ADR 0023](decisions/0023-audio-out-the-voice-of-an-answer-is-streamed-from-the-gateway-to-the-device.md)
 the sound of the answer streamed out, to a device that says it takes it), sessions, answers adapted to what a device can do, interruption, commands with an
 acknowledgement, a registry of devices read from a file (development) or from the hub, which
-registers and pairs them (slice 7b, [`hub.md`](hub.md)), an HTTP API, a container image, a terminal
-client that is a device (`factotum-terminal`, with `--voice` for a real microphone and speaker, and
-`--wav-in` and `--wav-out` for none), and (slice 5b) the `actions` service giving a device the
+registers and pairs them (slice 7b, [`hub.md`](hub.md)), an HTTP API, a container image, the client
+core that the software of every device is made of
+([ADR 0024](decisions/0024-the-client-core-one-implementation-of-the-protocol-for-every-client.md)),
+a terminal client that is a device (`factotum-terminal`, with `--voice` for a real microphone and
+speaker, and `--wav-in` and `--wav-out` for none), and (slice 5b) the `actions` service giving a device the
 commands a skill answers with, through the endpoint below, once it has decided that the device may
 have something done ([`actions.md`](actions.md)). *Not yet*: partial transcripts, the edge
 deciding where speech ends, pacing the sound it sends, and a device hearing its wake word over its
@@ -357,9 +359,67 @@ The edge has no database, no model and no key. It runs uvicorn with the WebSocke
 that is not deprecated (`websockets-sansio`) and a limit of one frame of the protocol, whatever a
 client sends.
 
+## The client core
+
+Every client of the edge is made of `factotum.client_core` (`libs/client_core`,
+[ADR 0024](decisions/0024-the-client-core-one-implementation-of-the-protocol-for-every-client.md)):
+the protocol, the sound of an answer, a conversation by voice, staying connected, and none of the
+hardware. A client is the core and the ports of what its device has, and declares to the edge what it
+was given:
+
+```python
+client = DeviceClient(
+    await WebSocketConnection.open(url),   # or a fake: what a test plays the edge on
+    identity,                               # hardware id, credential, capabilities, display
+    renderer,                               # what it shows, or says, of each part
+    CommandRouter(volume, light),           # the hands of the device, a driver for each part
+    voice_sink=speaker,                     # takes the sound as it arrives: asks for voice_stream
+)
+await client.connect()                      # hello, ready (or Refused)
+lost = await VoiceLoop(microphone).serve(client)
+```
+
+| Port | Is | What a device without it gets |
+| --- | --- | --- |
+| `Identity` | who the device is, its credential, what it can do and its screen | (every client has one) |
+| `Renderer` | what is shown or said of each part, what the edge took a recording for, what is wrong | (every client has one; a renderer may do nothing with what the device cannot show) |
+| `CommandDriver`, `CommandRouter` | the hands of one part of a device; a command goes to the driver that has the capability it needs | a command nobody can run is `unsupported` |
+| `VoiceInput` | what a person says, a recording or an `AudioStream`; how they were heard (a wake word, a key, a file) is its business | the device cannot start a conversation by voice |
+| `VoiceOutput` | plays a clip whole | no clip is played |
+| `VoiceSink`, `MarkedSink` | takes the sound as it arrives (`begin`, `write`, `finish`, `abort`) and, for a `MarkedSink`, is told which sentence it is saying | no `voice_stream`: the edge sends a clip in each speech part |
+
+What the core does, so that a client does not:
+
+- **Says what the device has and nothing else**: `capabilities` from the identity, `voice_stream` if
+  there is a sink and a speaker. A device with no microphone cannot start a conversation
+  (`CannotConverse`).
+- **Plays the sound of an answer from a task of its own** (`VoicePlayer`), so that what reads from the
+  edge never waits for a speaker: a ping, a command and a person speaking over the answer are served
+  while the sound is played. A speaker that fails loses the track and is tried again at the next.
+- **Cuts the sound before the edge is told**: `say`, `say_audio`, `say_audio_stream` and `cancel`
+  stop what plays (what is queued is dropped, the speaker told to stop) and leave the answer going on;
+  what is still on its way for it is let go of in silence.
+- **Says what the edge gets wrong** (`Renderer.violation`): sound to a device that did not ask for it,
+  chunks out of order or outside a track, a track that begins in the middle of another, a clip to a
+  device that takes a stream, parts that cannot be rendered, a second `ready`.
+- **Converses by voice** (`VoiceLoop`): what a person says is sent as they say it; the answer is
+  waited for, and its sound played, before the next is heard, or (`listen_while_answering=True`, for
+  a device that does not hear itself) it is heard while the answer plays, and speaking over the answer
+  stops it. The microphone is opened once and is kept across connections.
+- **Stays connected** (`stay_connected`, `Backoff`): a device that loses the edge asks again after one
+  second, then two, four... up to thirty, each a quarter more or less by chance, and the waits start
+  over after a connection that held; it does not ask again when the edge refused the device, replaced
+  it with its twin or has no use for it.
+
+A client is tried with `factotum.client_core.testing`: a connection that a test plays the edge on
+(`MemoryConnection`), a client with a fake for each port (`ClientRig`), and speakers that remember
+what they were given (`FakeVoiceOutput`, `FakeVoiceSink`, `FakeMarkedSink`, `FakeSpeaker`).
+
 ## The terminal client
 
-`factotum-terminal` is a device in a terminal, and the way to look at the edge from the side of a
+`factotum-terminal` is a client of the core with the hardware of a terminal: a console for a renderer
+and for the hands of the device, a keyboard, optionally a microphone with a wake word and a speaker,
+or files for both. It is a device in a terminal, and the way to look at the edge from the side of a
 speaker, of a screen, of a phone before there is one. What is typed is what a person said; what the
 edge sends comes out as what that device would do:
 
@@ -387,7 +447,8 @@ sends, as fast as the edge takes them or at the pace of a microphone with `--rea
 to each is waited for before the next is said, and the run ends when the last has been answered
 (exit code 0). `--wav-out` writes what the assistant says to a WAV file instead of playing it, the
 sentences of the answers one after the other, and works with a keyboard and with a microphone as
-well. A file that is missing, is not 16-bit mono PCM or is at a rate that is not streamed is said
+well; the file takes the voice as a stream, as the speaker of a real device does (ADR 0023), so it is
+also how that is tried with no hardware. A file that is missing, is not 16-bit mono PCM or is at a rate that is not streamed is said
 (with its name) before the edge is reached.
 
 | Profile | Is | Sees |
@@ -477,8 +538,9 @@ pieces, the sentences are the same); and on a real socket, with uvicorn serving 
 client library that devices use on the other side, for what only a real connection shows (what the
 peer sees when it is closed, a frame bigger than the protocol allows). A stream is tested the same
 way plus as a property (however the samples are cut into chunks, what is listened to is the same),
-and with the clock: a stall is a few hundredths of a second. The terminal client is tested against
-an edge served the same way, so that the two halves of the protocol are shown to fit, including a
+and with the clock: a stall is a few hundredths of a second. The client core is tested with an edge
+that a test plays over an in-memory connection, and a speaker that is given the sound as it arrives;
+the terminal client is tested against an edge served the same way as the edge's own, so that the two halves of the protocol are shown to fit, including a
 person who speaks over an answer on a real socket, and where speech ends is a function that is given
 frames as a microphone hands them over. A voice is tested the same way on the other side: the
 session over an in-memory wire with a voice that is told what to do (frames, an error, a wait, a
@@ -551,8 +613,9 @@ the conversation service drops from the citations but a screen shows as written 
   answer plays and stops it to send the stream of whoever speaks over it has to cancel what it is
   playing out of what it hears before it can hear a wake word; it is the first thing a real device
   will meet. The terminal's `--voice` does not: it waits for an answer to end before it listens
-  again. Speaking over an answer is what typing does in the terminal, and what `audio_start` does
-  to the edge, shown on a real socket and end to end.
+  again (`VoiceLoop(listen_while_answering=True)` does, and is for a device that cancels its echo or
+  has a key to push to talk). Speaking over an answer is what typing does in the terminal, and what
+  `audio_start` does to the edge, shown on a real socket and end to end.
 - **Where a stream and a whole recording differ.** Only the stream interrupts before it is over; the
   clip is the simpler way in, and the one a device that does not stream, and every test that does
   not care, use. The same goes for the voice out: a clip in each `speech` part is what a device that
