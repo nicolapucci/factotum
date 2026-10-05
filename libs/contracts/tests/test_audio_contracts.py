@@ -9,16 +9,21 @@ from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from factotum.contracts.audio import (
+    BYTES_PER_SAMPLE,
     MAX_AUDIO_BYTES,
     MAX_CHUNK_BYTES,
     MAX_SAMPLE_RATE,
     MAX_STREAM_BYTES,
     MIN_SAMPLE_RATE,
+    VOICE_CHUNK_MS,
     WAV_HEADER_BYTES,
     AudioFormat,
     StreamFormat,
+    chunk_bytes,
     pcm_of,
+    slices,
     wav_of,
+    whole_samples,
 )
 
 
@@ -129,3 +134,75 @@ class TestReadingSamplesOutOfAWavFile:
 class TestTheFormatOfAStream:
     def test_the_samples_of_a_stream_are_16_bit_little_endian_and_nothing_else(self) -> None:
         assert [f.value for f in StreamFormat] == ["pcm_s16le"]
+
+
+class TestWholeSamples:
+    def test_an_even_number_of_bytes_is_whole_samples_and_is_given_back(self) -> None:
+        assert whole_samples(b"") == b""
+        assert whole_samples(b"\x01\x02\x03\x04") == b"\x01\x02\x03\x04"
+
+    @pytest.mark.parametrize("size", [1, 3, 4001])
+    def test_half_a_sample_at_the_end_is_refused(self, size: int) -> None:
+        with pytest.raises(ValueError, match="whole 16-bit samples"):
+            whole_samples(bytes(size))
+
+
+class TestHowMuchSoundAChunkHolds:
+    @pytest.mark.parametrize(
+        ("rate", "expected"),
+        [(16000, 3200), (22050, 4410), (44100, 8820), (48000, 9600), (8000, 1600)],
+    )
+    def test_a_tenth_of_a_second_is_the_size_of_a_chunk_of_a_voice(
+        self, rate: int, expected: int
+    ) -> None:
+        assert VOICE_CHUNK_MS == 100
+        assert chunk_bytes(rate) == expected
+
+    def test_a_chunk_of_a_voice_is_well_within_what_a_frame_may_carry(self) -> None:
+        assert all(
+            chunk_bytes(rate) < MAX_CHUNK_BYTES for rate in (MIN_SAMPLE_RATE, MAX_SAMPLE_RATE)
+        )
+
+    @given(rate=st.integers(MIN_SAMPLE_RATE, MAX_SAMPLE_RATE), ms=st.integers(1, 2000))
+    def test_it_is_always_whole_samples_and_never_none(self, rate: int, ms: int) -> None:
+        size = chunk_bytes(rate, ms)
+
+        assert size >= BYTES_PER_SAMPLE
+        assert size % BYTES_PER_SAMPLE == 0
+
+    def test_a_millisecond_of_a_slow_voice_is_still_a_sample(self) -> None:
+        assert chunk_bytes(1000, 1) == BYTES_PER_SAMPLE
+        assert chunk_bytes(1, 1) == BYTES_PER_SAMPLE
+
+
+class TestCuttingSamplesIntoPieces:
+    def test_the_pieces_are_as_big_as_asked_and_the_last_is_what_is_left(self) -> None:
+        pieces = list(slices(bytes(range(10)), 4))
+
+        assert pieces == [bytes([0, 1, 2, 3]), bytes([4, 5, 6, 7]), bytes([8, 9])]
+
+    def test_nothing_is_no_pieces(self) -> None:
+        assert list(slices(b"", 4)) == []
+
+    def test_what_fits_in_one_piece_is_one_piece(self) -> None:
+        assert list(slices(b"\x01\x02", 100)) == [b"\x01\x02"]
+
+    @pytest.mark.parametrize("size", [0, -2])
+    def test_a_piece_holds_at_least_a_byte(self, size: int) -> None:
+        with pytest.raises(ValueError, match="at least one byte"):
+            list(slices(b"\x00\x00", size))
+
+    @given(
+        pcm=st.binary(max_size=3000).map(lambda data: data[: len(data) - len(data) % 2]),
+        samples=st.integers(1, 700),
+    )
+    def test_put_together_the_pieces_are_what_was_cut_and_none_is_too_big(
+        self, pcm: bytes, samples: int
+    ) -> None:
+        size = samples * BYTES_PER_SAMPLE
+
+        pieces = list(slices(pcm, size))
+
+        assert b"".join(pieces) == pcm
+        assert all(0 < len(piece) <= size for piece in pieces)
+        assert all(len(piece) == size for piece in pieces[:-1])

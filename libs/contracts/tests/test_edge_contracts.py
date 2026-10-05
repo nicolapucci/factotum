@@ -7,7 +7,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import AnyHttpUrl, ValidationError
 
-from factotum.contracts.audio import MAX_CHUNK_BYTES, AudioFormat, AudioPayload, StreamFormat
+from factotum.contracts.audio import (
+    BYTES_PER_SAMPLE,
+    MAX_CHUNK_BYTES,
+    AudioFormat,
+    AudioPayload,
+    StreamFormat,
+)
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.cards import Card, CardItem
 from factotum.contracts.commands import (
@@ -27,6 +33,7 @@ from factotum.contracts.commands import (
 )
 from factotum.contracts.conversation import MAX_MESSAGE_CHARS
 from factotum.contracts.edge import (
+    FEATURE_NEEDS,
     HEARTBEAT_SECONDS,
     MAX_FRAME_BYTES,
     PROTOCOL_VERSION,
@@ -41,6 +48,7 @@ from factotum.contracts.edge import (
     CloseCode,
     CommandFrame,
     ErrorFrame,
+    Feature,
     Heard,
     Hello,
     PartFrame,
@@ -50,6 +58,9 @@ from factotum.contracts.edge import (
     TurnEnded,
     TurnStatus,
     Utterance,
+    VoiceChunk,
+    VoiceEnd,
+    VoiceStart,
     decode_device_frame,
     decode_edge_frame,
     encode_frame,
@@ -109,6 +120,7 @@ DEVICE_FRAMES = [
     AudioChunk(id="u3", seq=0, data=b"\x00\x01\xfe\xff not really samples"),
     AudioChunk(id="u3", seq=41, data=bytes(range(256))),
     AudioEnd(id="u3"),
+    hello(features=frozenset({Feature.VOICE_STREAM})),
     Cancel(id="u1"),
     Ack(id="c1", result=CommandResult.ok()),
     Ack(id="c2", result=CommandResult(status=CommandStatus.FAILED, detail="the amplifier is off")),
@@ -140,7 +152,13 @@ EDGE_FRAMES = [
         display=DisplayInfo(width=320, height=240),
         heartbeat_s=5,
     ),
+    ready(features=frozenset({Feature.VOICE_STREAM})),
     Heard(utterance_id="u3", text="how do I reset the router?"),
+    VoiceStart(utterance_id="u1", sample_rate=22050),
+    VoiceStart(utterance_id="u1", format=StreamFormat.PCM_S16LE, sample_rate=16000),
+    VoiceChunk(utterance_id="u1", seq=0, part_seq=0, data=b"\x00\x01\xfe\xff"),
+    VoiceChunk(utterance_id="u1", seq=41, part_seq=6, data=bytes(range(256))),
+    VoiceEnd(utterance_id="u1"),
     PartFrame(utterance_id="u1", seq=0, part=Speech(text="Hold the button for ten seconds.")),
     PartFrame(
         utterance_id="u1",
@@ -432,6 +450,174 @@ class TestWhatWasHeard:
             decode_device_frame(encode_frame(Heard(utterance_id="u1", text="hello")))
 
 
+class TestWhatAFeatureIs:
+    def test_a_device_that_says_nothing_of_features_takes_none(self) -> None:
+        assert hello().features == frozenset()
+        assert ready().features == frozenset()
+
+    def test_what_is_nothing_is_not_said_so_that_a_peer_from_before_features_still_reads_it(
+        self,
+    ) -> None:
+        assert "features" not in json.loads(encode_frame(hello()))
+        assert "features" not in json.loads(encode_frame(ready()))
+
+    def test_what_is_taken_is_said_by_name(self) -> None:
+        said = json.loads(encode_frame(hello(features=frozenset({Feature.VOICE_STREAM}))))
+        told = json.loads(encode_frame(ready(features=frozenset({Feature.VOICE_STREAM}))))
+
+        assert said["features"] == ["voice_stream"]
+        assert told["features"] == ["voice_stream"]
+
+    def test_a_peer_that_sent_no_features_is_read_as_one_that_takes_none(self) -> None:
+        wire = json.dumps(
+            {
+                "type": "hello",
+                "protocol_version": 1,
+                "hardware_id": "kitchen-01",
+                "token": "a-credential",
+                "capabilities": ["audio_in", "audio_out"],
+            }
+        )
+
+        frame = decode_device_frame(wire)
+
+        assert isinstance(frame, Hello)
+        assert frame.features == frozenset()
+
+    def test_a_feature_that_is_not_known_is_refused(self) -> None:
+        wire = json.dumps(
+            {
+                "type": "hello",
+                "protocol_version": 1,
+                "hardware_id": "kitchen-01",
+                "token": "a-credential",
+                "capabilities": ["audio_out"],
+                "features": ["hologram"],
+            }
+        )
+
+        with pytest.raises(InvalidFrameError):
+            decode_device_frame(wire)
+
+    def test_every_feature_says_what_a_device_needs_to_take_it(self) -> None:
+        assert set(FEATURE_NEEDS) == set(Feature)
+
+    def test_a_voice_is_for_a_device_that_has_a_speaker(self) -> None:
+        assert FEATURE_NEEDS[Feature.VOICE_STREAM] is Capability.AUDIO_OUT
+        with pytest.raises(ValidationError, match="requires the 'audio_out' capability"):
+            hello(
+                capabilities=frozenset({Capability.AUDIO_IN}),
+                features=frozenset({Feature.VOICE_STREAM}),
+            )
+
+    def test_what_is_declared_is_the_same_whichever_way_it_was_written(self) -> None:
+        one = hello(features=frozenset({Feature.VOICE_STREAM}))
+        other = hello(features=frozenset([Feature.VOICE_STREAM, Feature.VOICE_STREAM]))
+
+        assert encode_frame(one) == encode_frame(other)
+
+
+class TestTheVoiceOfAnAnswer:
+    def test_the_samples_of_a_chunk_survive_the_wire_exactly(self) -> None:
+        # Every byte value, as for a recording: base64 is what keeps the ones that are not valid
+        # UTF-8 on their own.
+        chunk = VoiceChunk(utterance_id="u1", seq=3, part_seq=1, data=bytes(range(256)))
+
+        restored = decode_edge_frame(encode_frame(chunk))
+
+        assert restored == chunk
+        assert isinstance(restored, VoiceChunk)
+        assert restored.data == bytes(range(256))
+
+    def test_what_goes_over_the_wire_is_plain_json_with_the_samples_in_base64(self) -> None:
+        assert json.loads(encode_frame(VoiceStart(utterance_id="u1", sample_rate=22050))) == {
+            "type": "voice_start",
+            "utterance_id": "u1",
+            "format": "pcm_s16le",
+            "sample_rate": 22050,
+        }
+        assert json.loads(
+            encode_frame(VoiceChunk(utterance_id="u1", seq=0, part_seq=2, data=b"\x00\x01\x02\x03"))
+        ) == {
+            "type": "voice_chunk",
+            "utterance_id": "u1",
+            "seq": 0,
+            "part_seq": 2,
+            "data": "AAECAw==",
+        }
+        assert json.loads(encode_frame(VoiceEnd(utterance_id="u1"))) == {
+            "type": "voice_end",
+            "utterance_id": "u1",
+        }
+
+    def test_the_samples_are_16_bit_little_endian_unless_said_otherwise_and_nothing_else_is_said(
+        self,
+    ) -> None:
+        assert VoiceStart(utterance_id="u1", sample_rate=16000).format is StreamFormat.PCM_S16LE
+        wire = (
+            '{"type": "voice_start", "utterance_id": "u1", "format": "mp3", "sample_rate": 16000}'
+        )
+
+        with pytest.raises(InvalidFrameError):
+            decode_edge_frame(wire)
+
+    @pytest.mark.parametrize("rate", [0, -22050, 7999, 48001])
+    def test_a_sample_rate_outside_what_speech_needs_is_refused(self, rate: int) -> None:
+        with pytest.raises(ValidationError):
+            VoiceStart(utterance_id="u1", sample_rate=rate)
+
+    def test_a_chunk_has_a_place_in_the_track_and_one_in_the_answer(self) -> None:
+        with pytest.raises(ValidationError):
+            VoiceChunk(utterance_id="u1", seq=-1, part_seq=0, data=b"\x00\x00")
+        with pytest.raises(ValidationError):
+            VoiceChunk(utterance_id="u1", seq=0, part_seq=-1, data=b"\x00\x00")
+
+    @pytest.mark.parametrize("size", [0, 1, 3, 4001])
+    def test_a_chunk_is_whole_samples_and_is_not_nothing(self, size: int) -> None:
+        with pytest.raises(ValidationError):
+            VoiceChunk(utterance_id="u1", seq=0, part_seq=0, data=bytes(size))
+
+    def test_a_chunk_is_a_sample_at_least_and_at_most_what_a_chunk_of_a_stream_holds(self) -> None:
+        smallest = VoiceChunk(utterance_id="u1", seq=0, part_seq=0, data=bytes(BYTES_PER_SAMPLE))
+        biggest = VoiceChunk(utterance_id="u1", seq=0, part_seq=0, data=bytes(MAX_CHUNK_BYTES))
+
+        assert decode_edge_frame(encode_frame(smallest)) == smallest
+        assert decode_edge_frame(encode_frame(biggest)) == biggest
+        assert len(encode_frame(biggest)) < MAX_FRAME_BYTES
+        with pytest.raises(ValidationError):
+            VoiceChunk(utterance_id="u1", seq=0, part_seq=0, data=bytes(MAX_CHUNK_BYTES + 2))
+
+    @pytest.mark.parametrize("identity", ["", " ", "has space", "x" * 65, "a/b", "é"])
+    def test_a_voice_belongs_to_an_utterance_named_by_a_plain_label(self, identity: str) -> None:
+        with pytest.raises(ValidationError):
+            VoiceStart(utterance_id=identity, sample_rate=16000)
+        with pytest.raises(ValidationError):
+            VoiceChunk(utterance_id=identity, seq=0, part_seq=0, data=b"\x00\x00")
+        with pytest.raises(ValidationError):
+            VoiceEnd(utterance_id=identity)
+
+    def test_what_the_edge_says_of_a_voice_is_not_something_a_device_says(self) -> None:
+        for frame in (
+            VoiceStart(utterance_id="u1", sample_rate=16000),
+            VoiceChunk(utterance_id="u1", seq=0, part_seq=0, data=b"\x00\x00"),
+            VoiceEnd(utterance_id="u1"),
+        ):
+            with pytest.raises(InvalidFrameError):
+                decode_device_frame(encode_frame(frame))
+
+    @given(
+        data=st.binary(min_size=2, max_size=2000).map(lambda b: b[: len(b) - len(b) % 2]),
+        seq=st.integers(min_value=0, max_value=100_000),
+        part_seq=st.integers(min_value=0, max_value=1_000),
+    )
+    def test_whatever_the_samples_they_arrive_as_they_were_sent(
+        self, data: bytes, seq: int, part_seq: int
+    ) -> None:
+        frame = VoiceChunk(utterance_id="u1", seq=seq, part_seq=part_seq, data=data)
+
+        assert decode_edge_frame(encode_frame(frame)) == frame
+
+
 class TestWhatIsNotAFrame:
     @pytest.mark.parametrize(
         "wire",
@@ -452,6 +638,11 @@ class TestWhatIsNotAFrame:
             '{"type": "audio_chunk", "id": "u", "seq": "first", "data": "AAEC"}',
             '{"type": "audio_end"}',
             '{"type": "heard", "utterance_id": "u"}',
+            '{"type": "voice_start", "utterance_id": "u"}',
+            '{"type": "voice_chunk", "utterance_id": "u", "seq": 0, "part_seq": 0}',
+            '{"type": "voice_chunk", "utterance_id": "u", "seq": 0, "data": "AAEC"}',
+            '{"type": "voice_chunk", "utterance_id": "u", "seq": 0, "part_seq": 0, "data": "AAEC"}',
+            '{"type": "voice_end"}',
         ],
     )
     def test_it_is_refused_whatever_it_is(self, wire: str) -> None:

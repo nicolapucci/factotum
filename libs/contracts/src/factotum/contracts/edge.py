@@ -16,6 +16,10 @@ credential it was given when it was paired) and what it can do; the edge answers
   rendered, each of a kind the device declared it can render, and then ``turn_ended``. Another
   ``utterance``, ``audio_utterance`` or ``audio_start`` interrupts the answer to the one before (the
   person spoke over it, as soon as they began), and so does a ``cancel``.
+* What a ``speech`` part says aloud reaches a device that has a speaker either as a clip in the part
+  (``audio``) or, to a device that said in its ``hello`` that it takes the ``voice_stream`` feature,
+  as a stream: a ``voice_start``, a ``voice_chunk`` for each piece of the sound as it is made, and a
+  ``voice_end``, all before the ``turn_ended`` of the answer (ADR 0023).
 * When something wants the device to do something (set the volume, show a card) the edge sends a
   ``command``, and the device answers with an ``ack`` that carries the result.
 * ``ping`` and ``pong`` say that each side is still there. A device that says nothing for too long
@@ -25,6 +29,7 @@ A frame is never trusted to be what it says: it is parsed into one of the models
 is not is refused (``InvalidFrameError``) without being echoed, since it may carry a credential.
 """
 
+from collections.abc import Mapping
 from enum import IntEnum, StrEnum
 from typing import Annotated, Any, Literal, Self
 
@@ -35,14 +40,18 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
     field_serializer,
+    field_validator,
     model_validator,
 )
 
 from factotum.contracts.audio import (
+    BYTES_PER_SAMPLE,
+    MAX_CHUNK_BYTES,
     MAX_SAMPLE_RATE,
     MIN_SAMPLE_RATE,
     AudioPayload,
     StreamFormat,
+    whole_samples,
 )
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability, DisplayInfo
@@ -86,8 +95,32 @@ class CloseCode(IntEnum):
     UNSUPPORTED_VERSION = 4003
 
 
+class Feature(StrEnum):
+    """What the protocol can do beyond what every device of version 1 does, and that a device says
+    it can take. A device says which in its ``hello``, the edge says which it will do in ``ready``,
+    and a device that said none is spoken to as every device of version 1 was."""
+
+    VOICE_STREAM = "voice_stream"
+    """The sound of a spoken answer is sent as ``voice_start``, ``voice_chunk`` and ``voice_end``
+    frames as it is made, and not as a clip in each ``speech`` part (ADR 0023)."""
+
+
+FEATURE_NEEDS: Mapping[Feature, Capability] = {Feature.VOICE_STREAM: Capability.AUDIO_OUT}
+"""What a device must be able to do to take a feature: a voice is played by a speaker."""
+
+
 def _sorted(capabilities: frozenset[Capability]) -> list[str]:
     return sorted(capability.value for capability in capabilities)
+
+
+def _sorted_features(features: frozenset[Feature]) -> list[str]:
+    return sorted(feature.value for feature in features)
+
+
+def _none(features: frozenset[Feature]) -> bool:
+    """Whether there is nothing to say of features: then nothing is said, so that a device or an
+    edge from before there were any is not sent a field it does not know."""
+    return not features
 
 
 # ---- from the device to the edge ----------------------------------------------------------------
@@ -113,14 +146,32 @@ class Hello(Contract):
     display: DisplayInfo | None = None
     client: ClientInfo | None = None
 
+    features: frozenset[Feature] = Field(default=frozenset(), exclude_if=_none)
+    """What the device takes beyond version 1 (``Feature``): left out of the frame when it is
+    nothing."""
+
     @field_serializer("capabilities")
     def _capabilities_in_order(self, capabilities: frozenset[Capability]) -> list[str]:
         return _sorted(capabilities)
+
+    @field_serializer("features")
+    def _features_in_order(self, features: frozenset[Feature]) -> list[str]:
+        return _sorted_features(features)
 
     @model_validator(mode="after")
     def _a_display_needs_the_capability(self) -> Self:
         if self.display is not None and Capability.DISPLAY not in self.capabilities:
             raise ValueError("display information requires the 'display' capability")
+        return self
+
+    @model_validator(mode="after")
+    def _a_feature_needs_its_capability(self) -> Self:
+        for feature in self.features:
+            needs = FEATURE_NEEDS[feature]
+            if needs not in self.capabilities:
+                raise ValueError(
+                    f"the {feature.value!r} feature requires the {needs.value!r} capability"
+                )
         return self
 
 
@@ -250,9 +301,18 @@ class Ready(Contract):
     display: DisplayInfo | None = None
     heartbeat_s: int = Field(default=HEARTBEAT_SECONDS, ge=1)
 
+    features: frozenset[Feature] = Field(default=frozenset(), exclude_if=_none)
+    """What the edge will do beyond version 1, for this device: what it declared, of what the edge
+    has and of what the device may do (``FEATURE_NEEDS``). Left out of the frame when it is
+    nothing."""
+
     @field_serializer("capabilities", "unregistered")
     def _capabilities_in_order(self, capabilities: frozenset[Capability]) -> list[str]:
         return _sorted(capabilities)
+
+    @field_serializer("features")
+    def _features_in_order(self, features: frozenset[Feature]) -> list[str]:
+        return _sorted_features(features)
 
 
 class Heard(Contract):
@@ -281,6 +341,63 @@ class PartFrame(Contract):
     utterance_id: FrameId
     seq: int = Field(ge=0)
     part: ResponsePart
+
+
+class VoiceStart(Contract):
+    """The sound of the answer to an utterance begins (ADR 0023).
+
+    What follows is ``voice_chunk`` frames of the same ``utterance_id``, to be played one after the
+    other without a gap, and a ``voice_end``. Only a device that declared the ``voice_stream``
+    feature is sent any of it. The sound of an answer is one such track at a time and, when what
+    makes it changes the rate of its samples (a voice of another rate was bound in the middle of an
+    answer), another track after the one that ended: the chunks of a track are counted from 0 again.
+    """
+
+    type: Literal["voice_start"] = "voice_start"
+    utterance_id: FrameId
+    format: StreamFormat = StreamFormat.PCM_S16LE
+    sample_rate: int = Field(ge=MIN_SAMPLE_RATE, le=MAX_SAMPLE_RATE)
+    """What the voice is at, 22050 for a Piper voice of medium quality: it is the device's to bring
+    the rate of what it plays to what its speaker takes."""
+
+
+class VoiceChunk(Contract):
+    """The next piece of the sound of an answer: whole samples, as base64 in JSON."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        str_strip_whitespace=True,
+        ser_json_bytes="base64",
+        val_json_bytes="base64",
+    )
+
+    type: Literal["voice_chunk"] = "voice_chunk"
+    utterance_id: FrameId
+    seq: int = Field(ge=0)
+    """0, 1, 2... with no gap, in a track: what is missing or comes twice is the edge's bug."""
+
+    part_seq: int = Field(ge=0)
+    """The ``seq`` of the ``speech`` part whose sound this is: the one that was said aloud, which
+    a screen that shows each sentence as it is spoken can follow. The parts a track carries are in
+    the order of the answer."""
+
+    data: bytes = Field(min_length=BYTES_PER_SAMPLE, max_length=MAX_CHUNK_BYTES)
+    """Whole samples, at most ``MAX_CHUNK_BYTES`` of them: the edge sends about a tenth of a second
+    at a time."""
+
+    @field_validator("data")
+    @classmethod
+    def _whole_samples(cls, data: bytes) -> bytes:
+        return whole_samples(data)
+
+
+class VoiceEnd(Contract):
+    """The track is over: all of its sound has been sent. A turn that ends before it (``cancelled``
+    or ``failed``) ends it, with a ``turn_ended`` that no more sound follows."""
+
+    type: Literal["voice_end"] = "voice_end"
+    utterance_id: FrameId
 
 
 class TurnStatus(StrEnum):
@@ -327,7 +444,18 @@ class ErrorFrame(Contract):
     """The utterance or command it is about, when it is about one."""
 
 
-FromEdge = Ready | Heard | PartFrame | TurnEnded | CommandFrame | Pong | ErrorFrame
+FromEdge = (
+    Ready
+    | Heard
+    | PartFrame
+    | VoiceStart
+    | VoiceChunk
+    | VoiceEnd
+    | TurnEnded
+    | CommandFrame
+    | Pong
+    | ErrorFrame
+)
 """Any frame the edge may send."""
 
 EdgeFrame = Annotated[FromEdge, Field(discriminator="type")]
