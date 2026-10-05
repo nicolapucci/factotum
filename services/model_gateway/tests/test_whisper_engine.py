@@ -39,10 +39,15 @@ class FakeWhisperModel:
         self._likelihoods = likelihoods
         self.heard: list[tuple[int, str | None]] = []
         """The number of samples and the language of each recording that was transcribed."""
+        self.options: list[dict[str, Any]] = []
+        """What else each recording was transcribed with."""
         self.detections = 0
 
-    def transcribe(self, audio: Any, language: str | None = None) -> tuple[Iterator[Segment], None]:
+    def transcribe(
+        self, audio: Any, language: str | None = None, **options: Any
+    ) -> tuple[Iterator[Segment], None]:
         self.heard.append((len(audio), language))
+        self.options.append(options)
         return (Segment(text) for text in self._said), None
 
     def detect_language(self, audio: Any) -> tuple[str, float, list[tuple[str, float]]]:
@@ -75,6 +80,16 @@ class TestTheEngineOfWhisper:
 
         [(samples, _language)] = model.heard
         assert samples == pytest.approx(SAMPLE_RATE, abs=320)
+
+    def test_what_is_not_speech_is_left_out_before_the_model_listens(self) -> None:
+        # Told to hear Italian, the real Whisper writes "Sottotitoli e revisione a cura di QTSS" for
+        # a second of silence: found by the end-to-end test of a silence, with real speech.
+        model = FakeWhisperModel()
+        engine, _ = engine_of(model)
+
+        engine.transcribe_wav(a_tone_wav(16000), ("it",))
+
+        assert model.options == [{"vad_filter": True}]
 
     def test_the_model_is_loaded_once_and_not_before_it_is_asked(self) -> None:
         engine, loads = engine_of(FakeWhisperModel())

@@ -83,7 +83,12 @@ class FasterWhisperEngine:
 
         model = self._loaded()
         audio = decode_audio(io.BytesIO(wav_bytes), sampling_rate=SAMPLE_RATE)
-        segments, _ = model.transcribe(audio, language=self._language_of(model, audio, languages))
+        # Whatever is not speech is left out before the model listens (the Silero model of
+        # faster-whisper, inside its package): told to hear Italian, Whisper writes the credits of
+        # a subtitle for a second of silence, and the assistant would answer that as a question.
+        segments, _ = model.transcribe(
+            audio, language=self._language_of(model, audio, languages), vad_filter=True
+        )
         return " ".join(segment.text.strip() for segment in segments).strip()
 
     def _language_of(self, model: Any, audio: Any, languages: tuple[str, ...] | None) -> str | None:

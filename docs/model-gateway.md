@@ -133,6 +133,11 @@ library's own cache in the user's home directory); `FACTOTUM_GATEWAY_SPEECH_DEVI
 Whisper model, or the `.onnx` file of a voice, where nothing may be fetched. On `cuda`, ctranslate2
 needs cuBLAS 12 on the `PATH` (cuDNN 9 comes inside its wheel).
 
+What is not speech is filtered out of a recording before the model listens (the voice activity
+filter that faster-whisper carries inside its package, with no download): told to hear Italian,
+Whisper writes «Sottotitoli e revisione a cura di QTSS» for a second of silence or of faint noise,
+and the assistant would answer that as if somebody had asked it.
+
 faster-whisper reads a recording with PyAV, and the gateway holds `av` below 19: faster-whisper
 1.2.1 passes `av.open` an argument that PyAV 19 removed, so with it no recording could be read.
 `tests/test_speech_decoding.py` is what fails first when a lock moves past that. See [ADR
