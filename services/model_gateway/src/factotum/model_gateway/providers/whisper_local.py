@@ -5,7 +5,12 @@ path to one already downloaded. The engine for a size is built the first time th
 to transcribe, not at startup, so a deployment that never binds the ``stt`` role to this provider
 never loads one. Building it loads ``faster_whisper.WhisperModel``, which downloads the model from
 Hugging Face the first time that size has not already been cached; point ``cache_dir`` at a
-directory of your own to control where (``FACTOTUM_GATEWAY_SPEECH_CACHE_DIR``).
+directory of your own to control where (``FACTOTUM_GATEWAY_SPEECH_CACHE_DIR``). A path is never
+downloaded, a name is.
+
+The binding's ``options.languages`` say which languages may be spoken: left to itself, Whisper
+guesses the language of a short command from all of its own and often gets it wrong, and what it
+writes is then in that language, or in its script.
 """
 
 import asyncio
@@ -26,12 +31,18 @@ from factotum.model_gateway.providers.base import (
     role_not_supported,
 )
 
+SAMPLE_RATE = 16000
+"""What Whisper listens at: a recording at any other rate is resampled to it before it is read."""
+
 
 class WhisperEngine(Protocol):
     """What the adapter needs of faster-whisper: built once per model size, asked for text many
     times."""
 
-    def transcribe_wav(self, wav_bytes: bytes) -> str: ...
+    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
+        """What was said in a WAV file. ``languages`` are the ones it may be in: one is that
+        language, several limit the guess to them, and none leaves the guess to the model."""
+        ...
 
 
 EngineFactory = Callable[[str], WhisperEngine]
@@ -39,34 +50,65 @@ EngineFactory = Callable[[str], WhisperEngine]
 (``FasterWhisperEngine``) so they never load a real model."""
 
 
+def choose_language(languages: tuple[str, ...], likelihoods: Sequence[tuple[str, float]]) -> str:
+    """Of the languages a person may speak, the one the model finds likeliest in what it heard,
+    or the first of them when it found none of them: what it finds likelier among all of its own
+    is of no use, it is the guess that put Arabic where an Italian said "apri il garage"."""
+    scores = dict(likelihoods)
+    return max(languages, key=lambda code: scores.get(code, 0.0))
+
+
 class FasterWhisperEngine:
     """Loads a ``faster_whisper.WhisperModel`` the first time it is asked to transcribe, never at
     construction: importing this module must not pull in ``faster_whisper`` (and the GPU or CPU
     inference stack that comes with it) for a deployment that never uses it."""
 
-    def __init__(self, model_size: str, *, device: str, cache_dir: Path | None) -> None:
+    def __init__(
+        self,
+        model_size: str,
+        *,
+        device: str,
+        cache_dir: Path | None,
+        load_model: Callable[[], Any] | None = None,
+    ) -> None:
         self._model_size = model_size
         self._device = device
         self._cache_dir = cache_dir
+        self._load_model = load_model or self._load_faster_whisper
         self._model: Any | None = None
 
-    def transcribe_wav(self, wav_bytes: bytes) -> str:
+    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None = None) -> str:
         """Runs on the calling thread: callers run it with ``asyncio.to_thread``."""
-        segments, _ = self._loaded().transcribe(io.BytesIO(wav_bytes))
+        from faster_whisper.audio import decode_audio  # heavy: deferred with the model
+
+        model = self._loaded()
+        audio = decode_audio(io.BytesIO(wav_bytes), sampling_rate=SAMPLE_RATE)
+        segments, _ = model.transcribe(audio, language=self._language_of(model, audio, languages))
         return " ".join(segment.text.strip() for segment in segments).strip()
+
+    def _language_of(self, model: Any, audio: Any, languages: tuple[str, ...] | None) -> str | None:
+        if not languages:
+            return None
+        if len(languages) == 1:
+            return languages[0]
+        _, _, likelihoods = model.detect_language(audio)
+        return choose_language(languages, likelihoods)
 
     def _loaded(self) -> Any:
         if self._model is None:
-            from faster_whisper import WhisperModel  # heavy: deferred to the first real use
-
-            compute_type = "int8" if self._device == "cpu" else "float16"
-            self._model = WhisperModel(
-                self._model_size,
-                device=self._device,
-                compute_type=compute_type,
-                download_root=str(self._cache_dir) if self._cache_dir else None,
-            )
+            self._model = self._load_model()
         return self._model
+
+    def _load_faster_whisper(self) -> Any:
+        from faster_whisper import WhisperModel  # heavy: deferred to the first real use
+
+        compute_type = "int8" if self._device == "cpu" else "float16"
+        return WhisperModel(
+            self._model_size,
+            device=self._device,
+            compute_type=compute_type,
+            download_root=str(self._cache_dir) if self._cache_dir else None,
+        )
 
 
 class WhisperLocalAdapter:
@@ -119,7 +161,9 @@ class WhisperLocalAdapter:
     ) -> str:
         engine = self._engine_for(resolved.model)
         try:
-            return await asyncio.to_thread(engine.transcribe_wav, audio.data)
+            return await asyncio.to_thread(
+                engine.transcribe_wav, audio.data, resolved.options.languages
+            )
         except Exception as error:
             raise ProviderUnavailableError(
                 f"{self.kind.value}: could not transcribe ({type(error).__name__})",

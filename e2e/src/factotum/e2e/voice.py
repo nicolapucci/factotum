@@ -54,15 +54,20 @@ class StandInWhisper:
         """The model sizes the adapter asked for: what a binding said reaches the engine."""
 
         self.heard: list[str] = []
+        self.languages: list[tuple[str, ...] | None] = []
+        """The languages the binding allowed, for each recording: what a binding said reaches the
+        engine, through the hub as well when the hub holds the binding."""
+
         self.broken = False
 
     def build(self, model: str) -> "StandInWhisper":
         self.models.append(model)
         return self
 
-    def transcribe_wav(self, wav_bytes: bytes) -> str:
+    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
         if self.broken:
             raise RuntimeError("the model fell over")
+        self.languages.append(languages)
         self.heard.append(words_in(wav_bytes))
         return self.heard[-1]
 

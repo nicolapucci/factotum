@@ -309,6 +309,19 @@ class TestLoadingBindings:
         assert embedding.secret_ref == "env:OPENAI_API_KEY"
         assert embedding.options == BindingOptions(dimensions=512, timeout_s=30)
 
+    def test_the_languages_of_a_speech_binding_are_read_as_a_tuple(self) -> None:
+        text = """
+bindings:
+  - role: stt
+    provider: whisper_local
+    model: small
+    options:
+      languages: [it]
+"""
+        [speech] = load_bindings(text, tenant_id=TENANT)
+
+        assert speech.options.languages == ("it",)
+
     def test_a_file_that_still_declares_a_locality_is_refused_and_not_ignored(self) -> None:
         # Where a model runs is not something the system records or enforces (ADR 0010): a file
         # that says so would let its author believe that something protects the documents.

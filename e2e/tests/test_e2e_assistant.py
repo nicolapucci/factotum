@@ -28,6 +28,7 @@ from factotum.e2e.house import TIMEOUT_S, running
 from factotum.e2e.models import (
     CLOSING,
     FROM_THE_MANUAL,
+    LANGUAGES,
     NOT_FOUND,
     OFFER,
     ROUTER,
@@ -53,8 +54,10 @@ class TestAskingByVoice:
                 ended = await speaker.says_aloud(QUESTION)
 
                 assert ended.status is TurnStatus.FINISHED, ended
-                # What was said was heard, with the model the binding named...
+                # What was said was heard, with the model the binding named and in the languages it
+                # allowed...
                 assert (house.whisper.models, house.whisper.heard) == ([STT_MODEL], [QUESTION])
+                assert house.whisper.languages == [LANGUAGES]
                 # ...it reached the model that wrote the answer, with the manual in front of it...
                 [prompt] = house.model.prompts
                 assert ROUTER in prompt

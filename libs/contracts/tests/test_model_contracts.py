@@ -65,6 +65,40 @@ class TestBindingOptions:
         with pytest.raises(ValidationError, match="verbose"):
             BindingOptions.model_validate({"verbose": True})
 
+    def test_no_language_is_the_default_and_leaves_the_guess_to_the_model(self) -> None:
+        assert BindingOptions().languages is None
+
+    @pytest.mark.parametrize("written", [["it"], ["it", "en"], ("it",), ["haw"]])
+    def test_languages_written_as_a_list_are_kept_as_a_tuple_of_codes(
+        self, written: list[str] | tuple[str, ...]
+    ) -> None:
+        options = BindingOptions.model_validate({"languages": written})
+
+        assert options.languages == tuple(written)
+
+    @pytest.mark.parametrize(
+        ("languages", "reason"),
+        [
+            ([], "at least 1 item"),
+            (["it", "it"], "listed twice"),
+            (["IT"], "not a language code"),
+            (["italian"], "not a language code"),
+            (["i"], "not a language code"),
+            ([""], "not a language code"),
+            (["it", "en", "fr", "de", "es", "pt", "nl", "pl", "ru"], "at most 8 items"),
+        ],
+    )
+    def test_a_list_of_languages_that_is_not_one_is_rejected(
+        self, languages: list[str], reason: str
+    ) -> None:
+        with pytest.raises(ValidationError, match=reason):
+            BindingOptions.model_validate({"languages": languages})
+
+    def test_languages_survive_json_as_they_do_in_the_hubs_store(self) -> None:
+        options = BindingOptions(languages=("it", "en"))
+
+        assert BindingOptions.model_validate_json(options.model_dump_json()) == options
+
 
 class TestModelBinding:
     def test_a_local_ollama_needs_only_an_address(self) -> None:

@@ -19,7 +19,7 @@ from factotum.contracts.identity import Principal
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.e2e.devices import connected
 from factotum.e2e.house import House, running
-from factotum.e2e.models import NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
+from factotum.e2e.models import LANGUAGES, NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
 from factotum.e2e.wiring import HA_TOKEN, TENANT, Auth
 from factotum.terminal.client import Refused
 
@@ -45,6 +45,8 @@ class TestADeviceThatTheHubPaired:
 
                 assert ended.status is TurnStatus.FINISHED, ended
                 assert speaker.spoken() == SPOKEN_ANSWER
+                # The languages are in the binding the hub keeps, and reach the engine from there.
+                assert house.whisper.languages == [LANGUAGES]
 
     async def test_a_lamp_is_switched_with_the_secret_the_hub_keeps(self) -> None:
         async with running(auth=Auth.HUB) as house, connected(house, "speaker") as speaker:

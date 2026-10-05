@@ -2,8 +2,9 @@
 
 Neither adapter talks to a real model here: each takes an ``engine_factory`` that hands out a
 fake standing in for ``faster_whisper.WhisperModel`` or ``piper.PiperVoice``, so these tests never
-load a model or touch a GPU. The engines themselves are exercised only by the live tests, by hand,
-against the real libraries.
+load a model or touch a GPU. What the engine of Whisper decides is tested in
+``test_whisper_engine.py`` with a fake model; the models themselves are exercised only by the live
+tests and by the end-to-end ones with real speech, by hand, against the real libraries.
 """
 
 import wave
@@ -13,7 +14,7 @@ import pytest
 
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.errors import ProviderUnavailableError, RoleNotSupportedError
-from factotum.contracts.models import ProviderKind
+from factotum.contracts.models import BindingOptions, ProviderKind
 from factotum.contracts.testing import make_model_binding, make_tenant_id
 from factotum.model_gateway.providers.base import ResolvedBinding
 from factotum.model_gateway.providers.piper_local import PiperLocalAdapter
@@ -36,13 +37,16 @@ def wav_bytes(sample_rate: int = 22050) -> bytes:
     return buffer.getvalue()
 
 
-def whisper_binding(model: str = "base") -> ResolvedBinding:
+def whisper_binding(
+    model: str = "base", *, languages: tuple[str, ...] | None = None
+) -> ResolvedBinding:
     binding = make_model_binding(
         tenant_id=make_tenant_id(),
         provider=ProviderKind.WHISPER_LOCAL,
         model=model,
         base_url=None,
         secret_ref=None,
+        options=BindingOptions(languages=languages),
     )
     return resolved(binding)
 
@@ -62,9 +66,11 @@ class FakeWhisperEngine:
     def __init__(self, outcome: str | Exception = "how do I reset the router") -> None:
         self._outcome = outcome
         self.asked: list[bytes] = []
+        self.languages: list[tuple[str, ...] | None] = []
 
-    def transcribe_wav(self, wav_bytes: bytes) -> str:
+    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
         self.asked.append(wav_bytes)
+        self.languages.append(languages)
         if isinstance(self._outcome, Exception):
             raise self._outcome
         return self._outcome
@@ -91,6 +97,17 @@ class TestWhisperLocalAdapter:
 
         assert text == "hold the button for ten seconds"
         assert engine.asked == [b"raw-wav-bytes"]
+
+    @pytest.mark.parametrize("languages", [None, ("it",), ("it", "en")])
+    async def test_the_languages_the_binding_allows_go_to_the_engine(
+        self, languages: tuple[str, ...] | None
+    ) -> None:
+        engine = FakeWhisperEngine()
+        adapter = WhisperLocalAdapter(engine_factory=lambda model: engine)
+
+        await adapter.transcribe(None, whisper_binding(languages=languages), audio())  # type: ignore[arg-type]
+
+        assert engine.languages == [languages]
 
     async def test_an_engine_is_built_once_per_model_size_and_reused(self) -> None:
         built: list[str] = []

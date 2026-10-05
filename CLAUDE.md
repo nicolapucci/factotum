@@ -177,6 +177,11 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - `make_model_binding` gives every binding an address (a local Ollama). The two local speech providers
   have none, and a person writes their binding without one (`base_url=None`): a test of speech must too.
   The first ones did not, and a `KeyError` for the address went unseen until an end-to-end test.
+- Whisper left to guess the language of a short command guesses wrong about half the time (Arabic for
+  "apri il garage", Polish for "no, grazie"): bind `stt` with `options.languages`. And faster-whisper
+  cannot read a recording with PyAV 19 (it passes `av.open` an argument that was removed), so `av` is
+  held below 19. A stand-in engine showed neither: it took a real model, so a change to the speech
+  path has to be tried with one, not only with the stand-ins.
 - The keys of `extra=` in a log call must not be attributes of a `LogRecord` (`name`, `message`,
   `args`...): the standard library raises `KeyError`, and only when the level is enabled, which is
   how a session died the first time the log was at INFO.

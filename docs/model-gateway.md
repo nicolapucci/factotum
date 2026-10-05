@@ -109,18 +109,33 @@ embeddings.
 bindings:
   - role: stt
     provider: whisper_local
-    model: base
+    model: small
+    options:
+      languages: [it]
   - role: tts
     provider: piper_local
     model: it_IT-paola-medium
 ```
+
+`options.languages` says which languages are spoken to the device, as the codes Whisper uses. Left
+to guess among all of its own, Whisper often picks one that nobody spoke for a short command: with
+the Italian voice of Piper speaking, 7 of 15 commands and answers came out in Spanish, Arabic,
+Polish or Persian ("apri il garage" as «أبيل غراف»), which nothing downstream can route. One
+language is forced; several limit the guess to them, at the cost of one more pass of the model over
+the recording to see which of them it hears best; none leaves the guess to the model.
 
 The engine for a binding's model is built the first time it is actually asked to transcribe or to
 synthesize, not at startup: a deployment that never binds either role never loads one. Building it
 downloads the model from Hugging Face if it is not already cached — a few hundred MB for a Whisper
 size, tens of MB for a Piper voice — into `FACTOTUM_GATEWAY_SPEECH_CACHE_DIR` (default: each
 library's own cache in the user's home directory); `FACTOTUM_GATEWAY_SPEECH_DEVICE` (`cpu` or
-`cuda`) picks where both run. See [ADR
+`cuda`) picks where both run. A path is never downloaded and a name is: give `model` the folder of a
+Whisper model, or the `.onnx` file of a voice, where nothing may be fetched. On `cuda`, ctranslate2
+needs cuBLAS 12 on the `PATH` (cuDNN 9 comes inside its wheel).
+
+faster-whisper reads a recording with PyAV, and the gateway holds `av` below 19: faster-whisper
+1.2.1 passes `av.open` an argument that PyAV 19 removed, so with it no recording could be read.
+`tests/test_speech_decoding.py` is what fails first when a lock moves past that. See [ADR
 0021](decisions/0021-voice-wake-word-on-the-device-speech-through-the-gateway.md) for why these
 two, in the gateway's own process, rather than a hosted provider.
 

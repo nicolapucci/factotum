@@ -42,6 +42,20 @@ bindings:
     options:
       max_input_tokens: 2048
 
+  # Speech, in the process of the gateway: no address and no key. The model of a name is downloaded
+  # the first time it is used (a few hundred MB for Whisper, tens for a Piper voice); the folder of
+  # a Whisper model or the .onnx file of a voice that is already on disk is never downloaded. Whisper
+  # left to guess the language of a short command guesses wrong about half the time (Arabic for
+  # "apri il garage"): say which are spoken.
+  # - role: stt
+  #   provider: whisper_local
+  #   model: small
+  #   options:
+  #     languages: [it]
+  # - role: tts
+  #   provider: piper_local
+  #   model: it_IT-paola-medium
+
   # A hosted provider, with your own key. What you send it goes to that provider: where your data
   # goes is decided by the models you bind and by where you run Factotum, and nothing here
   # second-guesses it.

@@ -28,7 +28,7 @@ from factotum.contracts.chat import (
     UsageEvent,
 )
 from factotum.contracts.ids import TenantId
-from factotum.contracts.models import ModelBinding, ModelRole, ProviderKind
+from factotum.contracts.models import BindingOptions, ModelBinding, ModelRole, ProviderKind
 from factotum.contracts.testing import make_model_binding
 from factotum.knowledge.testing import FakeEmbedder
 from factotum.model_gateway.providers.base import (
@@ -39,6 +39,9 @@ from factotum.model_gateway.providers.base import (
 
 STT_MODEL = "tiny"
 VOICE = "it_IT-paola-medium"
+LANGUAGES = ("it", "en")
+"""What the house is spoken to in, as its speech-to-text binding says it: the questions of these
+tests are in English and in Italian. The tests with real speech bind Italian only."""
 
 # What the chat model writes when it answers a question, and so what a speaker is made to say.
 CLOSING = "Let me know if there is anything else you need."
@@ -199,10 +202,19 @@ def bindings(
     """What the tenant bound, the way a person writes it: the speech roles have no address."""
 
     def bind(
-        role: ModelRole, provider: ProviderKind, model: str, base_url: str | None = None
+        role: ModelRole,
+        provider: ProviderKind,
+        model: str,
+        base_url: str | None = None,
+        options: BindingOptions | None = None,
     ) -> ModelBinding:
         return make_model_binding(
-            tenant_id=tenant_id, role=role, provider=provider, model=model, base_url=base_url
+            tenant_id=tenant_id,
+            role=role,
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            options=options,
         )
 
     found = [
@@ -210,7 +222,14 @@ def bindings(
         bind(ModelRole.EMBEDDING, ProviderKind.OLLAMA, "the-words-model", "http://localhost:11434"),
     ]
     if speech_to_text:
-        found.append(bind(ModelRole.STT, ProviderKind.WHISPER_LOCAL, STT_MODEL))
+        found.append(
+            bind(
+                ModelRole.STT,
+                ProviderKind.WHISPER_LOCAL,
+                STT_MODEL,
+                options=BindingOptions(languages=LANGUAGES),
+            )
+        )
     if text_to_speech:
         found.append(bind(ModelRole.TTS, ProviderKind.PIPER_LOCAL, VOICE))
     return found

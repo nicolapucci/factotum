@@ -18,6 +18,7 @@ from factotum.contracts.identity import Owner, OwnerKind
 from factotum.contracts.ids import ModelBindingId, TenantId
 
 _SECRET_REF = re.compile(r"^env:[A-Z][A-Z0-9_]{0,63}$")
+_LANGUAGE_CODE = re.compile(r"^[a-z]{2,3}$")
 
 
 class ModelRole(StrEnum):
@@ -95,6 +96,26 @@ class BindingOptions(Contract):
 
     stream_usage: bool | None = None
     """OpenAI-compatible servers: ask for token usage in streams (not every server accepts it)."""
+
+    languages: tuple[str, ...] | None = Field(default=None, min_length=1, max_length=8)
+    """Speech-to-text only: the languages people speak to the device, as the codes Whisper uses
+    (``it``, ``en``). One is that language, several limit the guess to them, and unset leaves the
+    model to guess among all of its own: for a short command ("apri il garage") that is often a
+    language nobody spoke, and what it writes is then in that language, or in its script."""
+
+    @field_validator("languages")
+    @classmethod
+    def _languages_are_distinct_codes(
+        cls, languages: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        if languages is None:
+            return None
+        for code in languages:
+            if not _LANGUAGE_CODE.fullmatch(code):
+                raise ValueError(f"{code!r} is not a language code such as 'it' or 'en'")
+        if len(set(languages)) != len(languages):
+            raise ValueError("a language is listed twice")
+        return languages
 
 
 class ModelBinding(Contract):
