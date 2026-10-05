@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import TypeAdapter
 
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEVICE_HEADER, SUBJECT_HEADER, DevAuthenticator
@@ -41,11 +42,12 @@ from factotum.contracts.errors import (
 )
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.models import BindingOptions, ModelBinding, ModelRole, ProviderKind
+from factotum.contracts.speech import SynthesisError, SynthesisEvent
 from factotum.contracts.testing import make_model_binding, make_tenant_id, make_user_id
 from factotum.model_gateway.api import MAX_BODY_BYTES, _server_sent, create_app
 from factotum.model_gateway.bindings import InMemoryBindingRepository
 from factotum.model_gateway.core import ModelGateway
-from factotum.model_gateway.providers.base import EmbeddingBatch
+from factotum.model_gateway.providers.base import EmbeddingBatch, SpeechPiece
 from factotum.model_gateway.retry import RetryPolicy
 from factotum.model_gateway.secrets import EnvSecretResolver
 from factotum.model_gateway.testing import ScriptedAdapter, Sleeps, TrackedClients
@@ -597,6 +599,141 @@ class TestSynthesis:
 
         assert response.status_code == 404
         assert response.json()["error"]["details"] == {"role": "tts"}
+
+
+def a_voice(samples: int = 100, rate: int = 22050) -> SpeechPiece:
+    return SpeechPiece(sample_rate=rate, pcm=bytes(i % 251 for i in range(2 * samples)))
+
+
+_VOICE_EVENT: TypeAdapter[Any] = TypeAdapter(SynthesisEvent)
+
+
+class TestAStreamedVoice:
+    async def test_the_voice_arrives_as_server_sent_events_in_order(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_voice(a_voice(100))
+
+        async with service.client() as client:
+            response = await client.post(
+                "/v1/synthesize", json={"text": "Dinner is ready", "stream": True}
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["cache-control"] == "no-store"
+        assert [frame["type"] for frame in frames(response)] == ["format", "samples", "done"]
+        assert frames(response)[0] == {
+            "type": "format",
+            "format": "pcm_s16le",
+            "sample_rate": 22050,
+        }
+
+    async def test_what_the_events_carry_is_what_the_voice_said(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        voice = a_voice(2500)  # more than a chunk
+        service.adapter.will_voice(voice)
+
+        async with service.client() as client:
+            response = await client.post(
+                "/v1/synthesize", json={"text": "Dinner is ready", "stream": True}
+            )
+
+        events = [_VOICE_EVENT.validate_python(frame) for frame in frames(response)]
+        said = b"".join(event.data for event in events if event.type == "samples")
+        assert said == voice.pcm
+        assert sum(event.type == "samples" for event in events) == 2
+
+    async def test_every_event_is_a_frame_of_its_own(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_voice(SpeechPiece(sample_rate=16000, pcm=b"\x00\x01\x02\x03"))
+
+        async with service.client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "hi", "stream": True})
+
+        assert response.text == (
+            'data: {"type":"format","format":"pcm_s16le","sample_rate":16000}\n\n'
+            'data: {"type":"samples","data":"AAECAw=="}\n\n'
+            'data: {"type":"done"}\n\n'
+        )
+
+    async def test_the_text_reaches_the_adapter_as_it_was(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_voice(a_voice(10))
+
+        async with service.client() as client:
+            await client.post("/v1/synthesize", json={"text": "Dinner is ready", "stream": True})
+
+        assert service.adapter.voices[0][1] == "Dinner is ready"
+        assert service.adapter.syntheses == []
+
+    async def test_a_request_that_does_not_ask_for_a_stream_is_still_answered_with_a_clip(
+        self,
+    ) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_synthesize(clip(data=b"spoken-aloud"))
+
+        async with service.client() as client:
+            response = await client.post(
+                "/v1/synthesize", json={"text": "Dinner is ready", "stream": False}
+            )
+
+        assert response.headers["content-type"] == "application/json"
+        assert AudioPayload.model_validate(response.json()["audio"]).data == b"spoken-aloud"
+        assert service.adapter.voices == []
+
+    async def test_a_failure_to_start_is_an_error_status_and_not_a_stream(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_voice(ProviderAuthError("the key was refused"))
+
+        async with service.client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "hi", "stream": True})
+
+        assert response.status_code == 502
+        assert response.headers["content-type"] == "application/json"
+        assert response.json()["error"]["code"] == "provider_auth_error"
+
+    async def test_no_tts_binding_is_a_404_even_when_a_stream_was_asked_for(self) -> None:
+        async with Service(binding()).client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "hi", "stream": True})
+
+        assert response.status_code == 404
+        assert response.json()["error"]["details"] == {"role": "tts"}
+
+    async def test_a_failure_after_the_start_is_the_last_event_of_the_stream(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_voice(a_voice(10), ProviderUnavailableError("it crashed"))
+
+        async with service.client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "hi", "stream": True})
+
+        assert response.status_code == 200
+        last = _VOICE_EVENT.validate_python(frames(response)[-1])
+        assert last == SynthesisError(code="provider_unavailable", message="it crashed")
+
+    async def test_a_voice_with_nothing_to_say_is_done_and_nothing_else(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_voice()
+
+        async with service.client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "...", "stream": True})
+
+        assert frames(response) == [{"type": "done"}]
+
+    async def test_the_providers_voice_is_closed_and_so_is_the_client(self) -> None:
+        service = Service(binding(ModelRole.TTS, model="it_IT-paola-medium"))
+        service.adapter.will_voice(a_voice(10))
+
+        async with service.client() as client:
+            await client.post("/v1/synthesize", json={"text": "hi", "stream": True})
+
+        assert service.adapter.voice_endings == ["completed"]
+        assert all(c.is_closed for c in service.clients.created)
+
+    async def test_blank_text_is_a_422_whether_or_not_a_stream_was_asked_for(self) -> None:
+        async with Service(binding(ModelRole.TTS)).client() as client:
+            response = await client.post("/v1/synthesize", json={"text": "", "stream": True})
+
+        assert response.status_code == 422
 
 
 class TestProfiles:

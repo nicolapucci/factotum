@@ -63,6 +63,21 @@ class EmbeddingBatch:
     usage: Usage | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SpeechPiece:
+    """What a voice has made so far, as it makes it: samples of ``StreamFormat.PCM_S16LE`` (16-bit
+    little-endian, one channel) at ``sample_rate``.
+
+    A voice makes its pieces as big as suits it, Piper's a sentence each, and where one ends is not
+    where a sample does when a provider hands over what a network gave it: the gateway puts the
+    pieces together and cuts them into chunks of whole samples (``ModelGateway.synthesize_stream``)
+    before anyone else sees them.
+    """
+
+    sample_rate: int
+    pcm: bytes
+
+
 def api_url(resolved: ResolvedBinding, path: str) -> str:
     """The address of an endpoint under the binding's base URL."""
     return f"{resolved.base_url}/{path}"
@@ -136,6 +151,15 @@ class ProviderAdapter(Protocol):
         self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
     ) -> AudioPayload:
         """``text``, spoken aloud."""
+        ...
+
+    def synthesize_stream(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AsyncGenerator[SpeechPiece]:
+        """``text``, spoken aloud, as the voice makes it. A failure to begin is raised when the
+        first piece is asked for, so that it can be retried before anything has been sent; one
+        after that ends the stream. A provider that makes the whole clip at once yields it as one
+        piece."""
         ...
 
 

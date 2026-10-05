@@ -15,12 +15,13 @@ or ``cuda``).
 import io
 import os
 import wave
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Iterator, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from factotum.contracts.audio import AudioPayload
+from factotum.model_gateway.providers.base import SpeechPiece
 from factotum.model_gateway.providers.piper_local import LocalPiperEngine, PiperEngine
 from factotum.model_gateway.providers.whisper_local import FasterWhisperEngine, WhisperEngine
 
@@ -189,6 +190,10 @@ class RecordedPiper:
     def synthesize_wav(self, text: str) -> bytes:
         self.spoken.append(text)
         return self._engine.synthesize_wav(text)
+
+    def synthesize_pieces(self, text: str) -> Iterator[SpeechPiece]:
+        self.spoken.append(text)
+        return self._engine.synthesize_pieces(text)
 
 
 class Person:

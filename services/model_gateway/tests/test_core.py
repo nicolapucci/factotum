@@ -1,11 +1,14 @@
+import asyncio
 import logging
 from typing import Any
 
 import httpx
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from factotum.common.urlguard import UrlPolicy
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import AudioPayload, chunk_bytes
 from factotum.contracts.chat import (
     ChatResult,
     ErrorEvent,
@@ -37,6 +40,12 @@ from factotum.contracts.models import (
     ProviderKind,
     StructuredOutputSupport,
 )
+from factotum.contracts.speech import (
+    SynthesisDone,
+    SynthesisError,
+    SynthesisFormat,
+    SynthesisSamples,
+)
 from factotum.contracts.testing import (
     make_model_binding,
     make_tenant_id,
@@ -51,7 +60,7 @@ from factotum.model_gateway.core import (
     default_adapters,
     guarded_clients,
 )
-from factotum.model_gateway.providers.base import EmbeddingBatch, ResolvedBinding
+from factotum.model_gateway.providers.base import EmbeddingBatch, ResolvedBinding, SpeechPiece
 from factotum.model_gateway.retry import RetryPolicy
 from factotum.model_gateway.secrets import EnvSecretResolver
 from factotum.model_gateway.testing import (
@@ -695,20 +704,20 @@ class TestASpeechBindingWithNoAddress:
         assert (resolved_binding.model, resolved_binding.base_url) == ("it_IT-paola-medium", "")
 
     @pytest.mark.parametrize(
-        ("role", "provider"),
+        ("role", "provider", "streams"),
         [
-            (ModelRole.STT, ProviderKind.WHISPER_LOCAL),
-            (ModelRole.TTS, ProviderKind.PIPER_LOCAL),
+            (ModelRole.STT, ProviderKind.WHISPER_LOCAL, False),
+            (ModelRole.TTS, ProviderKind.PIPER_LOCAL, True),
         ],
     )
-    async def test_the_profile_of_the_role_is_there_to_be_read(
-        self, role: ModelRole, provider: ProviderKind
+    async def test_the_profile_of_the_role_is_there_to_be_read_and_says_whether_it_streams(
+        self, role: ModelRole, provider: ProviderKind, streams: bool
     ) -> None:
         rig = Rig(speech_binding(role, provider, "any"))
 
         profile = await rig.gateway.profile(TENANT_PRINCIPAL, role)
 
-        assert (profile.role, profile.streaming) == (role, False)
+        assert (profile.role, profile.streaming) == (role, streams)
 
 
 class TestTranscribe:
@@ -792,6 +801,253 @@ class TestSynthesize:
 
         assert audio.data == b"second try"
         assert rig.sleeps.delays == [1.0]
+
+
+def voice_binding() -> ModelBinding:
+    return local_binding(ModelRole.TTS, model="it_IT-paola-medium")
+
+
+def made(samples: int, *, rate: int = 22050, start: int = 0) -> SpeechPiece:
+    """What a voice made: ``samples`` of them, each byte different from its neighbours."""
+    return SpeechPiece(sample_rate=rate, pcm=bytes((start + i) % 251 for i in range(2 * samples)))
+
+
+def sound_of(got: list[Any]) -> bytes:
+    """The samples a stream carried, put together."""
+    return b"".join(event.data for event in got if isinstance(event, SynthesisSamples))
+
+
+class TestSynthesizeStream:
+    async def test_the_format_comes_first_then_the_samples_then_that_it_is_done(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(100))
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "Dinner is ready"))
+
+        assert got == [
+            SynthesisFormat(sample_rate=22050),
+            SynthesisSamples(data=made(100).pcm),
+            SynthesisDone(),
+        ]
+
+    async def test_the_adapter_gets_the_text_as_it_was_and_the_binding_of_the_role(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10))
+
+        await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "Dinner is ready"))
+
+        [(binding_used, text_said)] = rig.adapter.voices
+        assert text_said == "Dinner is ready"
+        assert binding_used.model == "it_IT-paola-medium"
+
+    @pytest.mark.parametrize("rate", [8000, 16000, 22050, 44100, 48000])
+    async def test_a_chunk_is_a_tenth_of_a_second_of_the_voice_and_the_last_is_what_is_left(
+        self, rate: int
+    ) -> None:
+        piece = made(rate // 4, rate=rate)  # a quarter of a second
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(piece)
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        chunks = [event.data for event in got if isinstance(event, SynthesisSamples)]
+        assert [len(chunk) for chunk in chunks[:-1]] == [rate * 2 // 10] * 2
+        assert 0 < len(chunks[-1]) <= rate * 2 // 10
+        assert b"".join(chunks) == piece.pcm
+
+    async def test_the_sentences_of_a_voice_are_one_stream_with_one_format(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10, start=0), made(20, start=7), made(30, start=3))
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "Uno. Due. Tre."))
+
+        assert [type(event) for event in got] == [
+            SynthesisFormat,
+            SynthesisSamples,
+            SynthesisSamples,
+            SynthesisSamples,
+            SynthesisDone,
+        ]
+        assert sound_of(got) == made(10).pcm + made(20, start=7).pcm + made(30, start=3).pcm
+
+    async def test_a_sample_that_a_provider_cut_in_half_between_two_pieces_is_put_together(
+        self,
+    ) -> None:
+        pcm = bytes(range(1, 21))
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(
+            SpeechPiece(sample_rate=22050, pcm=pcm[:5]),
+            SpeechPiece(sample_rate=22050, pcm=pcm[5:12]),
+            SpeechPiece(sample_rate=22050, pcm=pcm[12:]),
+        )
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert sound_of(got) == pcm
+        assert all(len(e.data) % 2 == 0 for e in got if isinstance(e, SynthesisSamples))
+
+    async def test_half_a_sample_that_nothing_follows_is_left_out(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(SpeechPiece(sample_rate=22050, pcm=b"\x01\x02\x03"))
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert got == [
+            SynthesisFormat(sample_rate=22050),
+            SynthesisSamples(data=b"\x01\x02"),
+            SynthesisDone(),
+        ]
+
+    async def test_a_piece_with_no_sample_in_it_says_the_format_and_no_sound(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(SpeechPiece(sample_rate=22050, pcm=b""))
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert got == [SynthesisFormat(sample_rate=22050), SynthesisDone()]
+
+    async def test_a_voice_with_nothing_to_say_is_done_and_has_no_format_to_give(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice()
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "..."))
+
+        assert got == [SynthesisDone()]
+
+    async def test_a_voice_that_changes_its_rate_in_the_middle_fails_the_stream_there(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10, rate=22050), made(10, rate=16000))
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert got[:2] == [SynthesisFormat(sample_rate=22050), SynthesisSamples(data=made(10).pcm)]
+        assert isinstance(got[2], SynthesisError)
+        assert got[2].code == "provider_unavailable"
+        assert "sample rate" in got[2].message
+        assert len(got) == 3
+
+    async def test_no_binding_is_raised_when_the_stream_is_first_asked_for_an_event(self) -> None:
+        rig = Rig()
+
+        with pytest.raises(BindingNotFoundError):
+            await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+    async def test_a_provider_that_has_no_voice_is_refused_before_any_request(self) -> None:
+        anthropic = make_model_binding(
+            tenant_id=TENANT,
+            role=ModelRole.TTS,
+            provider=ProviderKind.ANTHROPIC,
+            base_url=None,
+            secret_ref="env:OPENAI_API_KEY",
+        )
+        gateway = ModelGateway(
+            InMemoryBindingRepository([anthropic]), SECRETS, client_factory=TrackedClients()
+        )
+
+        with pytest.raises(RoleNotSupportedError):
+            await events(gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+    async def test_a_failure_before_the_first_piece_is_raised_typed(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(ProviderAuthError("bad key"))
+
+        with pytest.raises(ProviderAuthError):
+            await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert rig.all_clients_closed()
+
+    async def test_a_failure_to_start_is_retried_and_the_caller_never_notices(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(ProviderUnavailableError("busy"))
+        rig.adapter.will_voice(made(10))
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert sound_of(got) == made(10).pcm
+        assert len(rig.adapter.voices) == 2
+        assert rig.sleeps.delays == [1.0]
+        assert rig.adapter.voice_endings == ["failed", "completed"]
+
+    async def test_a_rate_limit_at_the_start_is_raised_when_the_wait_is_too_long(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(RateLimitedError("slow", retry_after_s=60.0))
+
+        with pytest.raises(RateLimitedError):
+            await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+    async def test_a_failure_after_the_first_piece_ends_the_stream_with_an_error_event(
+        self,
+    ) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10), ProviderUnavailableError("the voice fell over"))
+
+        got = await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "Uno. Due."))
+
+        assert got == [
+            SynthesisFormat(sample_rate=22050),
+            SynthesisSamples(data=made(10).pcm),
+            SynthesisError(code="provider_unavailable", message="the voice fell over"),
+        ]
+
+    async def test_a_voice_that_has_started_is_never_retried(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10), ProviderUnavailableError("crash"))
+        rig.adapter.will_voice(made(10))
+
+        await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert len(rig.adapter.voices) == 1
+        assert rig.sleeps.delays == []
+
+    async def test_the_client_is_closed_when_the_stream_ends(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10))
+
+        await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        assert rig.all_clients_closed()
+        assert rig.adapter.voice_endings == ["completed"]
+
+    async def test_a_listener_that_walks_away_closes_the_providers_voice(self) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10), made(10), made(10))
+        stream = rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "Uno. Due. Tre.")
+
+        first = await anext(stream)
+        await stream.aclose()
+
+        assert first == SynthesisFormat(sample_rate=22050)
+        assert rig.adapter.voice_endings == ["closed"]
+        assert rig.all_clients_closed()
+
+    @given(
+        sizes=st.lists(st.integers(min_value=0, max_value=3000), min_size=1, max_size=8),
+        rate=st.sampled_from([8000, 16000, 22050, 44100, 48000]),
+    )
+    def test_however_a_provider_cuts_what_it_makes_the_sound_that_comes_out_is_the_same(
+        self, sizes: list[int], rate: int
+    ) -> None:
+        pcm = bytes(i % 251 for i in range(sum(sizes)))
+        pieces: list[SpeechPiece] = []
+        start = 0
+        for size in sizes:
+            pieces.append(SpeechPiece(sample_rate=rate, pcm=pcm[start : start + size]))
+            start += size
+
+        async def play() -> list[Any]:
+            rig = Rig(voice_binding())
+            rig.adapter.will_voice(*pieces)
+            return await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "hello"))
+
+        got = asyncio.run(play())
+
+        assert sound_of(got) == pcm[: len(pcm) - len(pcm) % 2]
+        for event in got:
+            if isinstance(event, SynthesisSamples):
+                assert len(event.data) % 2 == 0
+                assert len(event.data) <= chunk_bytes(rate)
+        assert isinstance(got[-1], SynthesisDone)
+        assert sum(isinstance(event, SynthesisFormat) for event in got) == 1
 
 
 class TestProfile:
@@ -969,6 +1225,53 @@ class TestLogging:
 
         with caplog.at_level(logging.INFO, logger="factotum.model_gateway"):
             await events(rig.gateway.chat_stream(TENANT_PRINCIPAL, ask(stream=True)))
+
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert record.__dict__["outcome"] == "provider_unavailable"
+
+    async def test_a_voice_is_logged_when_it_ends_and_what_it_said_is_not(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10))
+
+        with caplog.at_level(logging.DEBUG, logger="factotum.model_gateway"):
+            await events(
+                rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "The launch code is 0000.")
+            )
+
+        [record] = caplog.records
+        assert record.levelno == logging.INFO
+        assert record.__dict__["role"] == "tts"
+        assert record.__dict__["outcome"] == "ok"
+        assert record.__dict__["model"] == "it_IT-paola-medium"
+        text = " ".join(f"{record.getMessage()} {record.__dict__}" for record in caplog.records)
+        assert "launch code" not in text
+
+    async def test_a_voice_that_the_listener_abandons_is_logged_as_cancelled(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10), made(10))
+
+        with caplog.at_level(logging.INFO, logger="factotum.model_gateway"):
+            stream = rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "Uno. Due.")
+            await anext(stream)
+            await stream.aclose()
+
+        [record] = caplog.records
+        assert record.levelno == logging.INFO
+        assert record.__dict__["outcome"] == "cancelled"
+
+    async def test_a_voice_that_fails_midway_is_logged_with_the_error_code(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig = Rig(voice_binding())
+        rig.adapter.will_voice(made(10), ProviderUnavailableError("crash"))
+
+        with caplog.at_level(logging.INFO, logger="factotum.model_gateway"):
+            await events(rig.gateway.synthesize_stream(TENANT_PRINCIPAL, "Uno. Due."))
 
         [record] = caplog.records
         assert record.levelno == logging.WARNING

@@ -15,7 +15,7 @@ from factotum.contracts.audio import AudioPayload
 from factotum.contracts.chat import ChatMessage, ChatRequest, ChatResult, EventUnion, MessageRole
 from factotum.contracts.errors import FactotumError
 from factotum.contracts.models import ModelBinding, ProviderKind
-from factotum.model_gateway.providers.base import EmbeddingBatch, ResolvedBinding
+from factotum.model_gateway.providers.base import EmbeddingBatch, ResolvedBinding, SpeechPiece
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -133,12 +133,15 @@ class ScriptedAdapter:
         self.embeds: list[tuple[ResolvedBinding, tuple[str, ...]]] = []
         self.transcriptions: list[tuple[ResolvedBinding, AudioPayload]] = []
         self.syntheses: list[tuple[ResolvedBinding, str]] = []
+        self.voices: list[tuple[ResolvedBinding, str]] = []
         self.stream_endings: list[str] = []
+        self.voice_endings: list[str] = []
         self._chat_script: list[ChatResult | Exception] = []
         self._stream_script: list[Sequence[EventUnion | Exception]] = []
         self._embed_script: list[EmbeddingBatch | Exception] = []
         self._transcribe_script: list[str | Exception] = []
         self._synthesize_script: list[AudioPayload | Exception] = []
+        self._voice_script: list[Sequence[SpeechPiece | Exception]] = []
 
     def will_chat(self, *outcomes: ChatResult | Exception) -> Self:
         self._chat_script.extend(outcomes)
@@ -158,6 +161,12 @@ class ScriptedAdapter:
 
     def will_synthesize(self, *outcomes: AudioPayload | Exception) -> Self:
         self._synthesize_script.extend(outcomes)
+        return self
+
+    def will_voice(self, *items: SpeechPiece | Exception) -> Self:
+        """The next voice that is asked for: the pieces it makes, and the error it ends with if
+        one is among them."""
+        self._voice_script.append(items)
         return self
 
     def native_structured_output(self, resolved: ResolvedBinding) -> bool:
@@ -214,6 +223,21 @@ class ScriptedAdapter:
             raise outcome
         return outcome
 
+    async def synthesize_stream(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AsyncGenerator[SpeechPiece]:
+        self.voices.append((resolved, text))
+        ending = "closed"
+        try:
+            for item in self._voice_script.pop(0):
+                if isinstance(item, Exception):
+                    ending = "failed"
+                    raise item
+                yield item
+            ending = "completed"
+        finally:
+            self.voice_endings.append(ending)
+
 
 class TrackedClients:
     """A client factory whose clients cannot reach any network, and that remembers them, so that a
@@ -242,11 +266,12 @@ class Sleeps:
         self.delays.append(delay)
 
 
-async def collect_events(
-    stream: AsyncIterator[EventUnion],
-) -> tuple[list[EventUnion], FactotumError | None]:
-    """Everything a stream delivered, and the error that ended it, if one did."""
-    got: list[EventUnion] = []
+async def collect_events[E](
+    stream: AsyncIterator[E],
+) -> tuple[list[E], FactotumError | None]:
+    """Everything a stream delivered (of chat, or of a voice), and the error that ended it, if one
+    did."""
+    got: list[E] = []
     try:
         async for event in stream:
             got.append(event)  # noqa: PERF401 - what came before a failure is what is being kept
@@ -255,7 +280,7 @@ async def collect_events(
     return got, None
 
 
-async def events(stream: AsyncIterator[EventUnion]) -> list[EventUnion]:
+async def events[E](stream: AsyncIterator[E]) -> list[E]:
     """Everything a stream delivered; the error that ended it, if any, is raised."""
     got, error = await collect_events(stream)
     if error is not None:

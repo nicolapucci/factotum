@@ -7,7 +7,9 @@ load a model or touch a GPU. What the engine of Whisper decides is tested in
 tests and by the end-to-end ones with real speech, by hand, against the real libraries.
 """
 
+import threading
 import wave
+from collections.abc import Iterator, Sequence
 from io import BytesIO
 
 import pytest
@@ -16,10 +18,10 @@ from factotum.contracts.audio import AudioPayload
 from factotum.contracts.errors import ProviderUnavailableError, RoleNotSupportedError
 from factotum.contracts.models import BindingOptions, ProviderKind
 from factotum.contracts.testing import make_model_binding, make_tenant_id
-from factotum.model_gateway.providers.base import ResolvedBinding
+from factotum.model_gateway.providers.base import ResolvedBinding, SpeechPiece
 from factotum.model_gateway.providers.piper_local import PiperLocalAdapter
 from factotum.model_gateway.providers.whisper_local import WhisperLocalAdapter
-from factotum.model_gateway.testing import ask, events, resolved
+from factotum.model_gateway.testing import ask, collect_events, events, resolved
 
 
 def audio(**changes: object) -> AudioPayload:
@@ -77,15 +79,48 @@ class FakeWhisperEngine:
 
 
 class FakePiperEngine:
-    def __init__(self, outcome: bytes | Exception | None = None) -> None:
+    """A voice: it makes a clip, or the pieces it was given a sentence at a time, and remembers on
+    which thread it made each, how many it has made and what it was asked."""
+
+    def __init__(
+        self,
+        outcome: bytes | Exception | None = None,
+        *,
+        pieces: Sequence[SpeechPiece | Exception] = (),
+        fails_to_begin: Exception | None = None,
+    ) -> None:
         self._outcome = outcome if outcome is not None else wav_bytes()
+        self._pieces = list(pieces)
+        self._fails_to_begin = fails_to_begin
         self.asked: list[str] = []
+        self.asked_in_pieces: list[str] = []
+        self.made = 0
+        self.threads: list[int] = []
 
     def synthesize_wav(self, text: str) -> bytes:
         self.asked.append(text)
         if isinstance(self._outcome, Exception):
             raise self._outcome
         return self._outcome
+
+    def synthesize_pieces(self, text: str) -> Iterator[SpeechPiece]:
+        self.asked_in_pieces.append(text)
+        if self._fails_to_begin is not None:
+            raise self._fails_to_begin
+        return self._make()
+
+    def _make(self) -> Iterator[SpeechPiece]:
+        for item in self._pieces:
+            self.threads.append(threading.get_ident())
+            if isinstance(item, Exception):
+                raise item
+            self.made += 1
+            yield item
+
+
+def sentence(n: int, rate: int = 22050) -> SpeechPiece:
+    """A sentence of a voice: ``n`` samples that are not like the ones of any other ``n``."""
+    return SpeechPiece(sample_rate=rate, pcm=bytes((n + i) % 256 for i in range(2 * n)))
 
 
 class TestWhisperLocalAdapter:
@@ -154,6 +189,8 @@ class TestWhisperLocalAdapter:
             await adapter.embed(None, binding, ["a"])  # type: ignore[arg-type]
         with pytest.raises(RoleNotSupportedError):
             await adapter.synthesize(None, binding, "hello")  # type: ignore[arg-type]
+        with pytest.raises(RoleNotSupportedError):
+            await events(adapter.synthesize_stream(None, binding, "hello"))  # type: ignore[arg-type]
 
 
 class TestPiperLocalAdapter:
@@ -204,3 +241,98 @@ class TestPiperLocalAdapter:
             await adapter.embed(None, binding, ["a"])  # type: ignore[arg-type]
         with pytest.raises(RoleNotSupportedError):
             await adapter.transcribe(None, binding, audio())  # type: ignore[arg-type]
+
+
+class TestPiperLocalAdapterStreaming:
+    async def test_a_sentence_at_a_time_is_what_the_voice_makes_and_what_comes_out(self) -> None:
+        pieces = [sentence(10), sentence(20), sentence(30)]
+        engine = FakePiperEngine(pieces=pieces)
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+
+        got = await events(adapter.synthesize_stream(None, piper_binding(), "Uno. Due. Tre."))  # type: ignore[arg-type]
+
+        assert got == pieces
+        assert engine.asked_in_pieces == ["Uno. Due. Tre."]
+        assert engine.asked == []
+
+    async def test_a_sentence_is_made_when_it_is_asked_for_and_not_before(self) -> None:
+        engine = FakePiperEngine(pieces=[sentence(10), sentence(20), sentence(30)])
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+        stream = adapter.synthesize_stream(None, piper_binding(), "Uno. Due. Tre.")  # type: ignore[arg-type]
+
+        assert engine.made == 0
+        await anext(stream)
+        assert engine.made == 1
+        await anext(stream)
+        assert engine.made == 2
+        await stream.aclose()
+
+    async def test_a_listener_that_goes_away_asks_the_voice_for_no_more(self) -> None:
+        engine = FakePiperEngine(pieces=[sentence(10), sentence(20), sentence(30)])
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+        stream = adapter.synthesize_stream(None, piper_binding(), "Uno. Due. Tre.")  # type: ignore[arg-type]
+
+        await anext(stream)
+        await stream.aclose()
+
+        assert engine.made == 1
+
+    async def test_every_sentence_is_made_off_the_thread_that_waits_for_it(self) -> None:
+        engine = FakePiperEngine(pieces=[sentence(10), sentence(20)])
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+
+        await events(adapter.synthesize_stream(None, piper_binding(), "Uno. Due."))  # type: ignore[arg-type]
+
+        assert len(engine.threads) == 2
+        assert threading.get_ident() not in engine.threads
+
+    async def test_a_voice_with_nothing_to_say_is_a_stream_with_nothing_in_it(self) -> None:
+        engine = FakePiperEngine(pieces=[])
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+
+        assert await events(adapter.synthesize_stream(None, piper_binding(), "...")) == []  # type: ignore[arg-type]
+
+    async def test_a_failure_before_the_first_sentence_is_a_typed_provider_error(self) -> None:
+        engine = FakePiperEngine(pieces=[RuntimeError("the voice could not be loaded")])
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+
+        with pytest.raises(ProviderUnavailableError) as caught:
+            await events(adapter.synthesize_stream(None, piper_binding(), "hello"))  # type: ignore[arg-type]
+
+        assert caught.value.details["provider"] == "piper_local"
+        assert "could not be loaded" not in str(caught.value)
+        assert "RuntimeError" in str(caught.value)
+
+    async def test_a_voice_that_cannot_even_begin_is_the_same_error(self) -> None:
+        engine = FakePiperEngine(fails_to_begin=OSError("no such voice"))
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+
+        with pytest.raises(ProviderUnavailableError, match="OSError"):
+            await events(adapter.synthesize_stream(None, piper_binding(), "hello"))  # type: ignore[arg-type]
+
+    async def test_a_failure_after_some_sentences_ends_the_stream_with_that_error(self) -> None:
+        engine = FakePiperEngine(pieces=[sentence(10), RuntimeError("the voice fell over")])
+        adapter = PiperLocalAdapter(engine_factory=lambda voice: engine)
+
+        got, error = await collect_events(
+            adapter.synthesize_stream(None, piper_binding(), "Uno. Due.")  # type: ignore[arg-type]
+        )
+
+        assert got == [sentence(10)]
+        assert isinstance(error, ProviderUnavailableError)
+
+    async def test_one_voice_makes_a_clip_and_a_stream_for_every_text_it_is_asked(self) -> None:
+        built: list[str] = []
+        engine = FakePiperEngine(pieces=[sentence(10)])
+
+        def factory(voice: str) -> FakePiperEngine:
+            built.append(voice)
+            return engine
+
+        adapter = PiperLocalAdapter(engine_factory=factory)
+
+        await adapter.synthesize(None, piper_binding(), "a")  # type: ignore[arg-type]
+        await events(adapter.synthesize_stream(None, piper_binding(), "b"))  # type: ignore[arg-type]
+
+        assert built == ["it_IT-paola-medium"]
+        assert (engine.asked, engine.asked_in_pieces) == (["a"], ["b"])

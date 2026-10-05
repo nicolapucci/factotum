@@ -688,6 +688,22 @@ class TestAProviderWithoutEmbeddings:
         assert server.requests == []
 
 
+@pytest.mark.parametrize("flavor", FLAVORS)
+class TestAProviderWithoutAVoice:
+    """Chat and embeddings are what these providers serve: a voice, whole or as a stream, is for
+    another one, and is refused before a request is made."""
+
+    async def test_it_says_so_instead_of_pretending(self, flavor: Flavor) -> None:
+        server = FakeServer()
+
+        with pytest.raises(RoleNotSupportedError, match="another provider"):
+            await flavor.adapter.synthesize(server.client, flavor.binding, "hello")
+        with pytest.raises(RoleNotSupportedError, match="another provider"):
+            await events(flavor.adapter.synthesize_stream(server.client, flavor.binding, "hello"))
+
+        assert server.requests == []
+
+
 SPEECH_ONLY_PROVIDERS = frozenset({ProviderKind.WHISPER_LOCAL, ProviderKind.PIPER_LOCAL})
 """These offer no chat and no embeddings at all: covered by test_speech_adapters.py, not the
 chat-and-embeddings contract this suite tests."""

@@ -10,7 +10,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from factotum.contracts.chat import ChatRequest, EventUnion
+from factotum.contracts.base import Contract
+from factotum.contracts.chat import ChatRequest
 from factotum.contracts.embeddings import EmbeddingRequest
 from factotum.contracts.models import ModelRole
 from factotum.contracts.speech import (
@@ -25,12 +26,12 @@ from factotum.web import Authenticator, Caller, create_base_app
 MAX_BODY_BYTES = 8 * 1024 * 1024
 
 
-def _frame(event: EventUnion) -> str:
+def _frame(event: Contract) -> str:
     return f"data: {event.model_dump_json()}\n\n"
 
 
-async def _server_sent(
-    first: EventUnion | None, rest: AsyncGenerator[EventUnion]
+async def _server_sent[E: Contract](
+    first: E | None, rest: AsyncGenerator[E]
 ) -> AsyncGenerator[str]:
     try:
         if first is not None:
@@ -38,7 +39,8 @@ async def _server_sent(
         async for event in rest:
             yield _frame(event)
     finally:
-        # When the client goes away the answer is no longer wanted, and it costs tokens.
+        # When the client goes away the answer is no longer wanted, and it costs tokens (or is a
+        # voice made for nobody).
         await rest.aclose()
 
 
@@ -107,10 +109,20 @@ def create_app(
         text = await gateway.transcribe(principal, body.audio)
         return JSONResponse(TranscribeResult(text=text).model_dump(mode="json"))
 
-    @app.post("/v1/synthesize", response_model=None, summary="Text-to-speech")
+    @app.post("/v1/synthesize", response_model=None, summary="Text-to-speech, whole or streamed")
     async def synthesize(body: SynthesizeRequest, principal: Caller) -> Response:
-        audio = await gateway.synthesize(principal, body.text)
-        return JSONResponse(SynthesizeResult(audio=audio).model_dump(mode="json"))
+        if not body.stream:
+            audio = await gateway.synthesize(principal, body.text)
+            return JSONResponse(SynthesizeResult(audio=audio).model_dump(mode="json"))
+        stream = gateway.synthesize_stream(principal, body.text)
+        # As for a chat: a voice that cannot begin is an HTTP error with its own status, not a 200
+        # whose body says the opposite.
+        first = await anext(stream, None)
+        return StreamingResponse(
+            _server_sent(first, stream),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/v1/profiles/{role}", response_model=None, summary="What a role can do")
     async def profile(role: ModelRole, principal: Caller) -> Response:

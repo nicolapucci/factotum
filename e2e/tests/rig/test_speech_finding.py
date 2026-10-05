@@ -3,6 +3,7 @@ recorders under the real engines remember: nothing here loads a model or touches
 is downloaded (a model that is not found is a skip, never a fetch)."""
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from factotum.e2e.speech import (
     ensure_cuda_libraries,
     find_speech,
 )
+from factotum.model_gateway.providers.base import SpeechPiece
 
 SNAPSHOTS = ".cache/huggingface/hub/models--Systran--faster-whisper-small/snapshots"
 PIPER = ".cache/factotum/piper"
@@ -201,6 +203,9 @@ class FakePiper:
     def synthesize_wav(self, text: str) -> bytes:
         return text.encode()
 
+    def synthesize_pieces(self, text: str) -> Iterator[SpeechPiece]:
+        return iter([SpeechPiece(sample_rate=22_050, pcm=text.encode())])
+
 
 class TestTheRecordersUnderTheRealEngines:
     def test_what_the_engine_of_whisper_was_asked_and_what_it_heard_is_remembered(self) -> None:
@@ -233,4 +238,12 @@ class TestTheRecordersUnderTheRealEngines:
         clip = recorded.build("it_IT-paola-medium").synthesize_wav("Buongiorno.")
 
         assert clip == b"Buongiorno."
+        assert (recorded.voices, recorded.spoken) == (["it_IT-paola-medium"], ["Buongiorno."])
+
+    def test_what_the_voice_was_asked_to_say_in_pieces_is_remembered_too(self) -> None:
+        recorded = RecordedPiper(FakePiper())
+
+        [piece] = recorded.build("it_IT-paola-medium").synthesize_pieces("Buongiorno.")
+
+        assert piece == SpeechPiece(sample_rate=22_050, pcm=b"Buongiorno.")
         assert (recorded.voices, recorded.spoken) == (["it_IT-paola-medium"], ["Buongiorno."])

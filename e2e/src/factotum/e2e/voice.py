@@ -11,9 +11,11 @@ how a text sounds, which is theirs to test.
 import io
 import struct
 import wave
+from collections.abc import Iterator
 from typing import Protocol
 
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import AudioPayload, pcm_of
+from factotum.model_gateway.providers.base import SpeechPiece
 
 
 class WhisperDouble(Protocol):
@@ -39,6 +41,8 @@ class PiperDouble(Protocol):
     def build(self, voice: str) -> "PiperDouble": ...
 
     def synthesize_wav(self, text: str) -> bytes: ...
+
+    def synthesize_pieces(self, text: str) -> Iterator[SpeechPiece]: ...
 
 
 def wav_saying(words: str, rate: int, *, seconds: float = 0.0) -> bytes:
@@ -112,3 +116,10 @@ class StandInPiper:
     def synthesize_wav(self, text: str) -> bytes:
         self.spoken.append(text)
         return wav_saying(text, 22_050)
+
+    def synthesize_pieces(self, text: str) -> Iterator[SpeechPiece]:
+        """The same words as a voice that makes them in pieces: one piece that lasts a quarter of a
+        second, so that the gateway cuts it into more than one chunk of a tenth of a second."""
+        self.spoken.append(text)
+        pcm, rate = pcm_of(wav_saying(text, 22_050, seconds=0.25))
+        return iter([SpeechPiece(sample_rate=rate, pcm=pcm)])

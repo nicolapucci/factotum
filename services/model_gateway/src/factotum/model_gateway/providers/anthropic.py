@@ -35,6 +35,7 @@ from factotum.contracts.models import ProviderKind
 from factotum.model_gateway.providers.base import (
     EmbeddingBatch,
     ResolvedBinding,
+    SpeechPiece,
     WireModel,
     api_url,
     effective_max_output_tokens,
@@ -284,6 +285,12 @@ class AnthropicAdapter:
         self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
     ) -> AudioPayload:
         raise role_not_supported(self.kind, "text-to-speech")
+
+    async def synthesize_stream(
+        self, client: httpx.AsyncClient, resolved: ResolvedBinding, text: str
+    ) -> AsyncGenerator[SpeechPiece]:
+        raise role_not_supported(self.kind, "text-to-speech")
+        yield  # pragma: no cover - never reached; keeps this an async generator function
 
     # --- errors ---
 

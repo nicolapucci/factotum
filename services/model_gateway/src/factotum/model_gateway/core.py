@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 
 from factotum.common.urlguard import GuardedTransport, LentTransport, Resolver, UrlPolicy
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import BYTES_PER_SAMPLE, AudioPayload, chunk_bytes, slices
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -45,9 +45,21 @@ from factotum.contracts.models import (
     ProviderKind,
     StructuredOutputSupport,
 )
+from factotum.contracts.speech import (
+    SynthesisDone,
+    SynthesisError,
+    SynthesisEventUnion,
+    SynthesisFormat,
+    SynthesisSamples,
+)
 from factotum.model_gateway.bindings import BindingRepository, select_binding
 from factotum.model_gateway.providers.anthropic import AnthropicAdapter
-from factotum.model_gateway.providers.base import EmbeddingBatch, ProviderAdapter, ResolvedBinding
+from factotum.model_gateway.providers.base import (
+    EmbeddingBatch,
+    ProviderAdapter,
+    ResolvedBinding,
+    SpeechPiece,
+)
 from factotum.model_gateway.providers.gemini import GeminiAdapter
 from factotum.model_gateway.providers.ollama import OllamaAdapter
 from factotum.model_gateway.providers.openai import OpenAIAdapter
@@ -282,6 +294,42 @@ class ModelGateway:
         finally:
             self._log(call, ModelRole.TTS, principal, outcome, started, None)
 
+    async def synthesize_stream(
+        self, principal: Principal, text: str
+    ) -> AsyncGenerator[SynthesisEventUnion]:
+        """``text``, spoken aloud, as the voice makes it: its format, then its samples in chunks of
+        a tenth of a second, then that it is done (ADR 0023).
+
+        A failure before the first piece is raised, typed, so the caller can answer with the right
+        status; one after it ends the stream with a ``SynthesisError``, since the caller has been
+        told the voice is coming. A voice that has nothing to say gives ``done`` and no sound.
+        """
+        started = time.monotonic()
+        call: _Call | None = None
+        outcome = "cancelled"
+        try:
+            call = prepared = await self._prepare(principal, ModelRole.TTS)
+            async with prepared.client:
+                pieces = await self._retrying(
+                    lambda: _prime(
+                        prepared.adapter.synthesize_stream(prepared.client, prepared.resolved, text)
+                    )
+                )
+                try:
+                    async for event in _voice_events(pieces, prepared.resolved):
+                        yield event
+                    outcome = "ok"
+                except ProviderError as error:
+                    outcome = error.code
+                    yield SynthesisError(code=error.code, message=error.message)
+                finally:
+                    await pieces.aclose()
+        except FactotumError as error:
+            outcome = error.code
+            raise
+        finally:
+            self._log(call, ModelRole.TTS, principal, outcome, started, None)
+
     async def profile(self, principal: Principal, role: ModelRole) -> Profile:
         """What ``role`` can do for this principal, without saying which model does it."""
         binding = await select_binding(
@@ -298,7 +346,7 @@ class ModelGateway:
             role=role,
             max_input_tokens=binding.options.max_input_tokens,
             max_output_tokens=binding.options.max_output_tokens,
-            streaming=role.is_chat,
+            streaming=role.is_chat or role is ModelRole.TTS,
             structured_output=structured,
         )
 
@@ -401,9 +449,7 @@ class ModelGateway:
         logger.log(level, "model call", extra=fields)
 
 
-async def _replay(
-    first: EventUnion | None, rest: AsyncGenerator[EventUnion]
-) -> AsyncGenerator[EventUnion]:
+async def _replay[T](first: T | None, rest: AsyncGenerator[T]) -> AsyncGenerator[T]:
     try:
         if first is not None:
             yield first
@@ -413,7 +459,7 @@ async def _replay(
         await rest.aclose()
 
 
-async def _prime(stream: AsyncGenerator[EventUnion]) -> AsyncGenerator[EventUnion]:
+async def _prime[T](stream: AsyncGenerator[T]) -> AsyncGenerator[T]:
     """Wait for the first event, so that a failure to start is seen (and retried) before anything
     is delivered, and hand back a stream that replays it."""
     try:
@@ -424,3 +470,34 @@ async def _prime(stream: AsyncGenerator[EventUnion]) -> AsyncGenerator[EventUnio
         await stream.aclose()
         raise
     return _replay(first, stream)
+
+
+async def _voice_events(
+    pieces: AsyncGenerator[SpeechPiece], resolved: ResolvedBinding
+) -> AsyncGenerator[SynthesisEventUnion]:
+    """What a voice made, as the events of a stream: its format when the first piece comes, then
+    every piece cut into chunks of whole samples, then that it is done.
+
+    A provider's pieces may end anywhere (a network hands over what it has), so what is left of a
+    sample at the end of one is kept for the next and the chunks are whole samples; the half of a
+    sample that nothing follows is dropped. The rate of a voice does not change in the middle of
+    what it says: one that does is a provider failure.
+    """
+    rate: int | None = None
+    carry = b""
+    async for piece in pieces:
+        if rate is None:
+            rate = piece.sample_rate
+            yield SynthesisFormat(sample_rate=rate)
+        elif piece.sample_rate != rate:
+            raise ProviderUnavailableError(
+                f"{resolved.binding.provider.value}: the voice changed its sample rate in the "
+                "middle of what it said",
+                details={"provider": resolved.binding.provider.value},
+            )
+        samples = carry + piece.pcm
+        whole = len(samples) - len(samples) % BYTES_PER_SAMPLE
+        carry = samples[whole:]
+        for chunk in slices(samples[:whole], chunk_bytes(rate)):
+            yield SynthesisSamples(data=chunk)
+    yield SynthesisDone()
