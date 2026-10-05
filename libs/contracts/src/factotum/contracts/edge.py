@@ -8,11 +8,14 @@ credential it was given when it was paired) and what it can do; the edge answers
 ``error`` and closes.
 
 * A device that can start conversations (``audio_in``) sends an ``utterance`` (what was said, as
-  text) or an ``audio_utterance`` (a recording, transcribed before the turn runs as if it had been
-  typed). The edge answers with ``part`` frames, the pieces of the answer in the order they are to
-  be rendered, each of a kind the device declared it can render, and then ``turn_ended``. Another
-  ``utterance`` or ``audio_utterance`` interrupts the answer to the one before (the person spoke
-  over it), and so does a ``cancel``.
+  text), an ``audio_utterance`` (a recording, whole) or a stream of audio: an ``audio_start`` when a
+  person begins to talk, an ``audio_chunk`` for each piece of what they say as the device hears it,
+  and an ``audio_end`` when they stop (ADR 0022). A recording, whichever way it comes, is
+  transcribed before the turn runs as if it had been typed, and ``heard`` says what it was taken
+  for. The edge answers with ``part`` frames, the pieces of the answer in the order they are to be
+  rendered, each of a kind the device declared it can render, and then ``turn_ended``. Another
+  ``utterance``, ``audio_utterance`` or ``audio_start`` interrupts the answer to the one before (the
+  person spoke over it, as soon as they began), and so does a ``cancel``.
 * When something wants the device to do something (set the volume, show a card) the edge sends a
   ``command``, and the device answers with an ``ack`` that carries the result.
 * ``ping`` and ``pong`` say that each side is still there. A device that says nothing for too long
@@ -27,6 +30,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AwareDatetime,
+    ConfigDict,
     Field,
     TypeAdapter,
     ValidationError,
@@ -34,7 +38,12 @@ from pydantic import (
     model_validator,
 )
 
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import (
+    MAX_SAMPLE_RATE,
+    MIN_SAMPLE_RATE,
+    AudioPayload,
+    StreamFormat,
+)
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.commands import CommandResult, DeviceCommand
@@ -126,14 +135,56 @@ class Utterance(Contract):
 class AudioUtterance(Contract):
     """Something a person said to the device, recorded whole after it heard the wake word.
 
-    A future slice streams the recording instead of sending it whole, and lets a new one that
-    starts while an answer is still playing interrupt it as it is heard, not only once it ends
-    (ADR 0021); this one is a single clip, like an ``Utterance`` is a single line of text.
+    A single clip, like an ``Utterance`` is a single line of text. What is said is carried as it is
+    heard by ``AudioStart``, ``AudioChunk`` and ``AudioEnd`` (ADR 0022), which interrupt the answer
+    to the one before as soon as it begins and not only once it is over.
     """
 
     type: Literal["audio_utterance"] = "audio_utterance"
     id: FrameId
     audio: AudioPayload
+
+
+class AudioStart(Contract):
+    """A person has started talking to the device: what they say follows as ``audio_chunk`` frames
+    of this ``id``, and ends with an ``audio_end`` (ADR 0022). The answer to the last utterance is
+    interrupted by this, not by the end: that is speaking over it."""
+
+    type: Literal["audio_start"] = "audio_start"
+    id: FrameId
+    """What the utterance is called: what answers it says so, as it does for an ``Utterance``."""
+
+    format: StreamFormat = StreamFormat.PCM_S16LE
+    sample_rate: int = Field(ge=MIN_SAMPLE_RATE, le=MAX_SAMPLE_RATE)
+    """16000 is what the models read; any rate of an ``AudioPayload`` is carried."""
+
+
+class AudioChunk(Contract):
+    """The next piece of what a person is saying: samples, as base64 in JSON."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        str_strip_whitespace=True,
+        ser_json_bytes="base64",
+        val_json_bytes="base64",
+    )
+
+    type: Literal["audio_chunk"] = "audio_chunk"
+    id: FrameId
+    seq: int = Field(ge=0)
+    """0, 1, 2... with no gap: a piece that went missing or came twice ends the stream."""
+
+    data: bytes = Field(min_length=1)
+    """At most ``MAX_CHUNK_BYTES``: the edge ends the stream of a bigger one (``chunk_too_big``),
+    which it can only do for a chunk that is a frame."""
+
+
+class AudioEnd(Contract):
+    """The person has stopped talking: the edge turns what it was sent into words and answers."""
+
+    type: Literal["audio_end"] = "audio_end"
+    id: FrameId
 
 
 class Cancel(Contract):
@@ -161,9 +212,21 @@ class Bye(Contract):
     type: Literal["bye"] = "bye"
 
 
-DeviceFrame = Annotated[
-    Hello | Utterance | AudioUtterance | Cancel | Ack | Ping | Bye, Field(discriminator="type")
-]
+FromDevice = (
+    Hello
+    | Utterance
+    | AudioUtterance
+    | AudioStart
+    | AudioChunk
+    | AudioEnd
+    | Cancel
+    | Ack
+    | Ping
+    | Bye
+)
+"""Any frame a device may send."""
+
+DeviceFrame = Annotated[FromDevice, Field(discriminator="type")]
 
 
 # ---- from the edge to the device ----------------------------------------------------------------
@@ -190,6 +253,21 @@ class Ready(Contract):
     @field_serializer("capabilities", "unregistered")
     def _capabilities_in_order(self, capabilities: frozenset[Capability]) -> list[str]:
         return _sorted(capabilities)
+
+
+class Heard(Contract):
+    """What a recording was taken for, said before the answer to it begins (ADR 0022).
+
+    It is sent to a device that sent a recording, whole or as a stream, and to no other: a screen
+    can show what the assistant understood, and a client that tests the stack can say what a
+    recording was heard as without looking inside the services. It is not a part of the answer, so
+    what a device can render does not filter it. A recording that is taken for nothing is not
+    heard: its turn ends ``failed`` (``nothing_heard``).
+    """
+
+    type: Literal["heard"] = "heard"
+    utterance_id: FrameId
+    text: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
 
 
 class PartFrame(Contract):
@@ -249,9 +327,10 @@ class ErrorFrame(Contract):
     """The utterance or command it is about, when it is about one."""
 
 
-EdgeFrame = Annotated[
-    Ready | PartFrame | TurnEnded | CommandFrame | Pong | ErrorFrame, Field(discriminator="type")
-]
+FromEdge = Ready | Heard | PartFrame | TurnEnded | CommandFrame | Pong | ErrorFrame
+"""Any frame the edge may send."""
+
+EdgeFrame = Annotated[FromEdge, Field(discriminator="type")]
 
 # ---- the HTTP side of the edge: who is connected, and commands for them ------------------------
 
@@ -292,23 +371,15 @@ def encode_frame(frame: Contract) -> str:
     return frame.model_dump_json(exclude_none=True)
 
 
-def decode_device_frame(
-    data: str | bytes,
-) -> Hello | Utterance | AudioUtterance | Cancel | Ack | Ping | Bye:
+def decode_device_frame(data: str | bytes) -> FromDevice:
     """A frame a device sent, or ``InvalidFrameError``."""
-    frame: Hello | Utterance | AudioUtterance | Cancel | Ack | Ping | Bye = _decode(
-        _DEVICE_FRAMES, data
-    )
+    frame: FromDevice = _decode(_DEVICE_FRAMES, data)
     return frame
 
 
-def decode_edge_frame(
-    data: str | bytes,
-) -> Ready | PartFrame | TurnEnded | CommandFrame | Pong | ErrorFrame:
+def decode_edge_frame(data: str | bytes) -> FromEdge:
     """A frame the edge sent, or ``InvalidFrameError``."""
-    frame: Ready | PartFrame | TurnEnded | CommandFrame | Pong | ErrorFrame = _decode(
-        _EDGE_FRAMES, data
-    )
+    frame: FromEdge = _decode(_EDGE_FRAMES, data)
     return frame
 
 

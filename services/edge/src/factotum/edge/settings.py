@@ -54,3 +54,9 @@ class EdgeSettings(ServiceSettings):
 
     edge_send_timeout_s: float = Field(default=10.0, gt=0, le=120)
     """How long sending one frame to a device may take before the device is taken to be gone."""
+
+    edge_stream_stall_s: float = Field(default=5.0, gt=0, le=60)
+    """How long a stream of audio may wait for its next chunk before it is dropped
+    (``stream_stalled``): a device that died in the middle of a sentence. A device sends a chunk
+    every 100 to 200 ms, so this is generous, and the stream is dropped sooner than the device is
+    idle."""

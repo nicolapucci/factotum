@@ -41,6 +41,12 @@ class TestDefaults:
         # The conversation service waits 120 s for its model by default.
         assert load().edge_turn_timeout_s > 120
 
+    def test_a_stream_of_audio_is_dropped_long_before_its_device_is_idle(self) -> None:
+        settings = load()
+
+        assert settings.edge_stream_stall_s == 5
+        assert settings.edge_stream_stall_s < settings.edge_idle_timeout_s / 2
+
 
 class TestReadingTheEnvironment:
     def test_the_variables_are_the_field_names_with_the_prefix(
@@ -72,6 +78,7 @@ class TestReadingTheEnvironment:
         monkeypatch.setenv("FACTOTUM_EDGE_IDLE_TIMEOUT_S", "45")
         monkeypatch.setenv("FACTOTUM_EDGE_COMMAND_TIMEOUT_S", "5")
         monkeypatch.setenv("FACTOTUM_EDGE_SEND_TIMEOUT_S", "2")
+        monkeypatch.setenv("FACTOTUM_EDGE_STREAM_STALL_S", "1.5")
 
         session = SessionSettings.of(load())
 
@@ -81,7 +88,8 @@ class TestReadingTheEnvironment:
             session.idle_timeout_s,
             session.command_timeout_s,
             session.send_timeout_s,
-        ) == (3, 10, 45, 5, 2)
+            session.stream_stall_s,
+        ) == (3, 10, 45, 5, 2, 1.5)
 
 
 class TestWhatIsRefused:
@@ -97,6 +105,8 @@ class TestWhatIsRefused:
             {"edge_command_timeout_s": -1},
             {"edge_turn_timeout_s": 0},
             {"edge_send_timeout_s": 0},
+            {"edge_stream_stall_s": 0},
+            {"edge_stream_stall_s": 61},
         ],
     )
     def test_a_number_outside_what_makes_sense(self, values: dict[str, object]) -> None:

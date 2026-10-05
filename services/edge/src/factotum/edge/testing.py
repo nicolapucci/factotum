@@ -211,15 +211,16 @@ DEFAULT_TRANSCRIPTION = "what was said"
 class FakeSpeech:
     """The model gateway's speech roles, answering as told. Without a script, ``transcribe``
     returns ``DEFAULT_TRANSCRIPTION`` and ``synthesize`` returns ``DEFAULT_CLIP``, so a test that
-    only cares that *something* was heard or spoken need not script either."""
+    only cares that *something* was heard or spoken need not script either. A transcription that is
+    scripted as ``HANG`` never ends: a model that is still listening."""
 
     def __init__(self) -> None:
         self.transcriptions: list[tuple[Owner, AudioPayload]] = []
         self.syntheses: list[tuple[Owner, str]] = []
-        self._transcribe_script: list[str | Exception] = []
+        self._transcribe_script: list[str | Exception | Hang] = []
         self._synthesize_script: list[AudioPayload | Exception] = []
 
-    def will_transcribe(self, *outcomes: str | Exception) -> "FakeSpeech":
+    def will_transcribe(self, *outcomes: str | Exception | Hang) -> "FakeSpeech":
         self._transcribe_script.extend(outcomes)
         return self
 
@@ -232,6 +233,9 @@ class FakeSpeech:
         outcome = (
             self._transcribe_script.pop(0) if self._transcribe_script else DEFAULT_TRANSCRIPTION
         )
+        if isinstance(outcome, Hang):
+            await asyncio.Event().wait()
+            raise AssertionError("a transcription that hangs does not end")  # pragma: no cover
         if isinstance(outcome, Exception):
             raise outcome
         return outcome

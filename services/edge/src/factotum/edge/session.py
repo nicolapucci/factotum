@@ -10,7 +10,11 @@ Things it holds to, because a device is a small computer on a home network and m
 * Nothing is believed before ``hello``, and a device that does not say who it is soon enough is
   closed. A device that fails to authenticate is told only that it did, never which part was wrong.
 * One answer at a time. Another utterance interrupts the one being answered, whose turn is stopped
-  (and with it the model that is writing it), and the device is told that it was.
+  (and with it the model that is writing it), and the device is told that it was. A person who
+  starts to talk (``audio_start``) interrupts it at once, not when they have finished.
+* A stream of audio is bounded: by its size, by how long the device may be quiet in the middle of
+  it, and by the order of its chunks. Whatever ends one without an answer says how, once
+  (ADR 0022).
 * A device that says nothing for too long, or cannot be written to, is gone. Its turn is stopped,
   its commands are answered as offline, and it is forgotten by the edge.
 * What goes wrong inside is the device's to be told in a code, never in a stack trace.
@@ -20,24 +24,30 @@ import asyncio
 import contextlib
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import MAX_CHUNK_BYTES, MAX_STREAM_BYTES, AudioPayload, wav_of
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.commands import CommandResult, CommandStatus, DeviceCommand
-from factotum.contracts.conversation import Failed
+from factotum.contracts.conversation import MAX_MESSAGE_CHARS, Failed
 from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
     Ack,
+    AudioChunk,
+    AudioEnd,
+    AudioStart,
     AudioUtterance,
     Bye,
     Cancel,
     CloseCode,
     CommandFrame,
     ErrorFrame,
+    FromEdge,
+    Heard,
     Hello,
     PartFrame,
     Ping,
@@ -89,8 +99,8 @@ class SessionDirectory(Protocol):
 
 class SpeechSource(Protocol):
     """What a session needs to turn a recording into words, and words into one, for the owner the
-    principal acts as. ``None`` where a session is given none: an ``audio_utterance`` is then
-    refused, and a ``Speech`` part goes out as text alone."""
+    principal acts as. ``None`` where a session is given none: a recording (an ``audio_utterance``,
+    or a stream of audio) is then refused, and a ``Speech`` part goes out as text alone."""
 
     async def transcribe(self, owner: Owner, audio: AudioPayload) -> str: ...
 
@@ -108,12 +118,14 @@ class SessionSettings:
         idle_timeout_s: float = 60.0,
         command_timeout_s: float = 10.0,
         send_timeout_s: float = 10.0,
+        stream_stall_s: float = 5.0,
     ) -> None:
         self.hello_timeout_s = hello_timeout_s
         self.heartbeat_s = heartbeat_s
         self.idle_timeout_s = idle_timeout_s
         self.command_timeout_s = command_timeout_s
         self.send_timeout_s = send_timeout_s
+        self.stream_stall_s = stream_stall_s
 
     @classmethod
     def of(cls, settings: EdgeSettings) -> "SessionSettings":
@@ -123,7 +135,22 @@ class SessionSettings:
             idle_timeout_s=settings.edge_idle_timeout_s,
             command_timeout_s=settings.edge_command_timeout_s,
             send_timeout_s=settings.edge_send_timeout_s,
+            stream_stall_s=settings.edge_stream_stall_s,
         )
+
+
+@dataclass
+class _Stream:
+    """A person talking to the device, as far as the edge has heard: the samples so far, and when
+    the next chunk is due."""
+
+    id: str
+    sample_rate: int
+    due: float
+    """When the stream is stalled if no chunk has come, by the clock of the event loop."""
+
+    samples: bytearray = field(default_factory=bytearray)
+    next_seq: int = 0
 
 
 def _utc_now() -> datetime:
@@ -157,6 +184,7 @@ class Session:
         self._send_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[CommandResult]] = {}
         self._turn: tuple[str, asyncio.Task[None]] | None = None
+        self._stream: _Stream | None = None
         self._closed = False
         self.session_id = new_id("s")
         self.connected_at = now()
@@ -287,10 +315,16 @@ class Session:
 
     async def _serve(self) -> None:
         while True:
+            wait_s, for_a_chunk = self._how_long_to_wait()
             try:
-                async with asyncio.timeout(self._settings.idle_timeout_s):
+                async with asyncio.timeout(wait_s):
                     text = await self._wire.receive()
             except TimeoutError:
+                if for_a_chunk:
+                    # A device that died in the middle of a sentence is not a device that is idle:
+                    # what it began is over, and it is still told, and still there.
+                    await self._drop_stream("stream_stalled", "no chunk of the stream came in time")
+                    continue
                 await self._refuse("idle", "the device said nothing for too long", CloseCode.IDLE)
                 return
             try:
@@ -305,6 +339,12 @@ class Session:
                     await self._on_utterance(frame)
                 case AudioUtterance():
                     await self._on_audio_utterance(frame)
+                case AudioStart():
+                    await self._on_audio_start(frame)
+                case AudioChunk():
+                    await self._on_audio_chunk(frame)
+                case AudioEnd():
+                    await self._on_audio_end(frame)
                 case Cancel():
                     await self._on_cancel(frame)
                 case Ack():
@@ -319,8 +359,18 @@ class Session:
                     )
                     return
 
+    def _how_long_to_wait(self) -> tuple[float, bool]:
+        """How long to wait for the next frame, and whether it is for a chunk: as long as a device
+        may say nothing at all, or less when a stream is open and its next chunk is due before."""
+        idle_s = self._settings.idle_timeout_s
+        if self._stream is None:
+            return idle_s, False
+        due_s = max(0.0, self._stream.due - asyncio.get_running_loop().time())
+        return (due_s, True) if due_s < idle_s else (idle_s, False)
+
     async def _cleanup(self) -> None:
         self._closed = True
+        self._stream = None  # nobody is left to be told what became of it
         await self._stop_turn()
         for answered in self._pending.values():
             if not answered.done():
@@ -352,49 +402,135 @@ class Session:
 
     # ---- what a device says ----
 
-    async def _on_utterance(self, utterance: Utterance) -> None:
-        if Capability.AUDIO_IN not in self.capabilities:
-            await self._send(
-                ErrorFrame(
-                    code="capability_missing",
-                    message="the device did not declare a microphone, so it cannot start a "
-                    "conversation",
-                    ref=utterance.id,
-                )
+    async def _can_converse(self, identity: str) -> bool:
+        """Whether the device may start a conversation: it is told, and nothing else happens, when
+        it may not."""
+        if Capability.AUDIO_IN in self.capabilities:
+            return True
+        await self._send(
+            ErrorFrame(
+                code="capability_missing",
+                message="the device did not declare a microphone, so it cannot start a "
+                "conversation",
+                ref=identity,
             )
-            return
-        await self._stop_turn()  # the person spoke over the answer to the last one
-        task = asyncio.create_task(
-            self._answer(utterance.id, utterance.text), name=f"turn-{utterance.id}"
         )
-        self._turn = (utterance.id, task)
+        return False
 
-    async def _on_audio_utterance(self, utterance: AudioUtterance) -> None:
-        if Capability.AUDIO_IN not in self.capabilities:
-            await self._send(
-                ErrorFrame(
-                    code="capability_missing",
-                    message="the device did not declare a microphone, so it cannot start a "
-                    "conversation",
-                    ref=utterance.id,
-                )
-            )
-            return
+    async def _can_hear(self, identity: str) -> bool:
+        """Whether a recording from the device can be turned into words, said in the same way."""
+        if not await self._can_converse(identity):
+            return False
         if self._speech is None:
             await self._send(
                 ErrorFrame(
                     code="speech_not_configured",
                     message="the edge cannot turn a recording into words",
-                    ref=utterance.id,
+                    ref=identity,
                 )
             )
+            return False
+        return True
+
+    async def _supersede(self) -> None:
+        """The person said something new: what they were saying and what was being answered to the
+        one before are given up on, and each is told that it was."""
+        await self._end_stream(TurnStatus.CANCELLED)
+        await self._stop_turn()
+
+    def _begin_turn(self, identity: str, turn: Coroutine[Any, Any, None]) -> None:
+        self._turn = (identity, asyncio.create_task(turn, name=f"turn-{identity}"))
+
+    async def _on_utterance(self, utterance: Utterance) -> None:
+        if not await self._can_converse(utterance.id):
             return
-        await self._stop_turn()  # the person spoke over the answer to the last one
-        task = asyncio.create_task(self._answer_audio(utterance), name=f"turn-{utterance.id}")
-        self._turn = (utterance.id, task)
+        await self._supersede()  # the person spoke over the answer to the last one
+        self._begin_turn(utterance.id, self._answer(utterance.id, utterance.text))
+
+    async def _on_audio_utterance(self, utterance: AudioUtterance) -> None:
+        if not await self._can_hear(utterance.id):
+            return
+        await self._supersede()  # the person spoke over the answer to the last one
+        self._begin_turn(utterance.id, self._answer_audio(utterance.id, utterance.audio))
+
+    async def _on_audio_start(self, start: AudioStart) -> None:
+        if not await self._can_hear(start.id):
+            return
+        # The person spoke over the answer to the last one as soon as they began, not when they
+        # have finished: it stops now.
+        await self._supersede()
+        self._stream = _Stream(start.id, start.sample_rate, due=self._due())
+
+    async def _on_audio_chunk(self, chunk: AudioChunk) -> None:
+        stream = self._stream
+        if stream is None or stream.id != chunk.id:
+            await self._unknown_stream(chunk.id)
+        elif len(chunk.data) > MAX_CHUNK_BYTES:
+            await self._drop_stream(
+                "chunk_too_big", f"a chunk of a stream is at most {MAX_CHUNK_BYTES} bytes"
+            )
+        elif chunk.seq != stream.next_seq:
+            await self._drop_stream(
+                "stream_out_of_order",
+                f"chunk {stream.next_seq} was expected and chunk {chunk.seq} came",
+            )
+        elif len(stream.samples) + len(chunk.data) > MAX_STREAM_BYTES:
+            await self._drop_stream(
+                "audio_too_long", f"a stream is at most {MAX_STREAM_BYTES} bytes of audio"
+            )
+        else:
+            stream.samples.extend(chunk.data)
+            stream.next_seq += 1
+            stream.due = self._due()
+
+    async def _on_audio_end(self, end: AudioEnd) -> None:
+        stream = self._stream
+        if stream is None or stream.id != end.id:
+            await self._unknown_stream(end.id)
+            return
+        self._stream = None
+        if len(stream.samples) < 2:  # not one whole sample: there is nothing to listen to
+            await self._end_unheard(stream.id, "nothing_heard", "I didn't catch that.")
+            return
+        recording = wav_of(bytes(stream.samples), stream.sample_rate)
+        self._begin_turn(stream.id, self._answer_audio(stream.id, recording))
+
+    async def _unknown_stream(self, identity: str) -> None:
+        """A frame of a stream that is not the one that is open (it was dropped, or it never was):
+        said, and nothing else happens, so that a late frame of one does not end the one that is."""
+        await self._send(
+            ErrorFrame(
+                code="unknown_stream",
+                message="no stream of that id is open",
+                ref=identity,
+            )
+        )
+
+    def _due(self) -> float:
+        """When a stream that has just heard from the device is stalled, if it does not again."""
+        return asyncio.get_running_loop().time() + self._settings.stream_stall_s
+
+    async def _end_stream(
+        self, status: TurnStatus, code: str | None = None, message: str | None = None
+    ) -> None:
+        """The stream that is open ends without being answered: say how, once."""
+        stream, self._stream = self._stream, None
+        if stream is None:
+            return
+        with contextlib.suppress(Disconnected):
+            await self._send(
+                TurnEnded(utterance_id=stream.id, status=status, code=code, message=message)
+            )
+
+    async def _drop_stream(self, code: str, message: str) -> None:
+        """The stream that is open is the device's mistake or its misfortune: it is over, failed."""
+        logger.warning("a stream was dropped", extra={"session": self.session_id, "code": code})
+        await self._end_stream(TurnStatus.FAILED, code, message)
 
     async def _on_cancel(self, cancel: Cancel) -> None:
-        if self._turn is not None and self._turn[0] == cancel.id:
+        if self._stream is not None and self._stream.id == cancel.id:
+            await self._end_stream(TurnStatus.CANCELLED)
+        elif self._turn is not None and self._turn[0] == cancel.id:
             await self._stop_turn()
 
     def _on_ack(self, ack: Ack) -> None:
@@ -414,28 +550,45 @@ class Session:
 
     # ---- what the edge says ----
 
-    async def _answer_audio(self, utterance: AudioUtterance) -> None:
-        assert self.principal is not None  # noqa: S101 - a session that answers has said hello
-        assert self._speech is not None  # noqa: S101 - checked by _on_audio_utterance
+    async def _answer_audio(self, utterance_id: str, recording: AudioPayload) -> None:
+        """A recording, however it came (whole, or put together from a stream), is turned into
+        words and answered as the words would be had they been typed."""
         try:
-            text = await self._speech.transcribe(
-                Owner.of_subject(self.principal.acts_as), utterance.audio
-            )
+            text = await self._hear(utterance_id, recording)
         except asyncio.CancelledError:
+            # The person spoke again while the recording was still being turned into words.
+            with contextlib.suppress(Disconnected):
+                await self._send(TurnEnded(utterance_id=utterance_id, status=TurnStatus.CANCELLED))
             raise
+        if text is not None:
+            await self._answer(utterance_id, text)
+
+    async def _hear(self, utterance_id: str, recording: AudioPayload) -> str | None:
+        """What a recording says, told to the device before the answer to it begins. None when the
+        turn is over already: nothing could be made of it, or the device is gone."""
+        assert self.principal is not None  # noqa: S101 - a session that answers has said hello
+        assert self._speech is not None  # noqa: S101 - checked before a recording is accepted
+        try:
+            text = (
+                await self._speech.transcribe(Owner.of_subject(self.principal.acts_as), recording)
+            ).strip()
         except FactotumError as error:
-            await self._end_unheard(utterance.id, error.code, error.message)
-            return
+            await self._end_unheard(utterance_id, error.code, error.message)
+            return None
         except Exception:
             logger.exception(
                 "a recording could not be transcribed", extra={"session": self.session_id}
             )
-            await self._end_unheard(utterance.id, "internal_error", "I could not hear that.")
-            return
-        if not text.strip():
-            await self._end_unheard(utterance.id, "nothing_heard", "I didn't catch that.")
-            return
-        await self._answer(utterance.id, text)
+            await self._end_unheard(utterance_id, "internal_error", "I could not hear that.")
+            return None
+        if not text:
+            await self._end_unheard(utterance_id, "nothing_heard", "I didn't catch that.")
+            return None
+        try:
+            await self._send(Heard(utterance_id=utterance_id, text=text[:MAX_MESSAGE_CHARS]))
+        except Disconnected:
+            return None
+        return text
 
     async def _end_unheard(self, utterance_id: str, code: str, message: str) -> None:
         """A recording that was never turned into words ends its turn here and now: there is no
@@ -512,9 +665,7 @@ class Session:
                 TurnEnded(utterance_id=utterance_id, status=status, code=code, message=message)
             )
 
-    async def _send(
-        self, frame: PartFrame | TurnEnded | CommandFrame | Pong | Ready | ErrorFrame
-    ) -> None:
+    async def _send(self, frame: FromEdge) -> None:
         if self._closed:
             raise Disconnected
         async with self._send_lock:
