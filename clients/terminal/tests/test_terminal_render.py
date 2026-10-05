@@ -51,6 +51,16 @@ class TestWhatADeviceDoes:
     def test_a_command_that_was_run_is_said(self) -> None:
         assert rendered("event", "volume 30") == "[do]     volume 30\n"
 
+    def test_what_the_edge_took_a_recording_for_is_said_with_its_own_tag(self) -> None:
+        assert rendered("heard", "how do I reset the router?") == (
+            "[heard]  how do I reset the router?\n"
+        )
+
+    def test_what_was_heard_keeps_its_accents_and_its_lines(self) -> None:
+        assert rendered("heard", "dov'è il router?\ne il garage") == (
+            "[heard]  dov'è il router?\n         e il garage\n"
+        )
+
     def test_a_line_that_goes_on_is_aligned_with_the_first(self) -> None:
         assert rendered("speech", "one\ntwo") == "[say]    one\n         two\n"
 

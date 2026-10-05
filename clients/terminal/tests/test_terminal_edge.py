@@ -6,14 +6,17 @@ are the other files here.)"""
 
 import asyncio
 import io
-from collections.abc import AsyncIterator, Callable
+import wave
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 import pytest
 
 from factotum.common.devauth import DEVICE_HEADER
+from factotum.contracts.audio import pcm_of, wav_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import CommandStatus, ShowCard
@@ -21,6 +24,7 @@ from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.edge import CloseCode, CommandRequest, TurnStatus
 from factotum.edge.testing import (
     HANG,
+    FakeSpeech,
     Rig,
     Serving,
     answer,
@@ -29,6 +33,7 @@ from factotum.edge.testing import (
     make_device,
     serving,
 )
+from factotum.terminal.audio import AudioStream
 from factotum.terminal.cli import Options, run
 from factotum.terminal.client import DeviceClient, Refused
 from factotum.terminal.connection import ConnectionLost, WebSocketConnection
@@ -169,6 +174,133 @@ class TestAnAnswerAsEachDeviceGetsIt:
                 assert speaker.shown.of("violation") == []
             assert await forgotten(rig)
             assert rig.conversation.abandoned == 1
+
+
+PERSON = b"\x01\x00" * 1600
+"""A tenth of a second of somebody talking, for what the fake Whisper of the edge is given."""
+
+
+class TestSpeakingAsItIsHeard:
+    async def test_what_is_said_as_a_stream_is_heard_shown_and_answered(self) -> None:
+        speech = FakeSpeech().will_transcribe("how do I reset the router?")
+        async with Rig(*registered("speaker"), speech=speech) as rig, serving(rig) as edge:
+            rig.conversation.scripts.append(answer(ANSWER, sources=[citation()]))
+            async with a_terminal(edge, "speaker") as speaker:
+                identity = await speaker.client.say_audio_stream(AudioStream.of(PERSON * 5, 16000))
+                ended = await asyncio.wait_for(speaker.client.wait_for_turn(identity), 5)
+
+                assert ended is not None
+                assert ended.status is TurnStatus.FINISHED, ended
+                assert speaker.shown.of("heard") == ["how do I reset the router?"]
+                assert " ".join(speaker.shown.of("speech")) == (
+                    "Hold the button for ten seconds. Then let go."
+                )
+                assert speaker.shown.of("violation") == []
+            [(_, recording)] = speech.transcriptions
+            assert pcm_of(recording.data) == (PERSON * 5, 16000)
+            assert [text for _, text in rig.conversation.turns] == ["how do I reset the router?"]
+            assert await forgotten(rig)
+
+    async def test_a_person_who_starts_to_talk_stops_the_answer_while_they_are_still_talking(
+        self,
+    ) -> None:
+        async with Rig(*registered("speaker"), speech=FakeSpeech()) as rig, serving(rig) as edge:
+            rig.conversation.scripts.append(
+                [*answer("Once upon a time there was a very long story. And it went on")[:-1], HANG]
+            )
+            rig.conversation.scripts.append(answer("Right, another time."))
+            gate = asyncio.Event()
+
+            async def a_person_who_takes_a_while() -> AsyncGenerator[bytes]:
+                yield PERSON
+                await gate.wait()
+                yield PERSON
+
+            async with a_terminal(edge, "speaker") as speaker:
+                first = await speaker.client.say("tell me a story")
+                await until(lambda: bool(speaker.shown.of("speech")))  # it is being answered
+                saying = asyncio.create_task(
+                    speaker.client.say_audio_stream(
+                        AudioStream(16000, a_person_who_takes_a_while())
+                    )
+                )
+
+                cut = await asyncio.wait_for(speaker.client.wait_for_turn(first), 5)
+
+                # The answer stopped with the person still in the middle of what they were saying.
+                assert cut is not None
+                assert cut.status is TurnStatus.CANCELLED
+                assert not saying.done()
+                assert rig.conversation.abandoned == 1
+                gate.set()
+                second = await asyncio.wait_for(saying, 5)
+                done = await asyncio.wait_for(speaker.client.wait_for_turn(second), 5)
+                assert done is not None
+                assert done.status is TurnStatus.FINISHED
+                assert speaker.shown.of("speech")[-1] == "Right, another time."
+                assert speaker.shown.of("violation") == []
+            assert await forgotten(rig)
+
+    async def test_an_edge_that_cannot_hear_is_not_talked_to_for_long_and_is_not_waited_for(
+        self,
+    ) -> None:
+        async with Rig(*registered("speaker")) as rig, serving(rig) as edge:  # no speech
+            async with a_terminal(edge, "speaker") as speaker:
+                identity = await speaker.client.say_audio_stream(
+                    AudioStream.of(PERSON * 10, 16000, realtime=True)  # a second of it
+                )
+                ended = await asyncio.wait_for(speaker.client.wait_for_turn(identity), 5)
+
+                assert ended is not None
+                assert (ended.status, ended.code) == (TurnStatus.FAILED, "speech_not_configured")
+                errors = [e.code for e in speaker.shown.of("error")]
+                assert errors[0] == "speech_not_configured"
+                assert errors.count("unknown_stream") <= 2  # it stopped when it was told
+                await asked(speaker, "still there?")  # and it is still connected
+            assert await forgotten(rig)
+
+
+class TestTheCommandLineWithFiles:
+    async def test_a_recording_in_a_file_is_heard_and_what_is_said_to_it_is_written_to_another(
+        self, tmp_path: Path
+    ) -> None:
+        question = tmp_path / "question.wav"
+        question.write_bytes(wav_of(PERSON * 5, 16000).data)
+        answer_file = tmp_path / "answer.wav"
+        voice = wav_of(b"\x05\x00" * 100, 22050)
+        speech = (
+            FakeSpeech().will_transcribe("how do I reset the router?").will_synthesize(voice, voice)
+        )
+        async with Rig(*registered("speaker"), speech=speech) as rig, serving(rig) as edge:
+            rig.conversation.scripts.append(answer(ANSWER, sources=[citation()]))
+            out = io.StringIO()
+
+            code = await run(
+                Options(
+                    url=edge.websocket_url,
+                    profile=get_profile("speaker"),
+                    hardware_id=None,
+                    token=None,
+                    wav_in=(question,),
+                    wav_out=answer_file,
+                ),
+                out=out,
+            )
+
+            assert code == 0
+            lines = out.getvalue().splitlines()
+            assert "[heard]  how do I reset the router?" in lines
+            assert lines[-3:-1] == [
+                "[say]    Hold the button for ten seconds.",
+                "[say]    Then let go.",
+            ]
+            assert lines[-1].startswith("--       wrote ")
+            with wave.open(str(answer_file), "rb") as wav_reader:
+                assert wav_reader.getframerate() == 22050
+                assert wav_reader.readframes(wav_reader.getnframes()) == b"\x05\x00" * 200
+            [(_, recording)] = speech.transcriptions
+            assert pcm_of(recording.data) == (PERSON * 5, 16000)
+            assert await forgotten(rig)
 
 
 class TestTheHubReachingADevice:

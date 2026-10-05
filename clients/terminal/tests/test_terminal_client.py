@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from factotum.contracts.edge import (
     PROTOCOL_VERSION,
     CommandFrame,
     ErrorFrame,
+    Heard,
     PartFrame,
     Pong,
     Ready,
@@ -36,6 +38,7 @@ from factotum.contracts.response import (
     StatusState,
     Text,
 )
+from factotum.terminal.audio import AudioStream
 from factotum.terminal.client import CannotConverse, DeviceClient, Refused
 from factotum.terminal.connection import ConnectionLost
 from factotum.terminal.device import TerminalDevice
@@ -531,6 +534,322 @@ class TestSpeaking:
         rig = Rig()
 
         assert await rig.client.wait_for_turn("u99") is None
+
+
+async def pieces_of(*pieces: bytes) -> AsyncGenerator[bytes]:
+    for piece in pieces:
+        yield piece
+
+
+class TestSpeakingAsItIsHeard:
+    async def test_what_is_said_is_sent_as_a_start_a_chunk_for_each_piece_and_an_end(self) -> None:
+        rig = Rig()
+        await rig.connected()
+        pieces = [b"\x01\x00" * 1600, b"\x02\x00" * 1600, b"\x03\x00" * 100]
+
+        identity = await rig.client.say_audio_stream(AudioStream(16000, pieces_of(*pieces)))
+
+        assert identity == "u1"
+        frames = rig.connection.frames("audio_start", "audio_chunk", "audio_end")
+        assert [frame.type for frame in frames] == [
+            "audio_start",
+            "audio_chunk",
+            "audio_chunk",
+            "audio_chunk",
+            "audio_end",
+        ]
+        start, *chunks, end = frames
+        assert (start.id, start.sample_rate) == ("u1", 16000)
+        assert [(c.id, c.seq, c.data) for c in chunks] == [
+            ("u1", 0, pieces[0]),
+            ("u1", 1, pieces[1]),
+            ("u1", 2, pieces[2]),
+        ]
+        assert end.id == "u1"
+        assert rig.client.active == "u1"
+        await rig.client.close()
+
+    async def test_it_begins_when_the_person_does_and_not_when_they_have_finished(self) -> None:
+        rig = Rig()
+        await rig.connected()
+        gate = asyncio.Event()
+
+        async def a_person_who_takes_a_while() -> AsyncGenerator[bytes]:
+            await gate.wait()
+            yield b"\x01\x00" * 100
+
+        saying = asyncio.create_task(
+            rig.client.say_audio_stream(AudioStream(22050, a_person_who_takes_a_while()))
+        )
+        [start] = await rig.connection.wait_for("audio_start")
+
+        assert (start.id, start.sample_rate) == ("u1", 22050)
+        assert rig.connection.frames("audio_chunk") == []
+        assert not saying.done()
+        gate.set()
+        await saying
+        assert len(rig.connection.frames("audio_chunk")) == 1
+        await rig.client.close()
+
+    async def test_it_returns_when_it_is_all_sent_and_the_answer_is_waited_for_apart(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+
+        identity = await rig.client.say_audio_stream(AudioStream(16000, pieces_of(b"\x01\x00")))
+        waiting = asyncio.create_task(rig.client.wait_for_turn(identity))
+        await settle()
+        assert not waiting.done()  # nothing answered it yet
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        ended = await asyncio.wait_for(waiting, 1)
+
+        assert ended is not None
+        assert ended.status is TurnStatus.FINISHED
+        running.cancel()
+
+    async def test_nothing_said_is_a_start_and_an_end(self) -> None:
+        rig = Rig()
+        await rig.connected()
+
+        await rig.client.say_audio_stream(AudioStream(16000, pieces_of()))
+
+        assert [
+            f.type for f in rig.connection.frames("audio_start", "audio_chunk", "audio_end")
+        ] == [
+            "audio_start",
+            "audio_end",
+        ]
+        await rig.client.close()
+
+    async def test_it_shares_its_names_with_what_is_typed_and_with_a_recording(self) -> None:
+        rig = Rig()
+        await rig.connected()
+
+        first = await rig.client.say("hello")
+        second = await rig.client.say_audio_stream(AudioStream(16000, pieces_of(b"\x01\x00")))
+        third = await rig.client.say_audio(RECORDING)
+
+        assert (first, second, third) == ("u1", "u2", "u3")
+        await rig.client.close()
+
+    async def test_a_device_with_no_microphone_cannot_stream_either(self) -> None:
+        rig = Rig("screen")
+        await rig.connected()
+
+        with pytest.raises(CannotConverse, match="no microphone"):
+            await rig.client.say_audio_stream(AudioStream.of(b"\x01\x00" * 100, 16000))
+
+        assert rig.connection.frames("audio_start") == []
+        await rig.client.close()
+
+    async def test_a_connection_that_is_lost_while_it_sends_is_said_to_be_lost(self) -> None:
+        rig = Rig()
+        await rig.connected()
+        rig.connection.closed = True
+
+        with pytest.raises(ConnectionLost):
+            await rig.client.say_audio_stream(AudioStream.of(b"\x01\x00" * 100, 16000))
+
+    @pytest.mark.parametrize("how", ["the edge ends it", "the connection is lost"])
+    async def test_it_goes_no_further_once_it_is_over_and_what_it_was_reading_is_let_go(
+        self, how: str
+    ) -> None:
+        rig = Rig()
+        running = await rig.running()
+        let_go = asyncio.Event()
+        gate = asyncio.Event()
+
+        async def pieces() -> AsyncGenerator[bytes]:
+            try:
+                yield b"\x01\x00" * 100
+                yield b"\x02\x00" * 100
+                await gate.wait()
+                yield b"\x03\x00" * 100  # sent, if it were not over
+            finally:
+                let_go.set()
+
+        saying = asyncio.create_task(rig.client.say_audio_stream(AudioStream(16000, pieces())))
+        await rig.connection.wait_for("audio_chunk", count=2)
+        if how == "the edge ends it":
+            rig.connection.say(
+                TurnEnded(utterance_id="u1", status=TurnStatus.FAILED, code="stream_stalled")
+            )
+        else:
+            rig.connection.drop()
+        await settle()
+        gate.set()
+        await asyncio.wait_for(saying, 1)
+
+        assert len(rig.connection.frames("audio_chunk")) == 2
+        assert rig.connection.frames("audio_end") == []  # a stream that is over is not ended
+        assert let_go.is_set()
+        running.cancel()
+
+
+class TestWhatTheEdgeHeard:
+    async def test_what_a_recording_was_taken_for_is_shown(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+
+        rig.connection.say(Heard(utterance_id=identity, text="how do I reset the router?"))
+        await settle()
+
+        assert rig.shown.of("heard") == ["how do I reset the router?"]
+        assert rig.shown.of("violation") == []
+        running.cancel()
+
+    async def test_so_is_what_a_stream_was_taken_for(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio_stream(AudioStream(16000, pieces_of(b"\x01\x00")))
+
+        rig.connection.say(Heard(utterance_id=identity, text="what time is it?"))
+        await settle()
+
+        assert rig.shown.of("heard") == ["what time is it?"]
+        assert rig.shown.of("violation") == []
+        running.cancel()
+
+    async def test_what_was_typed_was_not_listened_to_so_there_is_nothing_heard_of_it(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say("how do I reset the router?")
+
+        rig.connection.say(Heard(utterance_id=identity, text="something else"))
+        await settle()
+
+        assert rig.shown.of("heard") == []
+        assert "not a recording" in rig.shown.of("violation")[0]
+        running.cancel()
+
+    async def test_what_is_heard_of_what_nobody_said_is_a_bug_of_the_edge(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+
+        rig.connection.say(Heard(utterance_id="u99", text="anyone there?"))
+        await settle()
+
+        assert rig.shown.of("heard") == []
+        assert "u99" in rig.shown.of("violation")[0]
+        running.cancel()
+
+    async def test_what_is_heard_of_an_answer_that_is_over_is_a_bug_of_the_edge(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        await rig.client.wait_for_turn(identity)
+
+        rig.connection.say(Heard(utterance_id=identity, text="too late"))
+        await settle()
+
+        assert rig.shown.of("heard") == []
+        assert len(rig.shown.of("violation")) == 1
+        running.cancel()
+
+    async def test_saying_it_twice_is_a_bug_of_the_edge_and_is_shown_once(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+
+        rig.connection.say(Heard(utterance_id=identity, text="once"))
+        rig.connection.say(Heard(utterance_id=identity, text="twice"))
+        await settle()
+
+        assert rig.shown.of("heard") == ["once"]
+        assert "twice" in rig.shown.of("violation")[0]
+        running.cancel()
+
+    async def test_saying_it_after_the_answer_began_is_a_bug_of_the_edge_but_is_still_shown(
+        self,
+    ) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+
+        rig.connection.say(part(0, Speech(text="Hold the button."), identity))
+        rig.connection.say(Heard(utterance_id=identity, text="how do I reset the router?"))
+        await settle()
+
+        assert rig.shown.of("heard") == ["how do I reset the router?"]
+        assert "after it began to answer" in rig.shown.of("violation")[0]
+        running.cancel()
+
+
+class TestWhatTheEdgeDidNotTake:
+    @pytest.mark.parametrize("code", ["speech_not_configured", "capability_missing"])
+    async def test_a_recording_that_was_not_taken_does_not_leave_the_wait_for_its_answer_for_ever(
+        self, code: str
+    ) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+
+        rig.connection.say(ErrorFrame(code=code, message="not taken", ref=identity))
+        ended = await asyncio.wait_for(rig.client.wait_for_turn(identity), 1)
+
+        assert ended is not None
+        assert (ended.utterance_id, ended.status, ended.code, ended.message) == (
+            identity,
+            TurnStatus.FAILED,
+            code,
+            "not taken",
+        )
+        assert rig.client.active is None
+        assert [e.code for e in rig.shown.of("error")] == [code]  # and the edge is still heard
+        running.cancel()
+
+    async def test_so_is_a_line_that_was_said_by_a_device_that_may_not(self) -> None:
+        rig = Rig("screen")
+        running = await rig.running()
+        identity = await rig.client.say("hello?", force=True)
+
+        rig.connection.say(ErrorFrame(code="capability_missing", message="no mic", ref=identity))
+        ended = await asyncio.wait_for(rig.client.wait_for_turn(identity), 1)
+
+        assert ended is not None
+        assert ended.code == "capability_missing"
+        running.cancel()
+
+    async def test_what_else_the_edge_says_about_an_utterance_does_not_end_the_wait(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+
+        rig.connection.say(ErrorFrame(code="unknown_stream", message="late", ref=identity))
+        await settle()
+
+        assert rig.client.active == identity
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(rig.client.wait_for_turn(identity), 0.05)
+        running.cancel()
+
+    async def test_a_refusal_of_what_was_answered_already_changes_nothing(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+        rig.connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+        await rig.client.wait_for_turn(identity)
+
+        rig.connection.say(ErrorFrame(code="capability_missing", message="late", ref=identity))
+        await settle()
+
+        ended = await rig.client.wait_for_turn(identity)
+        assert ended is not None
+        assert ended.status is TurnStatus.FINISHED
+        running.cancel()
+
+    async def test_an_error_that_is_about_nothing_in_particular_is_only_said(self) -> None:
+        rig = Rig()
+        running = await rig.running()
+        identity = await rig.client.say_audio(RECORDING)
+
+        rig.connection.say(ErrorFrame(code="capability_missing", message="no ref"))
+        await settle()
+
+        assert rig.client.active == identity
+        assert [e.code for e in rig.shown.of("error")] == ["capability_missing"]
+        running.cancel()
 
 
 class TestBeingPlayedTo:

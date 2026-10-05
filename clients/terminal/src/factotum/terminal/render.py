@@ -3,7 +3,8 @@
 The terminal cannot speak or blink a light, so it writes what a device would do, one line for
 each thing, with a tag that says which part of the device is at work: ``[say]`` is the speaker,
 ``[show]`` and ``[card]`` the screen, ``[play]`` the media player, ``[do]`` a command that was run,
-``[...]`` a hint of progress. Only ASCII, so that it reads on any console.
+``[...]`` a hint of progress, ``[heard]`` what the edge took a recording for. Only ASCII, so that it
+reads on any console.
 """
 
 from typing import Protocol, TextIO
@@ -29,6 +30,10 @@ class Renderer(Protocol):
 
     def event(self, what: str) -> None:
         """A command that was run on the device: the volume, a light, the music."""
+        ...
+
+    def heard(self, text: str) -> None:
+        """What the edge took a recording for, before it answers it."""
         ...
 
     def turn_ended(self, ended: TurnEnded) -> None: ...
@@ -80,6 +85,9 @@ class ConsoleRenderer:
 
     def event(self, what: str) -> None:
         self._line("[do]", what)
+
+    def heard(self, text: str) -> None:
+        self._line("[heard]", text)
 
     def turn_ended(self, ended: TurnEnded) -> None:
         if ended.status is TurnStatus.FAILED:

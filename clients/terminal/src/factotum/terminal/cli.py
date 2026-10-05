@@ -11,10 +11,18 @@ Lines that begin with a slash are for the terminal and not for the assistant: ``
 
 With ``--voice`` (a profile with ``audio_in`` only) a real microphone and speaker replace the
 keyboard and the screen: say the wake word, then what you would say, and wait for the answer
-before saying it again. It needs a free Picovoice AccessKey (``$PICOVOICE_ACCESS_KEY``, from
-https://console.picovoice.ai/) for the wake-word engine.
+before saying it again. What you say is sent to the edge as you say it, a chunk at a time, and the
+answer is interrupted by the edge when you begin (ADR 0022). It needs a free Picovoice AccessKey
+(``$PICOVOICE_ACCESS_KEY``, from https://console.picovoice.ai/) for the wake-word engine.
 
     factotum-terminal --profile speaker --voice
+
+With ``--wav-in`` the recordings are in files (16-bit mono WAV) and are said one after the other,
+each as if said after the wake word and in the same chunks a microphone would send: the client that
+tests the whole stack with no hardware. ``--wav-out`` writes what the assistant says to a WAV file
+instead of a speaker, and works with either.
+
+    factotum-terminal --profile speaker --wav-in question.wav --wav-out answer.wav
 """
 
 import argparse
@@ -24,6 +32,7 @@ import sys
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TextIO
 
 from factotum.contracts.audio import AudioPayload
@@ -31,6 +40,7 @@ from factotum.contracts.capabilities import Capability
 from factotum.terminal.audio import (
     ACCESS_KEY_VARIABLE,
     DEFAULT_WAKE_WORD,
+    AudioStream,
     MicrophoneInput,
     SpeakerOutput,
     VoiceInput,
@@ -46,6 +56,7 @@ from factotum.terminal.connection import (
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import DEFAULT_PROFILE, PROFILES, Profile, get_profile
 from factotum.terminal.render import ConsoleRenderer
+from factotum.terminal.wavfiles import WavFileInput, WavFileOutput
 
 DEFAULT_URL = "ws://127.0.0.1:8084/v1/connect"
 TOKEN_VARIABLE = "FACTOTUM_DEVICE_TOKEN"  # noqa: S105 - the name of a variable, not a secret
@@ -68,6 +79,9 @@ class Options:
     voice: bool = False
     wake_word: str = DEFAULT_WAKE_WORD
     access_key: str | None = None
+    wav_in: tuple[Path, ...] = ()
+    wav_out: Path | None = None
+    realtime: bool = False
 
 
 def parse_args(
@@ -114,7 +128,33 @@ def parse_args(
         help=f"the Picovoice AccessKey for the wake-word engine (default: ${ACCESS_KEY_VARIABLE}; "
         "get a free one at https://console.picovoice.ai/)",
     )
+    parser.add_argument(
+        "--wav-in",
+        action="append",
+        type=Path,
+        default=[],
+        metavar="FILE",
+        help="say what is in this WAV file (16-bit mono) as if said after the wake word, streamed "
+        "as a microphone would; give it again for each utterance, said in order. Needs the "
+        "profile's audio_in, and replaces the keyboard (no --voice)",
+    )
+    parser.add_argument(
+        "--wav-out",
+        type=Path,
+        metavar="FILE",
+        help="write what the assistant says to this WAV file instead of playing it",
+    )
+    parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="with --wav-in, hand over each chunk after the time it takes to say it, as a "
+        "microphone would, instead of as fast as the edge takes them",
+    )
     args = parser.parse_args(argv)
+    if args.voice and args.wav_in:
+        parser.error("--voice and --wav-in are two ways of hearing a person: choose one")
+    if args.realtime and not args.wav_in:
+        parser.error("--realtime paces what --wav-in says, and there is none")
     return Options(
         url=args.url,
         profile=get_profile(args.profile),
@@ -123,6 +163,9 @@ def parse_args(
         voice=args.voice,
         wake_word=args.wake_word,
         access_key=args.access_key or variables.get(ACCESS_KEY_VARIABLE),
+        wav_in=tuple(args.wav_in),
+        wav_out=args.wav_out,
+        realtime=args.realtime,
     )
 
 
@@ -174,40 +217,54 @@ async def converse(
 async def converse_by_voice(
     client: DeviceClient, voice_input: VoiceInput, out: TextIO
 ) -> ConnectionLost | None:
-    """The terminal's side of it, with a real voice instead of a keyboard: wait for the wake word,
-    send what follows, and wait for the answer before listening for the wake word again (a future
-    slice listens while an answer plays, and lets it be interrupted mid-sentence; see ADR 0021).
-    Returns how the connection ended, if it was not the person who ended it.
+    """The terminal's side of it, with a voice instead of a keyboard: wait for what a person says,
+    send it (as it is said when it comes as a stream, which is how a real microphone hands it
+    over; whole when it is a recording), and wait for the answer before listening again. A device
+    that listens while an answer plays, and stops it to send the stream of whoever speaks over it,
+    has to cancel the echo of its own speaker first, which is the device's (ADR 0022). Returns how
+    the connection ended, if it was not the person who ended it, and when what is said is over
+    (the files of ``--wav-in`` end) the person has left.
     """
     listening = asyncio.create_task(client.run())
     heard = aiter(voice_input.listen())
+    lost = False
     try:
         while True:
-            recording = await _heard_or_lost(heard, listening)
-            if recording is None:
+            said = await _heard_or_lost(heard, listening)
+            if said is None:
                 break
             try:
-                identity = await client.say_audio(recording)
+                if isinstance(said, AudioStream):
+                    identity = await client.say_audio_stream(said)
+                else:
+                    identity = await client.say_audio(said)
             except ConnectionLost:
+                lost = True
                 break
             await client.wait_for_turn(identity)
     finally:
+        lost = lost or listening.done()
         await client.close()
         await asyncio.wait({listening})
-    return listening.result() if listening.done() else None
+    return listening.result() if lost else None
 
 
 async def _heard_or_lost(
-    heard: AsyncIterator[AudioPayload], listening: "asyncio.Task[ConnectionLost | None]"
-) -> AudioPayload | None:
-    """The next recording, or None when the connection is gone (which is not to wait for a wake
-    word in order to be noticed)."""
+    heard: AsyncIterator[AudioPayload | AudioStream],
+    listening: "asyncio.Task[ConnectionLost | None]",
+) -> AudioPayload | AudioStream | None:
+    """What a person says next, or None when there is no more of it or the connection is gone
+    (which is not to wait for a wake word in order to be noticed)."""
     waiting = asyncio.ensure_future(anext(heard, None))
     await asyncio.wait({waiting, listening}, return_when=asyncio.FIRST_COMPLETED)
-    if waiting.done():
+    if not listening.done():
         return waiting.result()
+    # The connection is gone, and what may have been heard in the same moment has nobody to be
+    # said to: it would be sent to nothing, and its answer waited for.
     waiting.cancel()
     await asyncio.wait({waiting})
+    if not waiting.cancelled():
+        waiting.exception()  # of no use now, and not to be left unretrieved
     return None
 
 
@@ -285,14 +342,16 @@ async def run(
     """Connect as the device of the profile and converse. The exit code says how it went.
 
     ``voice_input`` and ``voice_output`` stand in for a real microphone and speaker in tests;
-    ``--voice`` without either builds the real ones (``factotum.terminal.audio``).
+    ``--voice`` without either builds the real ones (``factotum.terminal.audio``), and ``--wav-in``
+    and ``--wav-out`` the ones that are files (``factotum.terminal.wavfiles``).
     """
     out = out or sys.stdout
     renderer = ConsoleRenderer(out)
-    if options.voice and Capability.AUDIO_IN not in options.profile.capabilities:
+    by_voice = options.voice or bool(options.wav_in)
+    if by_voice and Capability.AUDIO_IN not in options.profile.capabilities:
+        flag = "--voice" if options.voice else "--wav-in"
         sys.stderr.write(
-            f"factotum-terminal: --voice needs a microphone, and {options.profile.name!r} "
-            "has none\n"
+            f"factotum-terminal: {flag} needs a microphone, and {options.profile.name!r} has none\n"
         )
         return 1
     if options.voice and voice_input is None and options.access_key is None:
@@ -301,12 +360,25 @@ async def run(
             f"get a free one at https://console.picovoice.ai/ and set ${ACCESS_KEY_VARIABLE}\n"
         )
         return 1
+    if options.wav_in and voice_input is None:
+        try:  # read now: a file that is not one is known before the edge is reached
+            voice_input = WavFileInput(*options.wav_in, realtime=options.realtime)
+        except (OSError, ValueError) as error:
+            sys.stderr.write(f"factotum-terminal: {error}\n")
+            return 1
     opening = open_connection or WebSocketConnection.open
     try:
         connection = await opening(options.url)
     except CouldNotConnect as error:
         sys.stderr.write(f"factotum-terminal: {error}\n")
         return 1
+    speaker = voice_output
+    wav_out: WavFileOutput | None = None
+    if speaker is None:
+        if options.wav_out is not None:
+            speaker = wav_out = WavFileOutput(options.wav_out)
+        elif options.voice:
+            speaker = SpeakerOutput()
     device = TerminalDevice(options.profile.capabilities, renderer)
     client = DeviceClient(
         connection,
@@ -315,7 +387,7 @@ async def run(
         device,
         hardware_id=options.hardware_id,
         token=options.token,
-        voice_output=(voice_output or SpeakerOutput()) if options.voice else None,
+        voice_output=speaker,
     )
     try:
         await client.connect()
@@ -323,13 +395,21 @@ async def run(
         sys.stderr.write(f"factotum-terminal: the edge refused this device: {refused}\n")
         await connection.close()
         return 1
-    if options.voice:
-        renderer.notice(f"listening for the wake word {options.wake_word!r}")
-        if voice_input is None:
-            assert options.access_key is not None  # noqa: S101 - checked above
-            voice_input = MicrophoneInput(
-                access_key=options.access_key, wake_word=options.wake_word
+    if by_voice:
+        if options.voice:
+            renderer.notice(f"listening for the wake word {options.wake_word!r}")
+            if voice_input is None:
+                assert options.access_key is not None  # noqa: S101 - checked above
+                voice_input = MicrophoneInput(
+                    access_key=options.access_key, wake_word=options.wake_word
+                )
+        else:
+            said = len(options.wav_in)
+            renderer.notice(
+                f"saying {said} recording{'s' if said != 1 else ''} from files, as if said "
+                "after the wake word"
             )
+        assert voice_input is not None  # noqa: S101 - made above, or given
         lost = await converse_by_voice(client, voice_input, out)
     else:
         if Capability.AUDIO_IN in options.profile.capabilities:
@@ -340,6 +420,12 @@ async def run(
             )
         typed = lines if lines is not None else stdin_lines()
         lost = await converse(client, device, options.profile, typed, out)
+    if wav_out is not None:
+        renderer.notice(
+            f"wrote {wav_out.seconds:.1f} s of what was said to {wav_out.path}"
+            if wav_out.seconds
+            else f"nothing was said, so {wav_out.path} was not written"
+        )
     if lost is not None:
         why = f": {lost.reason}" if lost.reason else ""
         renderer.notice(f"the connection to the edge ended ({lost.code}{why})")

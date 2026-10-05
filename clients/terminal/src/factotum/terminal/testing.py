@@ -12,6 +12,7 @@ from factotum.contracts.base import Contract
 from factotum.contracts.cards import Card
 from factotum.contracts.edge import ErrorFrame, TurnEnded, decode_device_frame, encode_frame
 from factotum.contracts.response import StatusState
+from factotum.terminal.audio import AudioStream
 from factotum.terminal.connection import ConnectionLost
 
 
@@ -92,6 +93,9 @@ class RecordingRenderer:
     def event(self, what: str) -> None:
         self.shown.append(("event", what))
 
+    def heard(self, text: str) -> None:
+        self.shown.append(("heard", text))
+
     def turn_ended(self, ended: TurnEnded) -> None:
         self.shown.append(("turn_ended", ended))
 
@@ -111,15 +115,15 @@ async def never() -> None:
 
 
 class FakeVoiceInput:
-    """A microphone that has already heard what it is given, one recording per wake word; after
-    the last of them, no further wake word is ever heard."""
+    """A microphone that has already heard what it is given, one recording (or one stream) per
+    wake word; after the last of them, no further wake word is ever heard."""
 
-    def __init__(self, *recordings: AudioPayload) -> None:
-        self._recordings = list(recordings)
+    def __init__(self, *heard: AudioPayload | AudioStream) -> None:
+        self._heard = list(heard)
 
-    async def listen(self) -> AsyncIterator[AudioPayload]:
-        for recording in self._recordings:
-            yield recording
+    async def listen(self) -> AsyncIterator[AudioPayload | AudioStream]:
+        for what in self._heard:
+            yield what
         await never()
 
 

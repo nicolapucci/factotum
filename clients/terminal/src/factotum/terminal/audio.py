@@ -1,19 +1,26 @@
-"""Real audio for the terminal client's ``--voice``: a microphone that waits for a wake word and
-records what follows, and a speaker that plays what it is given.
+"""Audio for the terminal client: what a person says as a stream of chunks, and what is played.
 
-Everything below the two protocols needs real hardware and is exercised by hand, never by the unit
-tests: a test gives a session a fake instead (``factotum.terminal.testing``). ``sounddevice`` and
-``pvporcupine`` are imported only once a ``MicrophoneInput`` or ``SpeakerOutput`` is actually built,
-so running the terminal client without ``--voice`` never needs them installed.
+A device sends the edge what a person says as it hears it (``audio_start``, a chunk for each piece,
+``audio_end``: ADR 0022), so what supplies it is an ``AudioStream``: the rate of the samples and the
+samples as they come, until the person has stopped. Where they come from is all that tells a real
+microphone from a file (``factotum.terminal.wavfiles``): the client that will be on a Raspberry Pi
+and the one that tests the whole stack send the same frames.
+
+Everything below the protocols that needs real hardware is exercised by hand, never by the unit
+tests: a test gives a session a fake instead (``factotum.terminal.testing``), and the logic of
+where speech ends is a function that a test gives frames to (``capture_speech``). ``sounddevice``
+and ``pvporcupine`` are imported only once a ``MicrophoneInput`` or ``SpeakerOutput`` is actually
+built, so running the terminal client without ``--voice`` never needs them installed.
 """
 
 import asyncio
 import io
 import wave
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from dataclasses import dataclass
 from typing import Any, Protocol
 
-from factotum.contracts.audio import AudioFormat, AudioPayload
+from factotum.contracts.audio import MAX_CHUNK_BYTES, AudioPayload
 
 DEFAULT_WAKE_WORD = "jarvis"
 """One of Porcupine's built-in keywords (``pvporcupine.KEYWORDS``); there is no "factotum" one."""
@@ -22,15 +29,49 @@ ACCESS_KEY_VARIABLE = "PICOVOICE_ACCESS_KEY"
 """A free key from https://console.picovoice.ai/: Porcupine needs one even for a built-in
 keyword."""
 
+DEFAULT_CHUNK_MS = 100
+"""How much of what a person says is in each chunk: a device sends 100 to 200 ms at a time."""
+
+
+@dataclass(frozen=True, slots=True)
+class AudioStream:
+    """What a person is saying, as a microphone hands it over: the rate of the samples (16-bit
+    little-endian, one channel) and the samples as they come, a chunk at a time, until the person
+    has stopped talking. Whoever takes it reads ``chunks`` to the end, or closes it."""
+
+    sample_rate: int
+    chunks: AsyncGenerator[bytes]
+
+    @classmethod
+    def of(
+        cls,
+        pcm: bytes,
+        sample_rate: int,
+        *,
+        chunk_ms: int = DEFAULT_CHUNK_MS,
+        realtime: bool = False,
+    ) -> "AudioStream":
+        """Samples that were recorded, handed over a chunk at a time: as fast as they are taken, or
+        at the pace of a microphone (each chunk after the time it takes to say it)."""
+        return cls(sample_rate, _cut(pcm, sample_rate, chunk_ms, realtime))
+
+
+async def _cut(
+    pcm: bytes, sample_rate: int, chunk_ms: int, realtime: bool
+) -> AsyncGenerator[bytes]:
+    # Whole samples (two bytes), and never more than a chunk may carry.
+    size = min(max(2, sample_rate * 2 * chunk_ms // 1000 // 2 * 2), MAX_CHUNK_BYTES)
+    for start in range(0, len(pcm), size):
+        chunk = pcm[start : start + size]
+        if realtime:
+            await asyncio.sleep(len(chunk) / 2 / sample_rate)
+        yield chunk
+
 
 class VoiceInput(Protocol):
-    def listen(self) -> AsyncIterator[AudioPayload]:
-        """One recording each time the wake word is heard and the person has stopped talking.
-
-        A future slice streams audio instead of waiting for silence to end a recording, and lets a
-        wake word heard while an answer is playing interrupt it (ADR 0021); this is a single clip
-        at a time, like the edge's ``audio_utterance`` is.
-        """
+    def listen(self) -> AsyncIterator[AudioPayload | AudioStream]:
+        """What a person says, each time they say it: a whole recording once they have stopped, or
+        a stream that is begun as soon as they start (ADR 0022: the way the real device does it)."""
         ...
 
 
@@ -38,8 +79,45 @@ class VoiceOutput(Protocol):
     async def play(self, audio: AudioPayload) -> None: ...
 
 
+async def capture_speech(
+    frames: "asyncio.Queue[Any]",
+    sample_rate: int,
+    *,
+    silence_seconds: float,
+    silence_level: float,
+    max_seconds: float,
+) -> AsyncGenerator[bytes]:
+    """What is said after the wake word, as chunks of ``DEFAULT_CHUNK_MS`` taken from ``frames``
+    (arrays of 16-bit samples, as a microphone hands them over) until the person has been quiet for
+    ``silence_seconds`` or has talked for ``max_seconds``, whichever comes first. A frame that is
+    quiet is one whose mean level is under ``silence_level``; the silence that ended it is in the
+    last chunk, and what is left in ``frames`` after it is not taken."""
+    import numpy as np
+
+    pending: list[Any] = []
+    pending_seconds = 0.0
+    quiet = taken = 0
+    needed_quiet = max_frames = 0
+    while True:
+        frame = await frames.get()
+        taken += 1
+        frame_seconds = len(frame) / sample_rate
+        if taken == 1:
+            needed_quiet = max(1, int(silence_seconds / frame_seconds))
+            max_frames = max(1, int(max_seconds / frame_seconds))
+        quiet = quiet + 1 if np.abs(frame).mean() < silence_level else 0
+        pending.append(frame)
+        pending_seconds += frame_seconds
+        over = quiet >= needed_quiet or taken >= max_frames
+        if over or pending_seconds >= DEFAULT_CHUNK_MS / 1000:
+            yield np.concatenate(pending).astype("<i2").tobytes()
+            pending, pending_seconds = [], 0.0
+        if over:
+            return
+
+
 class MicrophoneInput:
-    """A real microphone, watched by Porcupine. Once it fires, what follows is recorded until
+    """A real microphone, watched by Porcupine. Once it fires, what follows is streamed until
     ``silence_seconds`` of quiet or ``max_seconds`` have passed, whichever comes first.
 
     The first call validates ``access_key`` against Picovoice's service (a network call); the
@@ -61,7 +139,7 @@ class MicrophoneInput:
         self._silence_seconds = silence_seconds
         self._silence_level = silence_level
 
-    async def listen(self) -> AsyncIterator[AudioPayload]:
+    async def listen(self) -> AsyncIterator[AudioStream]:
         import pvporcupine
         import sounddevice as sd  # heavy, and needs real hardware: deferred to the first use
 
@@ -71,10 +149,10 @@ class MicrophoneInput:
         try:
             sample_rate, frame_length = porcupine.sample_rate, porcupine.frame_length
             loop = asyncio.get_running_loop()
-            chunks: asyncio.Queue[Any] = asyncio.Queue()
+            frames: asyncio.Queue[Any] = asyncio.Queue()
 
-            def on_audio(indata: Any, frames: int, time: Any, status: Any) -> None:
-                loop.call_soon_threadsafe(chunks.put_nowait, indata[:, 0].copy())
+            def on_audio(indata: Any, count: int, time: Any, status: Any) -> None:
+                loop.call_soon_threadsafe(frames.put_nowait, indata[:, 0].copy())
 
             with sd.InputStream(
                 samplerate=sample_rate,
@@ -84,35 +162,22 @@ class MicrophoneInput:
                 callback=on_audio,
             ):
                 while True:
-                    chunk = await chunks.get()
-                    if await asyncio.to_thread(porcupine.process, chunk) < 0:
+                    frame = await frames.get()
+                    if await asyncio.to_thread(porcupine.process, frame) < 0:
                         continue
-                    yield await self._record(chunks, sample_rate)
+                    speech = capture_speech(
+                        frames,
+                        sample_rate,
+                        silence_seconds=self._silence_seconds,
+                        silence_level=self._silence_level,
+                        max_seconds=self._max_seconds,
+                    )
+                    try:
+                        yield AudioStream(sample_rate, speech)
+                    finally:
+                        await speech.aclose()  # whoever took it may have stopped reading it
         finally:
             porcupine.delete()
-
-    async def _record(self, chunks: "asyncio.Queue[Any]", sample_rate: int) -> AudioPayload:
-        """What is said after the wake word, as one clip."""
-        import numpy as np
-
-        collected: list[Any] = []
-        quiet_chunks = 0
-        first = await chunks.get()
-        collected.append(first)
-        chunk_seconds = len(first) / sample_rate
-        needed_quiet = max(1, int(self._silence_seconds / chunk_seconds))
-        max_chunks = max(1, int(self._max_seconds / chunk_seconds))
-        for _ in range(max_chunks - 1):
-            chunk = await chunks.get()
-            collected.append(chunk)
-            if np.abs(chunk).mean() < self._silence_level:
-                quiet_chunks += 1
-                if quiet_chunks >= needed_quiet:
-                    break
-            else:
-                quiet_chunks = 0
-        samples = np.concatenate(collected).astype(np.int16)
-        return _wav_of(samples, sample_rate)
 
 
 class SpeakerOutput:
@@ -123,16 +188,6 @@ class SpeakerOutput:
 
         samples = _pcm16_of(audio)
         await asyncio.to_thread(sd.play, samples, samplerate=audio.sample_rate, blocking=True)
-
-
-def _wav_of(samples: Any, sample_rate: int) -> AudioPayload:
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(samples.tobytes())
-    return AudioPayload(format=AudioFormat.WAV, sample_rate=sample_rate, data=buffer.getvalue())
 
 
 def _pcm16_of(audio: AudioPayload) -> Any:

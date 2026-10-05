@@ -1,19 +1,22 @@
 import asyncio
 import io
 import sys
+import wave
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import AudioPayload, wav_of
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import SetVolume, ShowCard
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
     CommandFrame,
     ErrorFrame,
+    Heard,
     PartFrame,
     Ready,
     TurnEnded,
@@ -155,6 +158,44 @@ class TestTheArguments:
         monkeypatch.setenv(TOKEN_VARIABLE, "from-the-real-environment")
 
         assert parse_args([]).token == "from-the-real-environment"
+
+    def test_by_default_nothing_is_read_from_files_or_written_to_one(self) -> None:
+        options = parse_args([], {})
+
+        assert (options.wav_in, options.wav_out, options.realtime) == ((), None, False)
+
+    def test_recordings_in_files_are_said_in_the_order_they_are_given(self) -> None:
+        options = parse_args(
+            ["--wav-in", "one.wav", "--wav-out", "answer.wav", "--wav-in", "two.wav"], {}
+        )
+
+        assert options.wav_in == (Path("one.wav"), Path("two.wav"))
+        assert options.wav_out == Path("answer.wav")
+
+    def test_what_is_said_can_be_paced_as_a_microphone_would(self) -> None:
+        assert parse_args(["--wav-in", "one.wav", "--realtime"], {}).realtime is True
+
+    def test_a_voice_and_files_are_two_ways_of_hearing_a_person_and_only_one_is_chosen(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            parse_args(["--voice", "--wav-in", "one.wav"], {})
+
+        assert stopped.value.code == 2
+        assert "choose one" in capsys.readouterr().err
+
+    def test_a_pace_is_for_files_and_there_are_none(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            parse_args(["--realtime"], {})
+
+        assert stopped.value.code == 2
+        assert "--wav-in" in capsys.readouterr().err
+
+    def test_a_file_to_write_to_goes_with_a_voice_or_with_a_keyboard(self) -> None:
+        assert parse_args(["--voice", "--wav-out", "answer.wav"], {}).wav_out == Path("answer.wav")
+        assert parse_args(["--wav-out", "answer.wav"], {}).voice is False
 
 
 class TestConversing:
@@ -328,6 +369,304 @@ class TestConversingByVoice:
 
         assert code == 1
         assert out[-1] == "--       the connection to the edge ended (4002: idle)"
+
+
+CLIP = wav_of(b"\x05\x00" * 100, 22050)
+"""What an answer sounds like, as the gateway's Piper hands it over: a WAV file."""
+
+
+def a_recording(path: Path, pcm: bytes) -> Path:
+    path.write_bytes(wav_of(pcm, 16000).data)
+    return path
+
+
+def an_edge_that_answers(connection: MemoryConnection, *answers: str) -> "asyncio.Task[None]":
+    """An edge that, once an utterance has been sent to its end, says what it took it for and
+    answers it with speech that has a voice."""
+
+    async def answering() -> None:
+        for number, said in enumerate(answers, start=1):
+            await connection.wait_for("audio_end", count=number)
+            identity = f"u{number}"
+            connection.say(Heard(utterance_id=identity, text=f"what was said, {number}"))
+            connection.say(
+                PartFrame(utterance_id=identity, seq=0, part=Speech(text=said, audio=CLIP))
+            )
+            connection.say(TurnEnded(utterance_id=identity, status=TurnStatus.FINISHED))
+
+    return asyncio.create_task(answering())
+
+
+async def from_files(
+    profile: str,
+    *recordings: Path,
+    connection: MemoryConnection,
+    wav_out: Path | None = None,
+    realtime: bool = False,
+) -> tuple[int, list[str]]:
+    """A person at a terminal of this profile whose recordings are in files, with ``--wav-in``."""
+    out = io.StringIO()
+    code = await run(
+        Options(
+            url=DEFAULT_URL,
+            profile=get_profile(profile),
+            hardware_id=None,
+            token=None,
+            wav_in=recordings,
+            wav_out=wav_out,
+            realtime=realtime,
+        ),
+        out=out,
+        open_connection=lambda _url: opened(connection),
+    )
+    return code, out.getvalue().splitlines()
+
+
+def written(path: Path) -> tuple[bytes, int]:
+    with wave.open(str(path), "rb") as wav_reader:
+        return wav_reader.readframes(wav_reader.getnframes()), wav_reader.getframerate()
+
+
+class TestConversingFromFiles:
+    async def test_the_files_are_said_in_order_each_as_a_stream_and_each_answer_is_waited_for(
+        self, tmp_path: Path
+    ) -> None:
+        first = a_recording(tmp_path / "one.wav", b"\x01\x00" * 1600)
+        second = a_recording(tmp_path / "two.wav", b"\x02\x00" * 100)
+        connection = connected("speaker")
+        answering = an_edge_that_answers(connection, "First answer.", "Second answer.")
+
+        code, out = await from_files("speaker", first, second, connection=connection)
+        await answering
+
+        assert code == 0
+        assert out[0].startswith(CONNECTED)
+        assert out[1:] == [
+            "--       saying 2 recordings from files, as if said after the wake word",
+            "[heard]  what was said, 1",
+            "[say]    First answer.",
+            "[heard]  what was said, 2",
+            "[say]    Second answer.",
+        ]
+        frames = connection.frames("audio_start", "audio_chunk", "audio_end")
+        assert [(f.type, f.id) for f in frames] == [
+            ("audio_start", "u1"),
+            ("audio_chunk", "u1"),
+            ("audio_end", "u1"),
+            ("audio_start", "u2"),
+            ("audio_chunk", "u2"),
+            ("audio_end", "u2"),
+        ]
+        assert [c.data for c in frames if c.type == "audio_chunk"] == [
+            b"\x01\x00" * 1600,
+            b"\x02\x00" * 100,
+        ]
+        assert connection.frames("audio_utterance") == []  # a stream, and not a clip
+        assert len(connection.frames("bye")) == 1  # and when they are said the person leaves
+
+    async def test_one_file_is_one_recording(self, tmp_path: Path) -> None:
+        connection = connected("speaker")
+        answering = an_edge_that_answers(connection, "Ten seconds.")
+
+        code, out = await from_files(
+            "speaker", a_recording(tmp_path / "one.wav", b"\x01\x00" * 100), connection=connection
+        )
+        await answering
+
+        assert code == 0
+        assert "--       saying 1 recording from files, as if said after the wake word" in out
+
+    async def test_what_the_assistant_says_can_be_written_to_a_file_instead_of_played(
+        self, tmp_path: Path
+    ) -> None:
+        question = a_recording(tmp_path / "question.wav", b"\x01\x00" * 100)
+        answer = tmp_path / "answer.wav"
+        connection = connected("speaker")
+        answering = an_edge_that_answers(connection, "First.", "Second.")
+
+        code, out = await from_files(
+            "speaker", question, question, connection=connection, wav_out=answer
+        )
+        await answering
+
+        assert code == 0
+        assert written(answer) == (b"\x05\x00" * 200, 22050)  # both answers, one after the other
+        assert out[-1] == f"--       wrote {200 / 22050:.1f} s of what was said to {answer}"
+
+    async def test_a_file_that_is_not_written_because_nothing_was_said_is_said(
+        self, tmp_path: Path
+    ) -> None:
+        answer = tmp_path / "answer.wav"
+        connection = connected("speaker")
+        asyncio.get_running_loop().call_later(0.05, connection.drop)  # nobody answers
+
+        _, out = await from_files(
+            "speaker",
+            a_recording(tmp_path / "question.wav", b"\x01\x00" * 100),
+            connection=connection,
+            wav_out=answer,
+        )
+
+        assert f"--       nothing was said, so {answer} was not written" in out
+        assert not answer.exists()
+
+    async def test_an_utterance_that_the_edge_does_not_take_does_not_hold_up_the_next(
+        self, tmp_path: Path
+    ) -> None:
+        question = a_recording(tmp_path / "question.wav", b"\x01\x00" * 100)
+        connection = connected("speaker")
+
+        async def refusing_the_first() -> None:
+            await connection.wait_for("audio_start", count=1)
+            connection.say(ErrorFrame(code="speech_not_configured", message="no speech", ref="u1"))
+            await connection.wait_for("audio_end", count=2)
+            connection.say(Heard(utterance_id="u2", text="the second"))
+            connection.say(TurnEnded(utterance_id="u2", status=TurnStatus.FINISHED))
+
+        edge = asyncio.create_task(refusing_the_first())
+
+        code, out = await from_files("speaker", question, question, connection=connection)
+        await edge
+
+        assert code == 0
+        assert "[edge!]  speech_not_configured: no speech" in out
+        assert out[-1] == "[heard]  the second"
+
+    async def test_a_file_is_said_in_the_time_it_takes_when_that_is_asked_for(
+        self, tmp_path: Path
+    ) -> None:
+        question = a_recording(tmp_path / "question.wav", bytes(3200 * 2))  # two tenths of a second
+        timings: dict[bool, float] = {}
+
+        for realtime in (False, True):
+            connection = connected("speaker")
+            answering = an_edge_that_answers(connection, "Ten seconds.")
+            started = asyncio.get_running_loop().time()
+            code, _ = await from_files(
+                "speaker", question, connection=connection, realtime=realtime
+            )
+            timings[realtime] = asyncio.get_running_loop().time() - started
+            await answering
+            assert code == 0
+
+        assert timings[True] >= 0.15  # what was said takes as long as it did to say
+        assert timings[False] < timings[True]
+
+    async def test_a_file_that_is_not_there_is_said_before_the_edge_is_reached(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        async def unreachable(url: str) -> Connection:
+            raise AssertionError("the edge was reached")
+
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("speaker"),
+                hardware_id=None,
+                token=None,
+                wav_in=(tmp_path / "nothing.wav",),
+            ),
+            open_connection=unreachable,
+        )
+
+        assert code == 1
+        assert "nothing.wav" in capsys.readouterr().err
+
+    async def test_a_file_that_is_not_a_recording_is_said_with_its_name(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        notes = tmp_path / "notes.wav"
+        notes.write_bytes(b"not audio")
+
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("speaker"),
+                hardware_id=None,
+                token=None,
+                wav_in=(notes,),
+            )
+        )
+
+        assert code == 1
+        error = capsys.readouterr().err
+        assert str(notes) in error
+        assert "not a WAV file" in error
+
+    async def test_a_profile_with_no_microphone_cannot_say_files(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("screen"),
+                hardware_id=None,
+                token=None,
+                wav_in=(a_recording(tmp_path / "question.wav", b"\x01\x00" * 100),),
+            )
+        )
+
+        assert code == 1
+        assert "--wav-in needs a microphone" in capsys.readouterr().err
+
+    async def test_the_edge_dropping_the_connection_is_said_and_the_files_that_are_left_are_not(
+        self, tmp_path: Path
+    ) -> None:
+        question = a_recording(tmp_path / "question.wav", b"\x01\x00" * 100)
+        connection = connected("speaker")
+        asyncio.get_running_loop().call_later(0.05, lambda: connection.drop(4002, "idle"))
+
+        code, out = await from_files("speaker", question, question, connection=connection)
+
+        assert code == 1
+        assert out[-1] == "--       the connection to the edge ended (4002: idle)"
+        assert len(connection.frames("audio_start")) == 1
+
+    async def test_a_person_who_has_said_everything_is_not_a_connection_that_was_lost(
+        self, tmp_path: Path
+    ) -> None:
+        connection = connected("speaker")
+        answering = an_edge_that_answers(connection, "Ten seconds.")
+
+        code, out = await from_files(
+            "speaker", a_recording(tmp_path / "q.wav", b"\x01\x00" * 100), connection=connection
+        )
+        await answering
+
+        assert code == 0
+        assert not any("the connection to the edge ended" in line for line in out)
+
+
+class TestAFileForWhatIsSaidToAKeyboard:
+    async def test_what_the_assistant_says_to_what_is_typed_can_be_written_to_a_file_too(
+        self, tmp_path: Path
+    ) -> None:
+        answer = tmp_path / "answer.wav"
+        connection = connected("speaker")
+
+        def says_something() -> None:
+            connection.say(
+                PartFrame(utterance_id="u1", seq=0, part=Speech(text="Ten seconds.", audio=CLIP))
+            )
+            connection.say(TurnEnded(utterance_id="u1", status=TurnStatus.FINISHED))
+
+        out = io.StringIO()
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("speaker"),
+                hardware_id=None,
+                token=None,
+                wav_out=answer,
+            ),
+            lines=Typed("how long should I hold it?", says_something).read(),
+            out=out,
+            open_connection=lambda _url: opened(connection),
+        )
+
+        assert code == 0
+        assert written(answer) == (b"\x05\x00" * 100, 22050)
+        assert "[say]    Ten seconds." in out.getvalue().splitlines()
 
 
 class TestTheCommandsOfTheTerminal:

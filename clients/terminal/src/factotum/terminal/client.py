@@ -6,8 +6,9 @@ does what the edge sends: it renders the parts of an answer, and it runs the com
 and says what became of each.
 
 It also checks the edge. A part that this device could not render, parts out of order, an answer
-that nobody asked for: the edge is not to do any of it, and a device that saw it would say so.
-That is what a client is good for, before there is a real one.
+that nobody asked for, what was heard said after the answer began: the edge is not to do any of it,
+and a device that saw it would say so. That is what a client is good for, before there is a real
+one.
 """
 
 import asyncio
@@ -19,18 +20,23 @@ from factotum.contracts.commands import CommandStatus, PlayUrl
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
     Ack,
+    AudioChunk,
+    AudioEnd,
+    AudioStart,
     AudioUtterance,
     Bye,
     Cancel,
     ClientInfo,
     CommandFrame,
     ErrorFrame,
+    Heard,
     Hello,
     PartFrame,
     Ping,
     Pong,
     Ready,
     TurnEnded,
+    TurnStatus,
     Utterance,
     decode_edge_frame,
     encode_frame,
@@ -45,13 +51,17 @@ from factotum.contracts.response import (
     Text,
     required_capability,
 )
-from factotum.terminal.audio import VoiceOutput
+from factotum.terminal.audio import AudioStream, VoiceOutput
 from factotum.terminal.connection import Connection, ConnectionLost
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import Profile
 from factotum.terminal.render import Renderer
 
 CLIENT = ClientInfo(name="factotum-terminal", version="0.0.0")
+
+_NOT_ACCEPTED = frozenset({"capability_missing", "speech_not_configured"})
+"""The codes of an ``error`` frame that says an utterance was not taken at all: no ``turn_ended``
+will follow it, so the wait for the answer ends with it."""
 
 
 class Refused(Exception):  # noqa: N818 - it says what the edge did, not what failed
@@ -90,6 +100,8 @@ class DeviceClient:
         self._turns: dict[str, asyncio.Event] = {}
         self._ended: dict[str, TurnEnded] = {}
         self._next_part: dict[str, int] = {}
+        self._recordings: set[str] = set()
+        self._heard: set[str] = set()
         self._counter = 0
         self.ready: Ready | None = None
         self.active: str | None = None
@@ -163,25 +175,65 @@ class DeviceClient:
         match frame:
             case PartFrame():
                 await self._part(frame)
+            case Heard():
+                self._what_was_heard(frame)
             case TurnEnded():
                 self._renderer.turn_ended(frame)
-                self._ended[frame.utterance_id] = frame
-                self._next_part.pop(frame.utterance_id, None)
-                if self.active == frame.utterance_id:
-                    self.active = None
-                event = self._turns.get(frame.utterance_id)
-                if event is not None:
-                    event.set()
+                self._end(frame)
             case CommandFrame():
                 result = await self._device.execute(frame.command)
                 with contextlib.suppress(ConnectionLost):
                     await self._connection.send(encode_frame(Ack(id=frame.id, result=result)))
             case ErrorFrame():
                 self._renderer.error(frame)
+                self._not_accepted(frame)
             case Pong():
                 pass
             case Ready():
                 self._renderer.violation("the edge said ready a second time")
+
+    def _end(self, ended: TurnEnded) -> None:
+        self._ended[ended.utterance_id] = ended
+        self._next_part.pop(ended.utterance_id, None)
+        if self.active == ended.utterance_id:
+            self.active = None
+        event = self._turns.get(ended.utterance_id)
+        if event is not None:
+            event.set()
+
+    def _not_accepted(self, error: ErrorFrame) -> None:
+        """The edge says it took no notice of an utterance (a device with no microphone, an edge
+        with no speech): there will be no answer and no end of one, and what waits for it must not
+        wait for ever. The wait ends as an answer that failed with the code the edge gave."""
+        identity = error.ref
+        if error.code not in _NOT_ACCEPTED or identity is None or identity not in self._next_part:
+            return
+        self._end(
+            TurnEnded(
+                utterance_id=identity,
+                status=TurnStatus.FAILED,
+                code=error.code,
+                message=error.message,
+            )
+        )
+
+    def _what_was_heard(self, heard: Heard) -> None:
+        """What the edge took a recording for. It says so once, for a recording that is being
+        answered, and before it begins to answer it."""
+        identity = heard.utterance_id
+        if identity not in self._recordings or identity not in self._next_part:
+            self._renderer.violation(
+                f"the edge said what it heard of {identity}, which is not a recording that is "
+                "being answered"
+            )
+            return
+        if identity in self._heard:
+            self._renderer.violation(f"the edge said twice what it heard of {identity}")
+            return
+        self._heard.add(identity)
+        if self._next_part[identity] > 0:
+            self._renderer.violation("the edge said what it heard after it began to answer")
+        self._renderer.heard(heard.text)
 
     async def _part(self, frame: PartFrame) -> None:
         expected = self._next_part.get(frame.utterance_id)
@@ -228,28 +280,67 @@ class DeviceClient:
     async def say(self, text: str, *, force: bool = False) -> str:
         """Say something to the assistant, and return what to call it. A device with no microphone
         cannot: ``force`` says it anyway, to see what the edge makes of it."""
-        if not force and Capability.AUDIO_IN not in self._profile.capabilities:
-            raise CannotConverse("this device has no microphone, so it cannot start a conversation")
-        self._counter += 1
-        identity = f"u{self._counter}"
-        self._turns[identity] = asyncio.Event()
-        self._next_part[identity] = 0
-        self.active = identity
+        if not force:
+            self._must_have_a_microphone()
+        identity = self._begin()
         await self._connection.send(encode_frame(Utterance(id=identity, text=text)))
         return identity
 
     async def say_audio(self, audio: AudioPayload) -> str:
         """Send a recording instead of typed text, and return what to call it. A device with no
         microphone cannot: the same ``CannotConverse`` as ``say``."""
+        self._must_have_a_microphone()
+        identity = self._begin(recording=True)
+        await self._connection.send(encode_frame(AudioUtterance(id=identity, audio=audio)))
+        return identity
+
+    async def say_audio_stream(self, stream: AudioStream) -> str:
+        """Send what a person says as it is heard, instead of a recording made after it: an
+        ``audio_start`` when they begin (which is when the edge stops the answer that is being
+        given: that is speaking over it), a chunk for each piece the stream hands over, and an
+        ``audio_end`` when it has no more, which is when they have stopped. Returns what to call
+        it, once it is all sent, and does not wait for the answer (``wait_for_turn`` does). A device
+        with no microphone cannot: the same ``CannotConverse`` as ``say``.
+
+        The edge may end it before the person has finished (it went on too long, or it stalled):
+        it says so with a ``turn_ended``, and nothing more is sent after it."""
+        self._must_have_a_microphone()
+        identity = self._begin(recording=True)
+        await self._connection.send(
+            encode_frame(AudioStart(id=identity, sample_rate=stream.sample_rate))
+        )
+        seq = 0
+        async with contextlib.aclosing(stream.chunks):
+            async for data in stream.chunks:
+                if self._over(identity):
+                    return identity
+                await self._connection.send(
+                    encode_frame(AudioChunk(id=identity, seq=seq, data=data))
+                )
+                seq += 1
+        if not self._over(identity):
+            await self._connection.send(encode_frame(AudioEnd(id=identity)))
+        return identity
+
+    def _must_have_a_microphone(self) -> None:
         if Capability.AUDIO_IN not in self._profile.capabilities:
             raise CannotConverse("this device has no microphone, so it cannot start a conversation")
+
+    def _begin(self, *, recording: bool = False) -> str:
+        """What the next thing said is called, and what is waited for of it."""
         self._counter += 1
         identity = f"u{self._counter}"
         self._turns[identity] = asyncio.Event()
         self._next_part[identity] = 0
+        if recording:
+            self._recordings.add(identity)
         self.active = identity
-        await self._connection.send(encode_frame(AudioUtterance(id=identity, audio=audio)))
         return identity
+
+    def _over(self, identity: str) -> bool:
+        """Whether there is nothing more to say of an utterance: its turn has ended, or the
+        connection has."""
+        return self._turns[identity].is_set()
 
     async def wait_for_turn(self, identity: str) -> TurnEnded | None:
         """The answer to an utterance is over: how, or nothing if the connection ended first."""
