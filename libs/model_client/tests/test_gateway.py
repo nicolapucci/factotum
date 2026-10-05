@@ -8,10 +8,25 @@ import pytest
 
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.tokens import MIN_SECRET_BYTES, decode_token
-from factotum.contracts.errors import AuthError
+from factotum.contracts.errors import (
+    AuthError,
+    ChatNotConfiguredError,
+    EmbeddingNotConfiguredError,
+    GatewayError,
+    ProviderUnavailableError,
+    RateLimitedError,
+    SttNotConfiguredError,
+    TtsNotConfiguredError,
+)
 from factotum.contracts.identity import Owner, Subject
+from factotum.contracts.models import ModelRole
 from factotum.contracts.testing import make_device_id, make_tenant_id, make_user_id
-from factotum.model_client.gateway import DevDelegation, HubDelegation, delegation_for
+from factotum.model_client.gateway import (
+    DevDelegation,
+    HubDelegation,
+    delegation_for,
+    typed_error,
+)
 
 SECRET = b"s" * MIN_SECRET_BYTES
 TENANT = make_tenant_id()
@@ -82,3 +97,41 @@ class TestDelegationFor:
         delegation = delegation_for(settings, TENANT)
 
         assert delegation.headers(Owner.of_subject(Subject.tenant(TENANT)))
+
+
+class TestTheErrorACodeStandsFor:
+    """What a code and a message of the gateway become: for an answer with an error status, and
+    for the last event of a stream that failed after it had begun."""
+
+    def test_a_code_of_the_gateway_is_the_error_of_its_kind_with_its_message_and_details(
+        self,
+    ) -> None:
+        error = typed_error("provider_unavailable", "busy", details={"provider": "piper_local"})
+
+        assert type(error) is ProviderUnavailableError
+        assert error.message == "busy"
+        assert error.details == {"provider": "piper_local"}
+
+    def test_a_code_nobody_knows_is_an_error_of_the_gateway(self) -> None:
+        assert type(typed_error("something_new", "what is this")) is GatewayError
+
+    def test_a_rate_limit_carries_how_long_to_wait(self) -> None:
+        error = typed_error("rate_limited", "slow down", retry_after_s=7.0)
+
+        assert isinstance(error, RateLimitedError)
+        assert error.retry_after_s == 7.0
+
+    @pytest.mark.parametrize(
+        ("role", "kind"),
+        [
+            (ModelRole.EMBEDDING, EmbeddingNotConfiguredError),
+            (ModelRole.STT, SttNotConfiguredError),
+            (ModelRole.TTS, TtsNotConfiguredError),
+            (ModelRole.CHAT_MAIN, ChatNotConfiguredError),
+            (ModelRole.CHAT_FAST, ChatNotConfiguredError),
+        ],
+    )
+    def test_no_binding_is_the_error_of_the_role_that_was_asked_for(
+        self, role: ModelRole, kind: type[Exception]
+    ) -> None:
+        assert type(typed_error("binding_not_found", "none", role)) is kind

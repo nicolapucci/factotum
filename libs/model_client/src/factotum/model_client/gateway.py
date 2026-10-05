@@ -130,11 +130,29 @@ def error_from(response: httpx.Response, role: ModelRole = ModelRole.EMBEDDING) 
     if code is None or message is None:
         return GatewayError(f"the model gateway answered with an error ({response.status_code})")
 
+    retry_after = response.headers.get("Retry-After", "")
+    return typed_error(
+        code,
+        message,
+        role,
+        details=details,
+        retry_after_s=float(retry_after) if retry_after.isdigit() else None,
+    )
+
+
+def typed_error(
+    code: str,
+    message: str,
+    role: ModelRole = ModelRole.EMBEDDING,
+    *,
+    details: Mapping[str, object] | None = None,
+    retry_after_s: float | None = None,
+) -> FactotumError:
+    """The typed error that a ``code`` and a ``message`` of the gateway stand for: what
+    ``error_from`` makes of an answer with an error status, and what a stream that fails after it
+    began (the status was 200 by then) makes of its last event."""
     if code == RateLimitedError.code:
-        retry_after = response.headers.get("Retry-After", "")
-        return RateLimitedError(
-            message, retry_after_s=float(retry_after) if retry_after.isdigit() else None
-        )
+        return RateLimitedError(message, retry_after_s=retry_after_s)
     if code == BindingNotFoundError.code:
         if role is ModelRole.EMBEDDING:
             return EmbeddingNotConfiguredError("no embedding model is set up for the owner")
@@ -144,4 +162,4 @@ def error_from(response: httpx.Response, role: ModelRole = ModelRole.EMBEDDING) 
             return TtsNotConfiguredError("no text-to-speech model is set up for the owner")
         return ChatNotConfiguredError("no chat model is set up for the owner")
     kind = _error_classes().get(code, GatewayError)
-    return kind(message, details=details)
+    return kind(message, details=details or {})
