@@ -4,23 +4,36 @@ A device that does not answer has many reasons to be silent (the credential, the
 edge, a microphone that Windows does not let a program hear, a speaker that does not take the rate
 of the voice), and from outside they look the same. The doctor tries each of them by itself and
 says which, and what to do about it. It makes no sound and hears nothing unless it is asked to
-(``--listen``, ``--play``), and it connects to the edge *as the device*: a device that is running
-with the same hardware id is replaced by it, which is the rule of the edge (the last connection of a
-device wins), so a device is stopped before it is looked at.
+(``--listen``, ``--play``, ``--word``), and it connects to the edge *as the device*: a device that
+is running with the same hardware id is replaced by it, which is the rule of the edge (the last
+connection of a device wins), so a device is stopped before it is looked at.
 """
 
 import asyncio
+import importlib
 import io
 import math
 import struct
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from factotum.client_audio import AudioBackend, AudioUnavailableError, Microphone, Speaker
+from factotum.client_audio import (
+    WAKE_WORDS,
+    AudioBackend,
+    AudioUnavailableError,
+    Engine,
+    Microphone,
+    ModelsNotThereError,
+    OpenWakeWordEngine,
+    Speaker,
+    WakeWordError,
+    WakeWordModels,
+)
 from factotum.client_core import CouldNotConnect, DeviceClient, Refused, WebSocketConnection
 from factotum.client_core.connection import Connection
 from factotum.client_core.ports import CommandRouter
-from factotum.device.config import Config, Mode
+from factotum.device.app import EngineFactory, engine_of, identity_of
+from factotum.device.config import Config, ConfigError, Mode
 from factotum.device.hands import DeviceHands
 from factotum.device.render import DeviceRenderer
 
@@ -35,6 +48,14 @@ BLOCK_WAIT_S = 2.0
 
 QUIET = 20.0
 """A mean level, of 32768, under which a microphone has heard nothing at all."""
+
+WORD_SECONDS = 5.0
+"""How long ``--word`` listens for the word."""
+
+NEAR = 0.25
+"""A score from which a word that was not taken came near enough for a lower threshold to be the
+answer: under it, one would let in the sounds that are not the word. (A quarter, which a score of
+32 bits can be exactly, so that what is said of a score of exactly that is what is meant.)"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,8 +162,6 @@ async def check_edge(
     speaker: Speaker | None,
     opening: Callable[[str], Awaitable[Connection]] = WebSocketConnection.open,
 ) -> Check:
-    from factotum.device.app import identity_of  # not at the top: app imports this package's hands
-
     try:
         connection = await opening(config.edge.url)
     except CouldNotConnect as error:
@@ -196,6 +215,123 @@ async def check_edge(
         await client.close()
 
 
+async def check_wake_word(config: Config, engine: EngineFactory) -> Check:
+    """That what watches for the word can be had: for openWakeWord, that its models are there and
+    load; for Porcupine, that its package is (Picovoice checks the key when the device starts, and
+    it is not asked here)."""
+    listening = config.listening
+    word = listening.word
+    if listening.engine is Engine.PORCUPINE:
+        try:
+            importlib.import_module("pvporcupine")
+        except ImportError:
+            return Check(
+                "wake word",
+                False,
+                f"{word!r} by porcupine: its package is not installed",
+                "uv sync --all-packages --extra porcupine (and an access key, which Picovoice "
+                "gives to companies); listening.engine openwakeword needs neither",
+            )
+        return Check(
+            "wake word", True, f"{word!r} by porcupine: Picovoice checks the key at the start"
+        )
+    models = WakeWordModels(listening.models_dir)
+    try:
+        make = engine(listening)
+    except (ConfigError, WakeWordError) as error:  # a word that there is no model for
+        return Check("wake word", False, str(error), "listening.wake_word is one of those")
+    try:
+        made = await asyncio.to_thread(make)
+    except ModelsNotThereError as error:
+        names = ", ".join(file.name for file in error.missing)
+        return Check(
+            "wake word", False, f"{word!r}: {names} not in {error.directory}", error.command
+        )
+    except Exception as error:  # noqa: BLE001 - whatever a model that cannot be loaded says, is said
+        return Check(
+            "wake word",
+            False,
+            f"the models of {word!r} could not be loaded: {error}",
+            f"fetch them again: {models.download_command(word)}",
+        )
+    made.close()
+    return Check(
+        "wake word",
+        True,
+        f"{word!r} by openwakeword, threshold {listening.threshold}: its models are in "
+        f"{models.directory}",
+    )
+
+
+async def check_word_heard(
+    config: Config,
+    backend: AudioBackend,
+    engine: EngineFactory,
+    *,
+    seconds: float = WORD_SECONDS,
+    say: Callable[[str], None] = lambda line: None,
+) -> Check:
+    """Listen for the word for a few seconds and say how near it came: the way to choose a threshold
+    is to say the word and see how much it scored."""
+    listening = config.listening
+    word = listening.word
+    if listening.engine is not Engine.OPENWAKEWORD:
+        return Check(
+            "word",
+            False,
+            "Porcupine says whether it heard the word and not how near it came",
+            "listening.engine openwakeword is the one that can be tried this way",
+        )
+    try:
+        made = await asyncio.to_thread(engine(listening))
+    except Exception as error:  # noqa: BLE001 - ``wake word`` says what to do about it
+        return Check("word", False, f"the engine could not be had: {error}")
+    if not isinstance(made, OpenWakeWordEngine):
+        made.close()
+        return Check("word", False, "what watches for the word does not say how near it came")
+    microphone = Microphone(
+        backend,
+        device=config.input_device,
+        sample_rate=made.sample_rate,
+        block_size=made.frame_length,
+    )
+    scores: list[float] = []
+    say(f"say {word.replace('_', ' ')!r} now: listening for {seconds:.0f} seconds")
+    try:
+        async with microphone.opened() as blocks:
+            for _ in range(max(1, int(seconds * made.sample_rate / made.frame_length))):
+                block = await asyncio.wait_for(blocks.get(), BLOCK_WAIT_S)
+                scores.append(await asyncio.to_thread(made.score, block))
+    except (AudioUnavailableError, TimeoutError) as error:
+        return Check("word", False, str(error) or "nothing came from the microphone")
+    finally:
+        made.close()
+    best, threshold = max(scores), listening.threshold
+    if best >= threshold:
+        return Check(
+            "word",
+            True,
+            f"{word!r} was heard: the best score in {seconds:.0f} s was {best:.2f} "
+            f"(threshold {threshold})",
+        )
+    detail = (
+        f"{word!r} was not heard: the best score in {seconds:.0f} s was {best:.2f}, under the "
+        f"threshold of {threshold}"
+    )
+    if best >= NEAR:
+        advice = (
+            f"it came near: listening.threshold {round(best * 0.8, 2)} would have taken it (a "
+            f"lower one lets in more sounds that are not the word), or say it nearer to the "
+            f"microphone"
+        )
+    else:
+        others = ", ".join(other for other in sorted(WAKE_WORDS) if other != word)
+        advice = (
+            f"it did not come near: say it nearer to the microphone, or try another word ({others})"
+        )
+    return Check("word", False, detail, advice)
+
+
 async def check_listening(config: Config, backend: AudioBackend) -> Check:
     """Hear for two seconds and say how loud it was: a microphone that hears nothing at all is one
     that is muted, or is not the one that was meant."""
@@ -240,10 +376,15 @@ async def examine(
     *,
     listen: bool = False,
     play: bool = False,
+    word: bool = False,
     edge: bool = True,
     opening: Callable[[str], Awaitable[Connection]] = WebSocketConnection.open,
+    engine: EngineFactory = engine_of,
+    say: Callable[[str], None] = lambda line: None,
 ) -> list[Check]:
-    """Every check that applies to this device, in the order a person would try them."""
+    """Every check that applies to this device, in the order a person would try them. ``word``
+    listens for the word for a few seconds (``say`` is how a person is told when), and ``engine``
+    stands in for what makes the engine that watches for it, for a test."""
     speaker = Speaker(backend, device=config.output_device, volume=config.audio.volume)
     microphone: Check | None = None
     checks = [
@@ -254,7 +395,7 @@ async def examine(
             f"{', '.join(sorted(c.value for c in config.device.capabilities))}"
             + (f"; {config.listening.mode.value}" if config.can_hear else "")
             + (
-                f" ({config.listening.wake_word!r})"
+                f" ({config.listening.word!r}, {config.listening.engine.value})"
                 if config.can_hear and config.listening.mode is Mode.WAKE_WORD
                 else ""
             ),
@@ -266,10 +407,16 @@ async def examine(
         checks.append(microphone)
     if config.can_speak:
         checks.append(check_speaker(config, backend))
+    wake_word: Check | None = None
+    if config.can_hear and (config.listening.mode is Mode.WAKE_WORD or word):
+        wake_word = await check_wake_word(config, engine)
+        checks.append(wake_word)
     if edge:
         checks.append(await check_edge(config, speaker if config.can_speak else None, opening))
     if listen and microphone is not None and microphone.ok:
         checks.append(await check_listening(config, backend))
+    if word and microphone is not None and microphone.ok and wake_word is not None and wake_word.ok:
+        checks.append(await check_word_heard(config, backend, engine, say=say))
     if play and config.can_speak:
         checks.append(await check_playing(config, speaker))
     return checks

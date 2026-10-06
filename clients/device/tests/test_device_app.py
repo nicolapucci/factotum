@@ -5,15 +5,23 @@ the core under it, from the key that is pressed to the sound that comes out."""
 import asyncio
 import contextlib
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
 import pytest
 
-from factotum.client_audio import PushToTalk, Speaker, WakeWord
-from factotum.client_audio.testing import FakeBackend, KeyPresses
+from factotum.client_audio import (
+    Engine,
+    PushToTalk,
+    Speaker,
+    WakeWord,
+    WakeWordEngine,
+    WakeWordError,
+)
+from factotum.client_audio.testing import FakeBackend, FakeWakeWord, KeyPresses
 from factotum.client_core import Ending, Refused
 from factotum.client_core.audio import AudioStream
 from factotum.client_core.testing import MemoryConnection, RecordingRenderer
@@ -33,8 +41,8 @@ from factotum.contracts.edge import (
     VoiceStart,
 )
 from factotum.contracts.response import Speech
-from factotum.device.app import build_hardware, identity_of, open_client, run_device
-from factotum.device.config import ConfigError
+from factotum.device.app import build_hardware, engine_of, identity_of, open_client, run_device
+from factotum.device.config import ConfigError, ListeningSettings
 from factotum.device.testing import Edge, a_config, ready, until
 
 FRAME = 512
@@ -92,16 +100,46 @@ class TestWhatItIsMadeOf:
         assert backend.inputs == []  # nothing is opened to be built
         assert backend.outputs == []
 
-    def test_with_a_word_it_is_the_word_that_it_waits_for(self) -> None:
+    def test_with_a_word_it_is_a_wake_word_that_listens_for_it(self) -> None:
         hardware = build_hardware(
             a_config(
-                listening={"mode": "wake_word", "access_key": "a-key", "wake_word": "computer"}
+                listening={
+                    "mode": "wake_word",
+                    "engine": "porcupine",
+                    "access_key": "a-key",
+                    "wake_word": "computer",
+                }
             ),
             FakeBackend(),
             RecordingRenderer(),
         )
 
         assert isinstance(hardware.voice_input, WakeWord)
+
+    def test_what_listens_for_the_word_is_made_of_the_settings_of_listening(self) -> None:
+        asked: list[ListeningSettings] = []
+        models = FakeWakeWord()
+
+        def engine(listening: ListeningSettings) -> Callable[[], WakeWordEngine]:
+            asked.append(listening)
+            return lambda: models.engine
+
+        config = a_config(listening={"mode": "wake_word", "wake_word": "alexa"})
+
+        hardware = build_hardware(config, FakeBackend(), RecordingRenderer(), engine=engine)
+
+        assert isinstance(hardware.voice_input, WakeWord)
+        assert asked == [config.listening]
+
+    def test_nothing_asks_for_an_engine_of_a_device_that_a_key_wakes(self) -> None:
+        def engine(listening: ListeningSettings) -> Callable[[], WakeWordEngine]:
+            raise AssertionError("push to talk has no use for a wake word")
+
+        hardware = build_hardware(
+            a_config(), FakeBackend(), RecordingRenderer(), presses=KeyPresses(), engine=engine
+        )
+
+        assert isinstance(hardware.voice_input, PushToTalk)
 
     def test_a_device_with_no_microphone_hears_nobody_and_one_with_no_speaker_says_nothing(
         self,
@@ -122,7 +160,9 @@ class TestWhatItIsMadeOf:
     def test_what_a_wake_word_cannot_do_without_is_refused_even_when_the_settings_were_changed(
         self,
     ) -> None:
-        config = a_config(listening={"mode": "wake_word", "access_key": "a-key"})
+        config = a_config(
+            listening={"mode": "wake_word", "engine": "porcupine", "access_key": "a-key"}
+        )
         keyless = config.model_copy(
             update={"listening": config.listening.model_copy(update={"access_key": None})}
         )
@@ -508,7 +548,7 @@ class TestADeviceThatIsSpokenThrough:
         assert len(edge.connection.frames("bye")) == 1  # but the edge was said goodbye
 
 
-class Engine:
+class PorcupineStandIn:
     """What ``pvporcupine.create`` makes: a frame of a level over 5000 has the word in it."""
 
     sample_rate = 16_000
@@ -527,14 +567,19 @@ class TestHowItIsWoken:
     ) -> None:
         made: list[dict[str, Any]] = []
 
-        def create(**settings: Any) -> Engine:
+        def create(**settings: Any) -> PorcupineStandIn:
             made.append(settings)
-            return Engine()
+            return PorcupineStandIn()
 
         monkeypatch.setitem(sys.modules, "pvporcupine", SimpleNamespace(create=create))
         backend = FakeBackend()
         config = a_config(
-            listening={"mode": "wake_word", "access_key": "a-key", "wake_word": "computer"},
+            listening={
+                "mode": "wake_word",
+                "engine": "porcupine",
+                "access_key": "a-key",
+                "wake_word": "computer",
+            },
             audio={"input_device": "USB mic"},
         )
         hardware = build_hardware(config, backend, RecordingRenderer())
@@ -578,10 +623,14 @@ class TestHowItIsWoken:
         taken: int,
     ) -> None:
         monkeypatch.setitem(
-            sys.modules, "pvporcupine", SimpleNamespace(create=lambda **given: Engine())
+            sys.modules, "pvporcupine", SimpleNamespace(create=lambda **given: PorcupineStandIn())
         )
         backend, presses = FakeBackend(), KeyPresses()
-        woken = {"mode": "wake_word", "access_key": "a-key"} if mode == "wake_word" else {}
+        woken = (
+            {"mode": "wake_word", "engine": "porcupine", "access_key": "a-key"}
+            if mode == "wake_word"
+            else {}
+        )
         config = a_config(listening={**woken, **settings})
         hardware = build_hardware(config, backend, RecordingRenderer(), presses=presses)
         assert hardware.voice_input is not None
@@ -607,3 +656,102 @@ class TestHowItIsWoken:
         await heard.aclose()
 
         assert len(b"".join(chunks)) // 2 // FRAME == taken
+
+    async def test_openwakeword_is_listened_to_at_its_own_rate_and_a_frame_of_its_own(self) -> None:
+        # The made-up models answer with the mean of what they are given: silence is an embedding
+        # of 2, and a loud frame one of about 48.
+        models = FakeWakeWord(lambda features: 1.0 if features[0, -1, 0] > 20 else 0.0)
+        backend = FakeBackend()
+        config = a_config(listening={"mode": "wake_word"}, audio={"input_device": "USB mic"})
+        hardware = build_hardware(
+            config, backend, RecordingRenderer(), engine=lambda listening: lambda: models.engine
+        )
+        assert hardware.voice_input is not None
+        heard = cast("AsyncGenerator[Any]", hardware.voice_input.listen())
+        waiting = asyncio.ensure_future(anext(heard))
+        await until(lambda: backend.inputs)
+
+        [microphone] = backend.inputs
+        assert (microphone.device, microphone.sample_rate, microphone.block_size) == (
+            "USB mic",
+            16_000,
+            1_280,
+        )
+        for _ in range(8):
+            backend.hearing.hear(FakeWakeWord.frame(0))  # nothing that is the word
+        await asyncio.sleep(0.05)
+        assert not waiting.done()
+        backend.hearing.hear(FakeWakeWord.frame(6_000))  # the word
+        stream = await asyncio.wait_for(waiting, 2)
+
+        assert isinstance(stream, AudioStream)
+        await heard.aclose()
+
+
+class TestWhatListensForTheWord:
+    """``engine_of``: the engine that the settings ask for, made with what the settings say."""
+
+    @pytest.fixture
+    def given(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[Engine, str, dict[str, Any]]]:
+        calls: list[tuple[Engine, str, dict[str, Any]]] = []
+
+        def made(engine: Engine, word: str, **options: Any) -> Callable[[], WakeWordEngine]:
+            calls.append((engine, word, options))
+            return lambda: FakeWakeWord().engine
+
+        monkeypatch.setattr("factotum.device.app.wake_word_engine", made)
+        return calls
+
+    def test_openwakeword_is_given_the_word_the_threshold_the_patience_and_the_folder(
+        self, given: list[tuple[Engine, str, dict[str, Any]]], tmp_path: Path
+    ) -> None:
+        listening = a_config(
+            listening={
+                "mode": "wake_word",
+                "wake_word": "alexa",
+                "threshold": 0.8,
+                "patience": 3,
+                "models_dir": str(tmp_path),
+            }
+        ).listening
+
+        engine_of(listening)
+
+        [(engine, word, options)] = given
+        assert (engine, word) == (Engine.OPENWAKEWORD, "alexa")
+        assert (options["threshold"], options["patience"]) == (0.8, 3)
+        assert options["models"].directory == tmp_path
+        assert options["access_key"] is None
+
+    def test_porcupine_is_given_its_keyword_and_the_key_in_the_clear(
+        self, given: list[tuple[Engine, str, dict[str, Any]]]
+    ) -> None:
+        listening = a_config(
+            listening={"mode": "wake_word", "engine": "porcupine", "access_key": "a-key"}
+        ).listening
+
+        engine_of(listening)
+
+        [(engine, word, options)] = given
+        assert (engine, word, options["access_key"]) == (Engine.PORCUPINE, "jarvis", "a-key")
+
+    def test_models_that_are_not_there_are_said_when_the_engine_is_made_with_what_to_do(
+        self, tmp_path: Path
+    ) -> None:
+        listening = a_config(listening={"mode": "wake_word", "models_dir": str(tmp_path)}).listening
+
+        with pytest.raises(WakeWordError) as raised:
+            engine_of(listening)()
+
+        said = str(raised.value)
+        assert "'hey_jarvis'" in said
+        assert str(tmp_path) in said
+        assert f'factotum-device wake-word download hey_jarvis --dir "{tmp_path}"' in said
+
+    def test_what_the_settings_cannot_be_is_a_settings_error_and_not_a_wake_word_error(
+        self,
+    ) -> None:
+        with pytest.raises(ConfigError, match="no model for 'computer'"):
+            engine_of(ListeningSettings(wake_word="computer"))
+        with pytest.raises(ConfigError, match="access key"):
+            engine_of(ListeningSettings(engine=Engine.PORCUPINE))

@@ -12,8 +12,10 @@ Lines that begin with a slash are for the terminal and not for the assistant: ``
 With ``--voice`` (a profile with ``audio_in`` only) a real microphone and speaker replace the
 keyboard and the screen: say the wake word, then what you would say, and wait for the answer
 before saying it again. What you say is sent to the edge as you say it, a chunk at a time, and the
-answer is interrupted by the edge when you begin (ADR 0022). It needs a free Picovoice AccessKey
-(``$PICOVOICE_ACCESS_KEY``, from https://console.picovoice.ai/) for the wake-word engine.
+answer is interrupted by the edge when you begin (ADR 0022). The word is watched for by
+openWakeWord, which needs no account and no key, but its models: ``factotum-device wake-word
+download`` fetches them once (ADR 0027). Porcupine (``--engine porcupine``) needs an AccessKey that
+Picovoice gives to companies.
 
     factotum-terminal --profile speaker --voice
 
@@ -37,10 +39,15 @@ from typing import TextIO
 
 from factotum.client_audio import (
     ACCESS_KEY_VARIABLE,
-    DEFAULT_WAKE_WORD,
+    THRESHOLD,
+    Engine,
     SoundDeviceBackend,
     Speaker,
     WakeWord,
+    WakeWordError,
+    WakeWordModels,
+    default_word,
+    wake_word_engine,
 )
 from factotum.client_core import (
     CannotConverse,
@@ -80,11 +87,19 @@ class Options:
     hardware_id: str | None
     token: str | None
     voice: bool = False
-    wake_word: str = DEFAULT_WAKE_WORD
+    engine: Engine = Engine.OPENWAKEWORD
+    wake_word: str | None = None
     access_key: str | None = None
+    models_dir: Path | None = None
+    threshold: float = THRESHOLD
     wav_in: tuple[Path, ...] = ()
     wav_out: Path | None = None
     realtime: bool = False
+
+    @property
+    def word(self) -> str:
+        """The word that is listened for: the one that was asked for, or the engine's own."""
+        return self.wake_word or default_word(self.engine)
 
 
 def parse_args(
@@ -119,17 +134,37 @@ def parse_args(
         "--voice",
         action="store_true",
         help="use a real microphone and speaker instead of the keyboard and the screen "
-        "(needs the profile's audio_in; downloads a wake-word model on first use)",
+        "(needs the profile's audio_in, and the models of the wake word: "
+        "``factotum-device wake-word download``)",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=[engine.value for engine in Engine],
+        default=Engine.OPENWAKEWORD.value,
+        help="what listens for the wake word: openwakeword needs no key; porcupine needs an "
+        "AccessKey that Picovoice gives to companies (default: %(default)s)",
     )
     parser.add_argument(
         "--wake-word",
-        default=DEFAULT_WAKE_WORD,
-        help=f"which of Porcupine's built-in keywords to listen for (default: {DEFAULT_WAKE_WORD})",
+        help="the word to listen for: one that openWakeWord has a model for, or one of Porcupine's "
+        f"keywords (default: {default_word(Engine.OPENWAKEWORD)}, or "
+        f"{default_word(Engine.PORCUPINE)} with porcupine)",
     )
     parser.add_argument(
         "--access-key",
-        help=f"the Picovoice AccessKey for the wake-word engine (default: ${ACCESS_KEY_VARIABLE}; "
-        "get a free one at https://console.picovoice.ai/)",
+        help=f"Porcupine's AccessKey (default: ${ACCESS_KEY_VARIABLE}); openWakeWord needs none",
+    )
+    parser.add_argument(
+        "--models-dir",
+        type=Path,
+        help="where the models of openWakeWord are (default: ~/.cache/factotum/openwakeword)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=THRESHOLD,
+        help="openWakeWord: the score, above 0 and up to 1, at which the word is taken to have "
+        "been said (default: %(default)s)",
     )
     parser.add_argument(
         "--wav-in",
@@ -158,14 +193,19 @@ def parse_args(
         parser.error("--voice and --wav-in are two ways of hearing a person: choose one")
     if args.realtime and not args.wav_in:
         parser.error("--realtime paces what --wav-in says, and there is none")
+    if not 0 < args.threshold <= 1:
+        parser.error("--threshold is a score: above 0 and up to 1")
     return Options(
         url=args.url,
         profile=get_profile(args.profile),
         hardware_id=args.hardware_id,
         token=args.token or variables.get(TOKEN_VARIABLE),
         voice=args.voice,
+        engine=Engine(args.engine),
         wake_word=args.wake_word,
         access_key=args.access_key or variables.get(ACCESS_KEY_VARIABLE),
+        models_dir=args.models_dir,
+        threshold=args.threshold,
         wav_in=tuple(args.wav_in),
         wav_out=args.wav_out,
         realtime=args.realtime,
@@ -305,12 +345,21 @@ async def run(
             f"factotum-terminal: {flag} needs a microphone, and {options.profile.name!r} has none\n"
         )
         return 1
-    if options.voice and voice_input is None and options.access_key is None:
-        sys.stderr.write(
-            "factotum-terminal: --voice needs a Picovoice AccessKey for the wake-word engine: "
-            f"get a free one at https://console.picovoice.ai/ and set ${ACCESS_KEY_VARIABLE}\n"
-        )
-        return 1
+    if options.voice and voice_input is None:
+        try:  # what cannot be is known before the edge is reached; the models, when it listens
+            voice_input = WakeWord(
+                SoundDeviceBackend(),
+                engine=wake_word_engine(
+                    options.engine,
+                    options.word,
+                    access_key=options.access_key,
+                    models=WakeWordModels(options.models_dir),
+                    threshold=options.threshold,
+                ),
+            )
+        except WakeWordError as error:
+            sys.stderr.write(f"factotum-terminal: {error}\n")
+            return 1
     if options.wav_in and voice_input is None:
         try:  # read now: a file that is not one is known before the edge is reached
             voice_input = WavFileInput(*options.wav_in, realtime=options.realtime)
@@ -350,14 +399,7 @@ async def run(
         return 1
     if by_voice:
         if options.voice:
-            renderer.notice(f"listening for the wake word {options.wake_word!r}")
-            if voice_input is None:
-                assert options.access_key is not None  # noqa: S101 - checked above
-                voice_input = WakeWord(
-                    SoundDeviceBackend(),
-                    access_key=options.access_key,
-                    wake_word=options.wake_word,
-                )
+            renderer.notice(f"listening for the wake word {options.word!r}")
         else:
             said = len(options.wav_in)
             renderer.notice(
@@ -365,7 +407,11 @@ async def run(
                 "after the wake word"
             )
         assert voice_input is not None  # noqa: S101 - made above, or given
-        lost = await VoiceLoop(voice_input).serve(client)
+        try:
+            lost = await VoiceLoop(voice_input).serve(client)
+        except WakeWordError as error:  # the models are not there: it is said when it listens
+            sys.stderr.write(f"factotum-terminal: {error}\n")
+            return 1
     else:
         if Capability.AUDIO_IN in options.profile.capabilities:
             renderer.notice("type what you would say (/help)")

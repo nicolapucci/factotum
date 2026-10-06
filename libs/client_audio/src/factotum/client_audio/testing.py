@@ -2,19 +2,24 @@
 and a speaker can be made to take its time, which is when a person speaks over it.
 
 ``FakeBackend`` implements ``AudioBackend``, so that what a test runs is the library and the client
-above it, with nothing replaced but the hardware.
+above it, with nothing replaced but the hardware. ``FakeWakeWord`` is the engine of openWakeWord on
+models that are made up, which answer with what they were given so that what flows from one to the
+next can be read.
 """
 
 import asyncio
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
+
+import numpy as np
 
 from factotum.client_audio.backend import (
     AudioDevice,
     AudioUnavailableError,
     DeviceChoice,
 )
+from factotum.client_audio.wakeword import OpenWakeWordEngine
 
 MICROPHONE = AudioDevice(0, "Fake microphone", 1, 0, 16_000.0, "Fake API")
 SPEAKER = AudioDevice(1, "Fake speaker", 0, 2, 44_100.0, "Fake API")
@@ -190,3 +195,80 @@ class KeyPresses:
     def pending(self) -> bool:
         pressed, self.again = self.again, False
         return pressed
+
+
+# ---- the engine of openWakeWord, on models that are made up ------------------------------------
+
+
+class FakeNode:
+    """What ``get_inputs`` has in it: the name of an input and its shape."""
+
+    def __init__(self, name: str, shape: Sequence[Any]) -> None:
+        self.name = name
+        self.shape = list(shape)
+
+
+class FakeSession:
+    """A session that answers with what ``answer`` makes of what it is asked, and remembers what it
+    was asked."""
+
+    def __init__(
+        self, name: str, shape: Sequence[Any], answer: Callable[[np.ndarray], np.ndarray]
+    ) -> None:
+        self._node = FakeNode(name, shape)
+        self._answer = answer
+        self.asked: list[np.ndarray] = []
+
+    def get_inputs(self) -> list[FakeNode]:
+        return [self._node]
+
+    def run(self, output_names: Any, input_feed: Any) -> list[np.ndarray]:
+        [(name, value)] = input_feed.items()
+        if output_names is not None or name != self._node.name:
+            raise AssertionError("a model is asked for all its outputs, by the name of its input")
+        if value.dtype != np.float32:  # onnxruntime refuses what is not the type of the input
+            raise AssertionError(f"a model takes 32-bit floats, and was given {value.dtype}")
+        self.asked.append(value)
+        return [self._answer(value)]
+
+
+def rows_of_spectrogram(samples: int) -> int:
+    """How many rows of spectrogram the real model makes of so many samples (measured)."""
+    return (samples - 480) // 160
+
+
+def fake_spectrogram(value: np.ndarray) -> np.ndarray:
+    """A row of 32 numbers for each ten milliseconds, every one the mean of the sound."""
+    rows = rows_of_spectrogram(value.shape[1])
+    return np.full((1, 1, rows, 32), value.mean(), dtype=np.float32)
+
+
+def fake_embedding(value: np.ndarray) -> np.ndarray:
+    """An embedding of 96 numbers for each window, every one the mean of its window."""
+    means = value.mean(axis=(1, 2, 3)).astype(np.float32)
+    return np.broadcast_to(means[:, None, None, None], (len(value), 1, 1, 96)).copy()
+
+
+class FakeWakeWord:
+    """The three models of the engine, made up, and the engine on them. ``score`` is what the model
+    of the word says (a number, or a function of the embeddings that it is given)."""
+
+    def __init__(
+        self,
+        score: float | Callable[[np.ndarray], float] = 1.0,
+        *,
+        frames: Any = 16,
+        **engine: Any,
+    ) -> None:
+        judge: Callable[[np.ndarray], float] = score if callable(score) else (lambda value: score)
+        self.melspectrogram = FakeSession("input", ["batch", "samples"], fake_spectrogram)
+        self.embedding = FakeSession("input_1", ["n", 76, 32, 1], fake_embedding)
+        self.word = FakeSession(
+            "x.1", [1, frames, 96], lambda value: np.array([[judge(value)]], dtype=np.float32)
+        )
+        self.engine = OpenWakeWordEngine(self.melspectrogram, self.embedding, self.word, **engine)
+
+    @staticmethod
+    def frame(fill: int = 100) -> np.ndarray:
+        """A frame of 80 ms."""
+        return np.full(1_280, fill, dtype=np.int16)

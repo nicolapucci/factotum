@@ -105,6 +105,8 @@ module = [
   "reportlab.*",
   "faster_whisper",
   "faster_whisper.*",
+  "onnxruntime",
+  "onnxruntime.*",
   "pvporcupine",
   "sounddevice",
 ]

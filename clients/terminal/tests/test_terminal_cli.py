@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from factotum.client_audio import DEFAULT_WAKE_WORD
+from factotum.client_audio import THRESHOLD, Engine, WakeWordError
 from factotum.client_core import Connection, CouldNotConnect
 from factotum.client_core.testing import (
     FakeVoiceInput,
@@ -118,17 +118,57 @@ class TestTheArguments:
     def test_another_device_can_be_presented(self) -> None:
         assert parse_args(["--hardware-id", "lab-9"], {}).hardware_id == "lab-9"
 
-    def test_by_default_there_is_no_voice_and_the_wake_word_is_the_usual_one(self) -> None:
+    def test_by_default_there_is_no_voice_and_openwakeword_listens_for_its_usual_word(self) -> None:
         options = parse_args([], {})
 
         assert options.voice is False
-        assert options.wake_word == DEFAULT_WAKE_WORD
+        assert (options.engine, options.wake_word, options.word) == (
+            Engine.OPENWAKEWORD,
+            None,
+            "hey_jarvis",
+        )
+        assert (options.models_dir, options.threshold) == (None, THRESHOLD)
 
     def test_voice_and_a_wake_word_can_be_chosen(self) -> None:
         options = parse_args(["--voice", "--wake-word", "alexa"], {})
 
         assert options.voice is True
         assert options.wake_word == "alexa"
+        assert options.word == "alexa"
+
+    def test_porcupine_can_be_chosen_and_listens_for_the_word_it_has_a_keyword_for(self) -> None:
+        options = parse_args(["--engine", "porcupine"], {})
+
+        assert options.engine is Engine.PORCUPINE
+        assert options.word == "jarvis"
+
+    def test_an_engine_that_there_is_not_is_refused_and_the_ones_there_are_are_listed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            parse_args(["--engine", "snowboy"], {})
+
+        assert stopped.value.code == 2
+        assert "openwakeword" in capsys.readouterr().err
+
+    def test_the_folder_of_the_models_and_the_threshold_can_be_chosen(self) -> None:
+        options = parse_args(["--models-dir", "models", "--threshold", "0.7"], {})
+
+        assert options.models_dir == Path("models")
+        assert options.threshold == 0.7
+
+    @pytest.mark.parametrize("threshold", ["0", "-0.1", "1.5"])
+    def test_a_threshold_that_is_not_a_score_is_refused(
+        self, threshold: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            parse_args(["--threshold", threshold], {})
+
+        assert stopped.value.code == 2
+        assert "--threshold is a score" in capsys.readouterr().err
+
+    def test_a_threshold_of_certainty_is_one(self) -> None:
+        assert parse_args(["--threshold", "1"], {}).threshold == 1.0
 
     def test_the_access_key_comes_from_the_command_line_or_else_the_environment(self) -> None:
         env = {"PICOVOICE_ACCESS_KEY": "from-env"}
@@ -345,7 +385,67 @@ class TestConversingByVoice:
         assert code == 1
         assert "needs a microphone" in capsys.readouterr().err
 
-    async def test_voice_without_an_access_key_and_no_fake_input_is_refused(
+    async def test_porcupine_without_an_access_key_is_refused_before_the_edge_is_reached(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        reached: list[str] = []
+
+        async def open_connection(url: str) -> Connection:
+            reached.append(url)
+            raise CouldNotConnect("not here")
+
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("speaker"),
+                hardware_id=None,
+                token=None,
+                voice=True,
+                engine=Engine.PORCUPINE,
+            ),
+            open_connection=open_connection,
+        )
+
+        assert code == 1
+        error = capsys.readouterr().err
+        assert "factotum-terminal: porcupine needs an access key" in error
+        assert "companies" in error
+        assert reached == []
+
+    async def test_what_the_options_say_is_what_the_engine_is_made_with(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        given: list[tuple[Engine, str, dict[str, Any]]] = []
+
+        def made(engine: Engine, word: str, **options: Any) -> Any:
+            given.append((engine, word, options))
+            raise WakeWordError("that is all that was wanted to know")
+
+        monkeypatch.setattr("factotum.terminal.cli.wake_word_engine", made)
+
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("speaker"),
+                hardware_id=None,
+                token=None,
+                voice=True,
+                engine=Engine.PORCUPINE,
+                wake_word="computer",
+                access_key="a-key",
+                models_dir=tmp_path,
+                threshold=0.75,
+            )
+        )
+
+        assert code == 1
+        [(engine, word, options)] = given
+        assert (engine, word) == (Engine.PORCUPINE, "computer")
+        assert options["access_key"] == "a-key"
+        assert options["models"].directory == tmp_path
+        assert options["threshold"] == 0.75
+
+    async def test_a_word_that_there_is_no_model_for_is_refused_before_the_edge_is_reached(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         code = await run(
@@ -355,11 +455,45 @@ class TestConversingByVoice:
                 hardware_id=None,
                 token=None,
                 voice=True,
+                wake_word="computer",
             )
         )
 
         assert code == 1
-        assert "AccessKey" in capsys.readouterr().err
+        assert "no model for 'computer'" in capsys.readouterr().err
+
+    async def test_models_that_are_not_there_are_said_when_it_listens_with_what_to_run(
+        self, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        connection = connected("speaker")
+
+        code = await run(
+            Options(
+                url=DEFAULT_URL,
+                profile=get_profile("speaker"),
+                hardware_id=None,
+                token=None,
+                voice=True,
+                models_dir=tmp_path,
+            ),
+            out=io.StringIO(),
+            open_connection=lambda _url: opened(connection),
+            voice_output=FakeVoiceOutput(),
+        )
+
+        assert code == 1
+        error = capsys.readouterr().err
+        assert error.startswith("factotum-terminal: the models of 'hey_jarvis' are not in ")
+        assert f'factotum-device wake-word download hey_jarvis --dir "{tmp_path}"' in error
+        assert len(connection.frames("bye")) == 1  # the edge was not left waiting
+
+    async def test_it_says_which_word_it_listens_for(self) -> None:
+        connection = connected("speaker")
+        asyncio.get_running_loop().call_later(0.05, connection.drop)
+
+        _, out, _, _ = await voice_session("speaker", connection=connection)
+
+        assert "--       listening for the wake word 'hey_jarvis'" in out
 
     async def test_the_edge_dropping_the_connection_is_said_and_voice_mode_ends(self) -> None:
         connection = connected("speaker")

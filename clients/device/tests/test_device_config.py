@@ -4,8 +4,10 @@ line that names the setting when it says what cannot be."""
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
-from factotum.client_audio import ACCESS_KEY_VARIABLE
+from factotum.client_audio import ACCESS_KEY_VARIABLE, WAKE_WORDS, Engine
 from factotum.contracts.capabilities import Capability
 from factotum.device.cli import EXAMPLE
 from factotum.device.config import (
@@ -56,6 +58,7 @@ class TestWhatTheDefaultsAre:
         assert config.device.hardware_id == "kitchen-01"
         assert config.token == "a-credential"
         assert config.listening.mode is Mode.PUSH_TO_TALK
+        assert config.listening.engine is Engine.OPENWAKEWORD
 
 
 class TestWhatTheEnvironmentSays:
@@ -78,8 +81,8 @@ class TestWhatTheEnvironmentSays:
 
         assert config.edge.url == "wss://edge.example/v1/connect"
 
-    def test_the_key_of_the_wake_word_is_the_environments(self) -> None:
-        text = MINIMAL + "listening:\n  mode: wake_word\n"
+    def test_the_key_of_porcupine_is_the_environments(self) -> None:
+        text = MINIMAL + "listening:\n  mode: wake_word\n  engine: porcupine\n"
 
         config = parse_config(text, {ACCESS_KEY_VARIABLE: "a-key"})
 
@@ -87,16 +90,141 @@ class TestWhatTheEnvironmentSays:
         assert config.listening.access_key is not None
         assert config.listening.access_key.get_secret_value() == "a-key"
 
-    def test_a_wake_word_with_no_key_is_refused_with_where_to_get_one(self) -> None:
-        text = MINIMAL + "listening:\n  mode: wake_word\n"
+    def test_the_key_of_the_environment_wins_over_the_one_in_the_file(self) -> None:
+        text = (
+            MINIMAL
+            + "listening:\n  mode: wake_word\n  engine: porcupine\n  access_key: from-the-file\n"
+        )
 
-        with pytest.raises(ConfigError, match=r"access key.*console\.picovoice\.ai"):
+        config = parse_config(text, {ACCESS_KEY_VARIABLE: "from-the-environment"})
+
+        assert config.listening.access_key is not None
+        assert config.listening.access_key.get_secret_value() == "from-the-environment"
+
+    def test_the_key_is_not_in_what_is_shown_of_the_settings(self) -> None:
+        text = MINIMAL + "listening:\n  mode: wake_word\n  engine: porcupine\n"
+
+        config = parse_config(text, {ACCESS_KEY_VARIABLE: "a-key-that-is-secret"})
+
+        assert "a-key-that-is-secret" not in repr(config)
+        assert "a-key-that-is-secret" not in config.model_dump_json()
+
+    def test_porcupine_with_no_key_is_refused_and_it_is_said_who_has_keys_and_what_needs_none(
+        self,
+    ) -> None:
+        text = MINIMAL + "listening:\n  mode: wake_word\n  engine: porcupine\n"
+
+        with pytest.raises(
+            ConfigError,
+            match=r"listening\.engine porcupine needs an access key.*companies.*needs none",
+        ):
             parse_config(text, {})
 
     def test_a_device_with_no_microphone_needs_no_key_for_a_word_it_will_not_wait_for(self) -> None:
-        text = MINIMAL + "  capabilities: [audio_out]\nlistening:\n  mode: wake_word\n"
+        text = (
+            MINIMAL
+            + "  capabilities: [audio_out]\nlistening:\n  mode: wake_word\n  engine: porcupine\n"
+        )
 
         assert parse_config(text, {}).can_hear is False
+
+
+class TestTheWordThatItWaitsFor:
+    def settings(self, listening: str = "") -> str:
+        return MINIMAL + "listening:\n  mode: wake_word\n" + listening
+
+    def test_openwakeword_listens_unless_it_is_said_and_it_needs_no_key_and_no_folder(self) -> None:
+        listening = parse_config(self.settings(), {}).listening
+
+        assert (listening.engine, listening.word) == (Engine.OPENWAKEWORD, "hey_jarvis")
+        assert (listening.threshold, listening.patience) == (0.5, 1)
+        assert (listening.models_dir, listening.access_key) == (None, None)
+
+    def test_the_word_that_porcupine_listens_for_unless_it_is_said_is_the_one_it_has_a_keyword_for(
+        self,
+    ) -> None:
+        listening = parse_config(
+            self.settings("  engine: porcupine\n  access_key: a-key\n"), {}
+        ).listening
+
+        assert listening.word == "jarvis"
+
+    @pytest.mark.parametrize("word", sorted(WAKE_WORDS))
+    def test_every_word_that_there_is_a_model_for_is_one_to_wait_for(self, word: str) -> None:
+        listening = parse_config(self.settings(f"  wake_word: {word}\n"), {}).listening
+
+        assert listening.word == word
+
+    def test_a_word_that_there_is_no_model_for_is_refused_with_those_that_there_are(self) -> None:
+        with pytest.raises(ConfigError) as error:
+            parse_config(self.settings("  wake_word: computer\n"), {})
+
+        said = str(error.value)
+        assert "listening.wake_word 'computer'" in said
+        assert "alexa, hey_jarvis, hey_mycroft, hey_rhasspy" in said
+        assert "listening.engine porcupine" in said  # which has others
+
+    def test_the_words_of_porcupine_are_its_own(self) -> None:
+        text = self.settings("  engine: porcupine\n  wake_word: computer\n  access_key: k\n")
+
+        assert parse_config(text, {}).listening.word == "computer"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            MINIMAL + "listening:\n  wake_word: computer\n",
+            MINIMAL
+            + "  capabilities: [audio_out]\nlistening:\n  mode: wake_word\n  wake_word: x\n",
+        ],
+        ids=["push to talk", "no microphone"],
+    )
+    def test_a_word_that_nothing_waits_for_is_not_looked_at(self, text: str) -> None:
+        assert parse_config(text, {}).listening.wake_word is not None
+
+    @pytest.mark.parametrize(
+        "setting",
+        ["threshold: 0", "threshold: -0.2", "threshold: 1.5", "patience: 0", "patience: 11"],
+    )
+    def test_a_threshold_that_is_not_a_score_and_a_patience_that_is_not_a_count_are_named(
+        self, setting: str
+    ) -> None:
+        with pytest.raises(ConfigError) as error:
+            parse_config(self.settings(f"  {setting}\n"), {})
+
+        assert f"listening.{setting.split(':')[0]}" in str(error.value)
+
+    @pytest.mark.parametrize(
+        "setting", ["threshold: 1", "threshold: 0.001", "patience: 1", "patience: 10"]
+    )
+    def test_the_edges_of_what_is_allowed_are_allowed(self, setting: str) -> None:
+        parse_config(self.settings(f"  {setting}\n"), {})  # does not raise
+
+    @given(thousandths=st.integers(min_value=1, max_value=1_000))
+    def test_every_score_above_nothing_and_up_to_certainty_is_a_threshold(
+        self, thousandths: int
+    ) -> None:
+        threshold = thousandths / 1_000
+
+        config = parse_config(self.settings(f"  threshold: {threshold}\n"), {})
+
+        assert config.listening.threshold == threshold
+
+    @given(thousandths=st.integers(min_value=1_001, max_value=100_000))
+    def test_and_nothing_over_certainty_is(self, thousandths: int) -> None:
+        with pytest.raises(ConfigError, match=r"listening\.threshold"):
+            parse_config(self.settings(f"  threshold: {thousandths / 1_000}\n"), {})
+
+    def test_the_folder_of_the_models_is_the_home_of_whoever_wrote_it_when_it_begins_with_a_tilde(
+        self,
+    ) -> None:
+        listening = parse_config(self.settings("  models_dir: ~/models\n"), {}).listening
+
+        assert listening.models_dir == Path.home() / "models"
+
+    def test_a_folder_is_left_as_it_was_written(self) -> None:
+        listening = parse_config(self.settings("  models_dir: /srv/models\n"), {}).listening
+
+        assert listening.models_dir == Path("/srv/models")
 
 
 class TestWhatCannotBe:

@@ -3,7 +3,7 @@ word. What each hands over is what a person says, as they say it."""
 
 import asyncio
 import queue
-import sys
+import threading
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any, TextIO, cast
@@ -16,6 +16,7 @@ from factotum.client_audio.inputs import PushToTalk, WakeWord
 from factotum.client_audio.keys import EnterKey
 from factotum.client_audio.microphone import Microphone
 from factotum.client_audio.testing import FakeBackend, KeyPresses
+from factotum.client_audio.wakeword import WakeWordError
 
 RATE = 16_000
 FRAME = 512
@@ -285,43 +286,48 @@ class TestAKeyOnATerminal:
             typing.end()
 
 
-class FakePorcupine:
-    """What ``pvporcupine.create`` makes: it takes frames and says which keyword they had in them,
-    and a frame of a level over 5000 has it."""
+class FakeEngine:
+    """What watches for the word: a frame whose first sample is over 5000 has it. It remembers what
+    it was asked, and on which thread it was made."""
 
     sample_rate = RATE
     frame_length = FRAME
 
     def __init__(self) -> None:
         self.processed = 0
-        self.deleted = False
+        self.resets: list[int] = []
+        self.closed = False
+        self.made_on = threading.current_thread()
+        self.processed_on: set[threading.Thread] = set()
 
-    def process(self, frame: Any) -> int:
+    def process(self, frame: Any) -> bool:
         self.processed += 1
-        return 0 if int(frame[0]) > 5000 else -1
+        self.processed_on.add(threading.current_thread())
+        return int(frame[0]) > 5000
 
-    def delete(self) -> None:
-        self.deleted = True
+    def reset(self) -> None:
+        self.resets.append(self.processed)  # how many frames it had been given when it was reset
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class TestAWord:
     def wake_word(
         self, backend: FakeBackend, **changes: Any
-    ) -> tuple[WakeWord, list[Any], list[str]]:
-        made: list[Any] = []
+    ) -> tuple[WakeWord, list[FakeEngine], list[str]]:
+        made: list[FakeEngine] = []
         told: list[str] = []
 
-        def create(**settings: Any) -> FakePorcupine:
-            engine = FakePorcupine()
-            made.append((settings, engine))
-            return engine
+        def engine() -> FakeEngine:
+            made.append(FakeEngine())
+            return made[-1]
 
         fields: dict[str, Any] = {
-            "access_key": "key",
+            "engine": engine,
             "silence_seconds": 0.2,
             "max_seconds": 5.0,
             "on_listening": lambda: told.append("listening"),
-            "create": create,
         }
         return WakeWord(backend, **{**fields, **changes}), made, told
 
@@ -340,8 +346,7 @@ class TestAWord:
         stream = await asyncio.wait_for(waiting, 2)
         pcm = await said(stream, backend, [loud(7), loud(8)] + [quiet()] * 8)
 
-        [(settings, engine)] = made
-        assert settings == {"access_key": "key", "keywords": ["jarvis"]}
+        [engine] = made
         assert told == ["listening"]
         assert np.frombuffer(pcm, dtype="<i2")[::FRAME].tolist()[:2] == [7, 8]
         assert engine.processed == 6
@@ -350,12 +355,16 @@ class TestAWord:
     async def test_the_microphone_is_opened_at_what_the_engine_takes(self) -> None:
         backend = FakeBackend()
 
-        def create(**settings: Any) -> Any:  # an engine that takes what the defaults do not
+        def engine() -> Any:  # an engine that takes what the defaults do not
             return SimpleNamespace(
-                sample_rate=8_000, frame_length=256, process=lambda frame: -1, delete=lambda: None
+                sample_rate=8_000,
+                frame_length=256,
+                process=lambda frame: False,
+                reset=lambda: None,
+                close=lambda: None,
             )
 
-        wake, _, _ = self.wake_word(backend, device="USB", create=create)
+        wake, _, _ = self.wake_word(backend, device="USB", engine=engine)
         waiting = asyncio.ensure_future(anext(wake.listen()))
         await asyncio.sleep(0.05)
 
@@ -379,9 +388,25 @@ class TestAWord:
         asking = asyncio.ensure_future(anext(listening))
         await asyncio.sleep(0.05)
 
-        [(_, engine)] = made
+        [engine] = made
         assert not asking.done()  # the word in the voice of the answer is not heard
         assert engine.processed == 1
+        asking.cancel()
+
+    async def test_the_engine_forgets_what_it_heard_once_the_sentence_after_the_word_is_over(
+        self,
+    ) -> None:
+        backend = FakeBackend()
+        wake, made, _ = self.wake_word(backend)
+        listening, stream = await self.heard(wake, backend)
+        [engine] = made
+        assert engine.resets == []  # not while the sentence is being said
+
+        await said(stream, backend, [loud()] + [quiet()] * 8)
+        asking = asyncio.ensure_future(anext(listening))
+        await asyncio.sleep(0.05)
+
+        assert engine.resets == [1]  # after it, and after what was heard meanwhile was dropped
         asking.cancel()
 
     async def test_the_engine_is_let_go_of_when_listening_ends(self) -> None:
@@ -395,35 +420,48 @@ class TestAWord:
 
         await listening.aclose()
 
-        [(_, engine)] = made
-        assert engine.deleted
+        [engine] = made
+        assert engine.closed
         assert backend.inputs[0].closed
 
-    async def test_a_keyword_that_is_asked_for_is_the_one_the_engine_is_made_for(self) -> None:
+    async def test_the_engine_is_made_where_the_loop_does_not_wait_for_it(self) -> None:
         backend = FakeBackend()
-        wake, made, _ = self.wake_word(backend, wake_word="computer")
+        wake, made, _ = self.wake_word(backend)
         waiting = asyncio.ensure_future(anext(wake.listen()))
         await asyncio.sleep(0.05)
 
-        assert made[0][0]["keywords"] == ["computer"]
+        [engine] = made
+        assert engine.made_on is not threading.main_thread()  # it may load models, or ask a service
         waiting.cancel()
 
-    async def test_the_engine_is_pvporcupines_unless_a_test_says_another(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        made: list[dict[str, Any]] = []
-
-        def create(**settings: Any) -> FakePorcupine:
-            made.append(settings)
-            return FakePorcupine()
-
-        monkeypatch.setitem(sys.modules, "pvporcupine", SimpleNamespace(create=create))
+    async def test_the_frames_are_given_to_the_engine_where_the_loop_does_not_wait(self) -> None:
         backend = FakeBackend()
-        waiting = asyncio.ensure_future(anext(WakeWord(backend, access_key="k").listen()))
+        wake, made, _ = self.wake_word(backend)
+        waiting = asyncio.ensure_future(anext(wake.listen()))
         await asyncio.sleep(0.05)
 
-        assert made == [{"access_key": "k", "keywords": ["jarvis"]}]
+        for _ in range(3):
+            backend.hearing.hear(loud(100))
+        await asyncio.sleep(0.05)
+
+        [engine] = made
+        assert engine.processed == 3
+        assert engine.processed_on
+        assert threading.main_thread() not in engine.processed_on
         waiting.cancel()
+
+    async def test_an_engine_that_cannot_be_made_is_what_listening_fails_with(self) -> None:
+        backend = FakeBackend()
+
+        def engine() -> Any:
+            raise WakeWordError("the models are not there")
+
+        wake, _, _ = self.wake_word(backend, engine=engine)
+
+        with pytest.raises(WakeWordError, match="not there"):
+            await anext(wake.listen())
+
+        assert backend.inputs == []  # a microphone was not opened for nothing
 
     async def test_it_does_not_need_to_be_told_when_it_listens(self) -> None:
         backend = FakeBackend()

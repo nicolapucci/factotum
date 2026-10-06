@@ -7,9 +7,14 @@ dependencies = [
   "factotum-client-core",
   "factotum-contracts",
   "numpy>=1.26",
-  "pvporcupine>=3.0",
+  "onnxruntime>=1.20",
   "sounddevice>=0.5",
 ]
+
+[project.optional-dependencies]
+# Porcupine needs an AccessKey that Picovoice gives to companies (its free plan ended on 2026-06-30):
+# it is not installed unless it is wanted (``uv sync --all-packages --extra porcupine``).
+porcupine = ["pvporcupine>=3.0"]
 
 [build-system]
 requires = ["hatchling"]

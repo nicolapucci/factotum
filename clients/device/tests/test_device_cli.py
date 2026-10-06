@@ -2,24 +2,28 @@
 says how it ended, with a sound card and an edge that a test plays."""
 
 import asyncio
+import hashlib
 import io
 import logging
 import runpy
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
+import httpx
 import numpy as np
 import pytest
 
+from factotum.client_audio import OpenWakeWordEngine, WakeWordEngine, WakeWordModels
 from factotum.client_audio.backend import AudioDevice
-from factotum.client_audio.testing import FakeBackend, KeyPresses
+from factotum.client_audio.testing import FakeBackend, FakeWakeWord, KeyPresses
+from factotum.client_audio.wakeword import ModelFile
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.edge import CloseCode, ErrorFrame, PartFrame, TurnEnded, TurnStatus
 from factotum.contracts.response import Speech
+from factotum.device.app import EngineFactory, engine_of
 from factotum.device.cli import EXAMPLE, main, main_async
-from factotum.device.config import CONFIG_VARIABLE, TOKEN_VARIABLE
+from factotum.device.config import CONFIG_VARIABLE, TOKEN_VARIABLE, ListeningSettings
 from factotum.device.testing import Edge, ready, until
 
 SETTINGS = """\
@@ -40,12 +44,34 @@ def settings_in(tmp_path: Path, text: str = SETTINGS) -> Path:
     return path
 
 
+def a_word_that_is_a_loud_sound(
+    score: float = 0.9, made: list[OpenWakeWordEngine] | None = None
+) -> EngineFactory:
+    """What listens for the word, made up: any frame that is loud is the word (the made-up models
+    answer with the mean of what they are given: silence is an embedding of 2, a loud frame one of
+    about 48). The engines that are made are kept in ``made``, which is how a test knows that it
+    was the device that asked for this one."""
+
+    def engine(listening: ListeningSettings) -> Callable[[], WakeWordEngine]:
+        def make() -> WakeWordEngine:
+            word = FakeWakeWord(lambda features: score if features[0, -1, 0] > 20 else 0.0).engine
+            if made is not None:
+                made.append(word)
+            return word
+
+        return make
+
+    return engine
+
+
 async def ran(
     *arguments: str,
     environ: dict[str, str] | None = None,
     edge: Edge | None = None,
     backend: FakeBackend | None = None,
     presses: KeyPresses | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    engine: EngineFactory = engine_of,
 ) -> tuple[int, str]:
     out = io.StringIO()
     code = await main_async(
@@ -56,6 +82,8 @@ async def ran(
         backend=backend or FakeBackend(),
         presses=presses,
         opening=(edge or Edge()).open,
+        transport=transport,
+        engine=engine,
     )
     return code, out.getvalue()
 
@@ -120,6 +148,189 @@ class TestDevices:
 
         assert code == 1
         assert "PortAudio" in said
+
+
+MELSPECTROGRAM = b"the spectrogram"
+WORD = b"the word of a model"
+
+
+def models_of(directory: Path | None) -> WakeWordModels:
+    """A catalogue of two little models, known by size and hash as the real ones are."""
+
+    def known(name: str, content: bytes) -> ModelFile:
+        return ModelFile(name, len(content), hashlib.sha256(content).hexdigest())
+
+    return WakeWordModels(
+        directory,
+        words={"hey_jarvis": known("hey_jarvis_v0.1.onnx", WORD)},
+        shared=(known("melspectrogram.onnx", MELSPECTROGRAM),),
+    )
+
+
+class Release:
+    """What serves the models, as a release of GitHub does: each file at its own address, with an
+    answer for what it does not have."""
+
+    def __init__(self, files: dict[str, bytes] | None = None, status: int = 200) -> None:
+        self.files = {"melspectrogram.onnx": MELSPECTROGRAM, "hey_jarvis_v0.1.onnx": WORD}
+        self.files.update(files or {})
+        self.status = status
+        self.asked: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.asked.append(str(request.url))
+        name = request.url.path.rsplit("/", 1)[-1]
+        if self.status != 200 or name not in self.files:
+            return httpx.Response(self.status if self.status != 200 else 404)
+        return httpx.Response(200, content=self.files[name])
+
+    @property
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self)
+
+
+@pytest.fixture
+def small_catalogue(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], WakeWordModels]:
+    """The real models are not in this repository, so what is fetched is two little files."""
+    monkeypatch.setattr("factotum.device.cli.WakeWordModels", models_of)
+    return models_of
+
+
+class TestFetchingTheModelsOfAWord:
+    async def test_the_files_of_the_word_are_fetched_and_kept_where_they_were_asked_to_be(
+        self, tmp_path: Path, small_catalogue: Callable[[Path], WakeWordModels]
+    ) -> None:
+        release = Release()
+        folder = tmp_path / "models"
+
+        code, said = await ran(
+            "wake-word", "download", "--dir", str(folder), transport=release.transport
+        )
+
+        assert code == 0
+        assert (folder / "melspectrogram.onnx").read_bytes() == MELSPECTROGRAM
+        assert (folder / "hey_jarvis_v0.1.onnx").read_bytes() == WORD
+        assert not list(folder.glob("*.part"))
+        assert [url.rsplit("/", 1)[-1] for url in release.asked] == [
+            "melspectrogram.onnx",
+            "hey_jarvis_v0.1.onnx",
+        ]
+        assert all(
+            url.startswith("https://github.com/dscripka/openWakeWord/") for url in release.asked
+        )
+        assert "melspectrogram.onnx" in said
+        assert str(folder) in said
+
+    async def test_the_licence_of_the_models_is_said_for_they_are_not_the_projects_own(
+        self, tmp_path: Path, small_catalogue: Callable[[Path], WakeWordModels]
+    ) -> None:
+        _, said = await ran(
+            "wake-word", "download", "--dir", str(tmp_path), transport=Release().transport
+        )
+
+        assert "CC BY-NC-SA 4.0" in said
+        assert "not commercial" in said
+
+    async def test_the_word_is_hey_jarvis_unless_another_is_asked_for(
+        self, tmp_path: Path, small_catalogue: Callable[[Path], WakeWordModels]
+    ) -> None:
+        release = Release()
+
+        await ran("wake-word", "download", "--dir", str(tmp_path), transport=release.transport)
+
+        assert any("hey_jarvis" in url for url in release.asked)
+
+    async def test_what_is_there_already_is_not_fetched_again(
+        self, tmp_path: Path, small_catalogue: Callable[[Path], WakeWordModels]
+    ) -> None:
+        await ran("wake-word", "download", "--dir", str(tmp_path), transport=Release().transport)
+        again = Release()
+
+        code, said = await ran(
+            "wake-word", "download", "--dir", str(tmp_path), transport=again.transport
+        )
+
+        assert code == 0
+        assert again.asked == []
+        assert "there already" in said
+
+    async def test_a_word_that_there_is_no_model_for_is_said_before_anything_is_fetched(
+        self, tmp_path: Path
+    ) -> None:
+        release = Release()
+
+        code, said = await ran(
+            "wake-word", "download", "computer", "--dir", str(tmp_path), transport=release.transport
+        )
+
+        assert code == 1
+        assert "no model for 'computer'" in said
+        assert "alexa, hey_jarvis, hey_mycroft, hey_rhasspy" in said
+        assert release.asked == []  # and so nothing could have been kept
+
+    async def test_a_file_that_is_not_the_one_expected_is_refused_and_nothing_is_kept(
+        self, tmp_path: Path, small_catalogue: Callable[[Path], WakeWordModels]
+    ) -> None:
+        release = Release({"hey_jarvis_v0.1.onnx": b"something else"})
+
+        code, said = await ran(
+            "wake-word", "download", "--dir", str(tmp_path), transport=release.transport
+        )
+
+        assert code == 1
+        assert "factotum-device: hey_jarvis_v0.1.onnx: what came is not the file" in said
+        assert not (tmp_path / "hey_jarvis_v0.1.onnx").exists()
+
+    async def test_a_server_that_does_not_have_it_is_said_and_is_exit_code_1(
+        self, tmp_path: Path, small_catalogue: Callable[[Path], WakeWordModels]
+    ) -> None:
+        code, said = await ran(
+            "wake-word", "download", "--dir", str(tmp_path), transport=Release(status=503).transport
+        )
+
+        assert code == 1
+        assert "answered 503" in said
+
+    async def test_it_needs_no_file_of_settings_and_no_sound_card(
+        self, tmp_path: Path, small_catalogue: Callable[[Path], WakeWordModels]
+    ) -> None:
+        backend = FakeBackend()
+        backend.refuses["devices"] = "PortAudio could not be loaded"
+
+        code, _ = await ran(
+            "--config",
+            str(tmp_path / "nothing.yaml"),
+            "wake-word",
+            "download",
+            "--dir",
+            str(tmp_path / "models"),
+            backend=backend,
+            transport=Release().transport,
+        )
+
+        assert code == 0
+
+    async def test_the_folder_is_the_one_next_to_the_voices_unless_it_is_said(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        small_catalogue: Callable[[Path], WakeWordModels],
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        code, _ = await ran("wake-word", "download", transport=Release().transport)
+
+        assert code == 0
+        assert (tmp_path / ".cache" / "factotum" / "openwakeword" / "melspectrogram.onnx").exists()
+
+    def test_a_command_with_no_action_is_the_usage_of_it(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            asyncio.run(main_async(["wake-word"], environ={}, out=io.StringIO()))
+
+        assert stopped.value.code == 2
+        assert "download" in capsys.readouterr().err
 
 
 class TestDoctor:
@@ -200,6 +411,69 @@ class TestDoctor:
 
         assert code == 1
         assert TOKEN_VARIABLE in said
+
+    async def test_a_device_that_waits_for_a_word_whose_models_are_not_there_is_told_what_to_run(
+        self, tmp_path: Path
+    ) -> None:
+        text = SETTINGS.replace(
+            "listening:\n", f"listening:\n  mode: wake_word\n  models_dir: {tmp_path / 'models'}\n"
+        )
+        edge = Edge()
+        edge.connection.say(ready())
+
+        code, said = await ran("--config", str(settings_in(tmp_path, text)), "doctor", edge=edge)
+
+        assert code == 1
+        assert "FAIL  wake word" in said
+        assert "wake-word download hey_jarvis --dir" in said
+
+    async def test_the_word_can_be_asked_about_whatever_the_device_is_woken_by(
+        self, tmp_path: Path
+    ) -> None:
+        text = SETTINGS.replace(
+            "listening:\n", f"listening:\n  models_dir: {tmp_path / 'models'}\n"
+        )
+        edge = Edge()
+        edge.connection.say(ready())
+
+        code, said = await ran(
+            "--config", str(settings_in(tmp_path, text)), "doctor", "--word", edge=edge
+        )
+
+        assert code == 1
+        assert "FAIL  wake word" in said
+        assert "FAIL  word" not in said  # nothing was heard: the models are not there
+        assert "ok    word" not in said
+
+    async def test_it_listens_for_the_word_when_asked_to_and_says_when_to_say_it(
+        self, tmp_path: Path
+    ) -> None:
+        backend = FakeBackend()
+        edge = Edge()
+        edge.connection.say(ready())
+        text = SETTINGS.replace("listening:\n", "listening:\n  mode: wake_word\n")
+        task = asyncio.create_task(
+            ran(
+                "--config",
+                str(settings_in(tmp_path, text)),
+                "doctor",
+                "--word",
+                edge=edge,
+                backend=backend,
+                engine=a_word_that_is_a_loud_sound(),
+            )
+        )
+        await until(lambda: backend.inputs)
+        for at in range(70):  # five seconds are 62 frames
+            backend.inputs[0].hear(FakeWakeWord.frame(6_000 if at == 20 else 0))
+
+        code, said = await asyncio.wait_for(task, 3)
+
+        assert code == 0
+        assert said.splitlines()[0] == "say 'hey jarvis' now: listening for 5 seconds"
+        assert "ok    wake word" in said
+        assert "ok    word" in said
+        assert "'hey_jarvis' was heard" in said
 
 
 class TestRunning:
@@ -333,13 +607,13 @@ class TestRunning:
         assert code == 1
         assert "init" in said
 
-    async def test_a_word_to_wake_it_with_and_no_key_for_it_is_said_before_anything_is_tried(
+    async def test_porcupine_with_no_key_is_said_before_anything_is_tried(
         self, tmp_path: Path
     ) -> None:
         edge = Edge()
         text = SETTINGS.replace(
             "listening:\n  silence_seconds: 0.1\n",
-            "listening:\n  silence_seconds: 0.1\n  mode: wake_word\n",
+            "listening:\n  silence_seconds: 0.1\n  mode: wake_word\n  engine: porcupine\n",
         )
 
         code, said = await ran("--config", str(settings_in(tmp_path, text)), edge=edge)
@@ -347,6 +621,25 @@ class TestRunning:
         assert code == 1
         assert "access key" in said
         assert edge.asked == []
+
+    async def test_a_word_whose_models_are_not_there_is_said_with_what_to_run_and_is_exit_code_1(
+        self, tmp_path: Path
+    ) -> None:
+        edge = Edge()
+        edge.connection.say(ready())
+        folder = tmp_path / "models"
+        text = SETTINGS.replace(
+            "listening:\n", f"listening:\n  mode: wake_word\n  models_dir: {folder}\n"
+        )
+
+        code, said = await asyncio.wait_for(
+            ran("--config", str(settings_in(tmp_path, text)), edge=edge), 2
+        )
+
+        assert code == 1
+        assert f'factotum-device wake-word download hey_jarvis --dir "{folder}"' in said
+        assert "Traceback" not in said
+        assert len(edge.connection.frames("bye")) == 1  # it did not leave the edge hanging
 
     async def test_a_sound_card_that_fails_when_the_person_speaks_is_said_and_is_exit_code_1(
         self, tmp_path: Path
@@ -402,27 +695,22 @@ class TestRunning:
         assert "connected as" in said  # what is not about the answer is written all the same
 
     async def test_a_device_that_waits_for_a_word_is_not_told_to_press_anything(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
-        class Engine:
-            sample_rate, frame_length = 16_000, 512
-
-            def process(self, frame: Any) -> int:
-                return -1
-
-            def delete(self) -> None:
-                """Nothing to let go of."""
-
-        monkeypatch.setitem(
-            sys.modules, "pvporcupine", SimpleNamespace(create=lambda **given: Engine())
-        )
         edge = Edge()
         edge.connection.say(ready())
-        text = SETTINGS.replace(
-            "listening:\n", "listening:\n  mode: wake_word\n  access_key: a-key\n"
+        text = SETTINGS.replace("listening:\n", "listening:\n  mode: wake_word\n")
+        made: list[OpenWakeWordEngine] = []
+        task = asyncio.create_task(
+            ran(
+                "--config",
+                str(settings_in(tmp_path, text)),
+                edge=edge,
+                engine=a_word_that_is_a_loud_sound(made=made),
+            )
         )
-        task = asyncio.create_task(ran("--config", str(settings_in(tmp_path, text)), edge=edge))
         await edge.connection.wait_for("hello")
+        await until(lambda: made)  # it is the device that asked for the engine that it was given
 
         edge.connection.drop(int(CloseCode.REPLACED))
         code, said = await asyncio.wait_for(task, 2)

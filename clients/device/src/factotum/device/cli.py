@@ -1,16 +1,18 @@
 """``factotum-device``: the device application.
 
-    factotum-device init       write a file of settings to start from
-    factotum-device doctor     try the settings, the sound card and the edge, and say what is wrong
-    factotum-device devices    list the microphones and speakers of this machine
-    factotum-device run        be the device (this is what ``factotum-device`` alone does)
+    factotum-device init                       write a file of settings to start from
+    factotum-device doctor                     try the settings, the sound card and the edge, and
+                                               say what is wrong
+    factotum-device devices                    list the microphones and speakers of this machine
+    factotum-device wake-word download [WORD]  fetch the models of a wake word, once
+    factotum-device run                        be the device (what ``factotum-device`` alone does)
 
 The settings are in a file (``--config``, ``$FACTOTUM_DEVICE_CONFIG``, else ``%APPDATA%\\factotum\\
 device.yaml`` on Windows and ``~/.config/factotum/device.yaml`` elsewhere); the credential of the
-device and the key of the wake word are better in the environment (``$FACTOTUM_DEVICE_TOKEN``,
-``$PICOVOICE_ACCESS_KEY``) than in a file that may be copied somewhere. With a key, a person presses
-Enter to speak and is heard until they are quiet (or press it again); with a wake word, they
-say it.
+device (and the key of Porcupine, when that is what listens for the word) are better in the
+environment (``$FACTOTUM_DEVICE_TOKEN``, ``$PICOVOICE_ACCESS_KEY``) than in a file that may be
+copied somewhere. With a key, a person presses Enter to speak and is heard until they are quiet (or
+press it again); with a wake word, they say it.
 
 The exit code says how it ended: 0 when the person left, 1 for settings or hardware that are wrong,
 and, when the edge made clear that it is no use asking again, 3 (it does not accept the device), 4
@@ -27,10 +29,20 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
 
-from factotum.client_audio import AudioBackend, AudioUnavailableError, SoundDeviceBackend
+import httpx
+
+from factotum.client_audio import (
+    DEFAULT_OPENWAKEWORD,
+    WAKE_WORDS,
+    AudioBackend,
+    AudioUnavailableError,
+    SoundDeviceBackend,
+    WakeWordError,
+    WakeWordModels,
+)
 from factotum.client_audio.inputs import Presses
 from factotum.client_core import Ending, Outcome, WebSocketConnection
-from factotum.device.app import OpenConnection, build_hardware, run_device
+from factotum.device.app import EngineFactory, OpenConnection, build_hardware, engine_of, run_device
 from factotum.device.config import (
     CONFIG_VARIABLE,
     Config,
@@ -41,6 +53,7 @@ from factotum.device.config import (
 )
 from factotum.device.doctor import examine, report_of
 from factotum.device.render import DeviceRenderer
+from factotum.device.wakewords import TIMEOUT, DownloadError, download
 
 EXIT_CODES = {
     Ending.LEFT: 0,
@@ -71,10 +84,20 @@ audio:
 
 listening:
   mode: push_to_talk                       # Enter begins, being quiet ends it (or Enter again);
-                                           # or wake_word, which needs a Picovoice AccessKey and is
-                                           # the one for a service that nobody sits at
-  wake_word: jarvis                        # one of Porcupine's keywords
-  # access_key: ...                        # or $PICOVOICE_ACCESS_KEY (console.picovoice.ai)
+                                           # or wake_word, which listens for a word and is the one
+                                           # for a service that nobody sits at
+  engine: openwakeword                     # what listens for the word: no account and no key, and
+                                           # its models are fetched once by ``factotum-device
+                                           # wake-word download``; or porcupine, which needs an
+                                           # AccessKey that Picovoice gives to companies
+  # wake_word: hey_jarvis                  # alexa, hey_jarvis, hey_mycroft or hey_rhasspy (the
+                                           # words are English; Porcupine has its own, ``jarvis``)
+  threshold: 0.5                           # the score at which the word is taken to have been said:
+                                           # lower it if it is not heard (``doctor --word`` says how
+                                           # near it came), raise it if a sound is taken for it
+  # patience: 1                            # the frames of 80 ms in a row that must be over it
+  # models_dir: ...                        # where the models are (~/.cache/factotum/openwakeword)
+  # access_key: ...                        # porcupine only: or $PICOVOICE_ACCESS_KEY
   silence_seconds: 1.2                     # how long a person is quiet before it is over
   silence_level: 150                       # the level, of 32768, under which a sound is quiet
   max_seconds: 12                          # the most that one thing said may last
@@ -114,6 +137,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--play", action="store_true", help="also play a short tone, quietly (nobody is warned)"
     )
     doctor.add_argument(
+        "--word",
+        action="store_true",
+        help="also listen for the wake word for five seconds and say how near it came (say it "
+        "when asked); this is how to choose listening.threshold",
+    )
+    doctor.add_argument(
         "--no-edge",
         action="store_true",
         help="do not connect to the edge (which replaces a device of the same hardware id that "
@@ -122,6 +151,26 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("devices", help="list the microphones and speakers of this machine")
     init = commands.add_parser("init", help="write a file of settings to start from")
     init.add_argument("--force", action="store_true", help="replace the file if there is one")
+    wake_word = commands.add_parser(
+        "wake-word", help="the models of the words that can be listened for"
+    )
+    actions = wake_word.add_subparsers(dest="action", required=True)
+    fetch = actions.add_parser(
+        "download",
+        help="fetch the models of a word from where its author published them (once, and checked)",
+    )
+    fetch.add_argument(
+        "word",
+        nargs="?",
+        default=DEFAULT_OPENWAKEWORD,
+        help=f"one of {', '.join(sorted(WAKE_WORDS))} (default: {DEFAULT_OPENWAKEWORD})",
+    )
+    fetch.add_argument(
+        "--dir",
+        type=Path,
+        help="where to keep them (default: ~/.cache/factotum/openwakeword; the device looks there, "
+        "or where listening.models_dir says)",
+    )
     return parser
 
 
@@ -155,9 +204,12 @@ async def main_async(
     backend: AudioBackend | None = None,
     presses: Presses | None = None,
     opening: OpenConnection | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    engine: EngineFactory = engine_of,
 ) -> int:
     """What ``factotum-device`` does, and the exit code that says how it went. Everything that is
-    hardware or a network is given, for a test; nothing is given when it is run."""
+    hardware or a network is given, for a test (``engine`` is what listens for the word); nothing
+    is given when it is run."""
     arguments = build_parser().parse_args(argv)
     variables = os.environ if environ is None else environ
     platform = sys.platform if system is None else system
@@ -166,6 +218,8 @@ async def main_async(
 
     if command == "init":
         return _init(arguments, variables, platform, stream)
+    if command == "wake-word":
+        return await _wake_word(arguments, stream, transport)
     sound = backend or SoundDeviceBackend()
     if command == "devices":
         return await _devices(sound, stream)
@@ -177,8 +231,8 @@ async def main_async(
     logging.basicConfig(format="%(asctime)s %(name)s %(message)s")
     logging.getLogger().setLevel(config.log_level)  # basicConfig leaves it when a handler is there
     if command == "doctor":
-        return await _doctor(arguments, config, sound, opening, stream)
-    return await _run(arguments, config, sound, presses, opening, stream)
+        return await _doctor(arguments, config, sound, opening, stream, engine)
+    return await _run(arguments, config, sound, presses, opening, stream, engine)
 
 
 def _init(
@@ -191,6 +245,25 @@ def _init(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(EXAMPLE.encode("utf-8"))
     _say(out, f"wrote {path}: put the hardware id and the credential of the device in it")
+    return 0
+
+
+async def _wake_word(
+    arguments: argparse.Namespace, out: TextIO, transport: httpx.AsyncBaseTransport | None
+) -> int:
+    models = WakeWordModels(arguments.dir)
+    try:
+        async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT) as client:
+            await download(models, arguments.word, client=client, say=lambda line: _say(out, line))
+    except (WakeWordError, DownloadError) as error:
+        _say(out, f"factotum-device: {error}")
+        return 1
+    _say(
+        out,
+        f"the models of {arguments.word} are in {models.directory}: they are their author's "
+        "(CC BY-NC-SA 4.0, for use that is not commercial), https://github.com/dscripka/openWakeWord",
+    )
+    _say(out, "try them with: factotum-device doctor --word")
     return 0
 
 
@@ -221,14 +294,18 @@ async def _doctor(
     backend: AudioBackend,
     opening: OpenConnection | None,
     out: TextIO,
+    engine: EngineFactory,
 ) -> int:
     checks = await examine(
         config,
         backend,
         listen=arguments.listen,
         play=arguments.play,
+        word=arguments.word,
         edge=not arguments.no_edge,
         opening=opening or WebSocketConnection.open,
+        engine=engine,
+        say=lambda line: _say(out, line),
     )
     _say(out, report_of(checks))
     return 0 if all(check.ok for check in checks) else 1
@@ -241,9 +318,10 @@ async def _run(
     presses: Presses | None,
     opening: OpenConnection | None,
     out: TextIO,
+    engine: EngineFactory,
 ) -> int:
     renderer = DeviceRenderer(out, quiet=arguments.quiet)
-    hardware = build_hardware(config, backend, renderer, presses=presses)
+    hardware = build_hardware(config, backend, renderer, presses=presses, engine=engine)
     if config.listening.mode is Mode.PUSH_TO_TALK and config.can_hear:
         if presses is None and not _at_a_keyboard():
             renderer.notice(
@@ -260,6 +338,9 @@ async def _run(
         )
     except AudioUnavailableError as error:
         _say(out, f"factotum-device: the sound hardware failed: {error} (``doctor`` tries it)")
+        return 1
+    except WakeWordError as error:
+        _say(out, f"factotum-device: {error}")
         return 1
     if not outcome.succeeded:
         _say(out, f"factotum-device: {outcome.ending.value}: {outcome.detail}")

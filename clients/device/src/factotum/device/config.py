@@ -4,8 +4,9 @@ and how it listens, in a file that a person writes once (``config/device.example
 Everything in it is checked when it is read, and what is wrong is said in a line, with the name of
 the setting: a device that starts and then fails on a wrong credential, or on a microphone that is
 not there, is a device that nobody can tell why it is silent. The two secrets of a device, its
-credential and the key of its wake-word engine, may be in the file or in the environment, which wins
-(a file of settings is often a file in a repository; the credential of a device is not).
+credential and the key of Porcupine (the one wake-word engine that needs a key), may be in the file
+or in the environment, which wins (a file of settings is often a file in a repository; the
+credential of a device is not).
 """
 
 from collections.abc import Mapping
@@ -14,9 +15,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import Field, SecretStr, ValidationError, model_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 
-from factotum.client_audio import ACCESS_KEY_VARIABLE, DEFAULT_WAKE_WORD, DeviceChoice
+from factotum.client_audio import (
+    ACCESS_KEY_VARIABLE,
+    THRESHOLD,
+    WAKE_WORDS,
+    DeviceChoice,
+    Engine,
+    default_word,
+)
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 
@@ -40,7 +48,7 @@ class Mode(StrEnum):
     """A key: Enter begins, and being quiet (or Enter again) ends."""
 
     WAKE_WORD = "wake_word"
-    """A word that Porcupine watches for: it needs a Picovoice AccessKey."""
+    """A word that an engine watches for (``listening.engine``)."""
 
 
 class EdgeSettings(Contract):
@@ -85,11 +93,24 @@ class AudioSettings(Contract):
 
 class ListeningSettings(Contract):
     mode: Mode = Mode.PUSH_TO_TALK
-    wake_word: str = DEFAULT_WAKE_WORD
-    """One of Porcupine's built-in keywords."""
+    engine: Engine = Engine.OPENWAKEWORD
+    wake_word: str | None = None
+    """The word: one that openWakeWord has a model for (``hey_jarvis`` unless it is said) or one of
+    Porcupine's built-in keywords (``jarvis``)."""
+
+    threshold: float = Field(default=THRESHOLD, gt=0, le=1)
+    """openWakeWord: the score, from 0 to 1, at which the word is taken to have been said. Lower it
+    when the word is not heard (``doctor --word`` says how near it was), raise it when something
+    else is taken for it."""
+
+    patience: int = Field(default=1, ge=1, le=10)
+    """openWakeWord: the frames of 80 ms in a row that must be over the threshold."""
+
+    models_dir: Path | None = None
+    """openWakeWord: where its models are (``~/.cache/factotum/openwakeword`` unless it is said)."""
 
     access_key: SecretStr | None = None
-    """The AccessKey of the wake-word engine: here or in ``$PICOVOICE_ACCESS_KEY``."""
+    """Porcupine: its AccessKey, here or in ``$PICOVOICE_ACCESS_KEY``."""
 
     silence_seconds: float = Field(default=1.2, gt=0, le=10)
     """How long a person is quiet before what they said is over."""
@@ -103,6 +124,19 @@ class ListeningSettings(Contract):
     listen_while_answering: bool = False
     """Whether to go on listening while the answer is being said, so that a person who speaks over
     it stops it. A speaker that hears itself has to wait; headphones need not."""
+
+    @field_validator("models_dir")
+    @classmethod
+    def _is_in_the_home_of_whoever_wrote_it(cls, folder: Path | None) -> Path | None:
+        """``~`` is the home of the person who runs the device, as it is in a shell."""
+        return None if folder is None else folder.expanduser()
+
+    @property
+    def word(self) -> str:
+        """The word that is listened for: the one that was said, or the engine's own."""
+        if self.wake_word is not None:
+            return self.wake_word
+        return default_word(self.engine)
 
 
 class ReconnectSettings(Contract):
@@ -130,10 +164,20 @@ class Config(Contract):
             Capability.AUDIO_IN in self.device.capabilities
             and self.listening.mode is Mode.WAKE_WORD
         )
-        if waits_for_a_word and self.listening.access_key is None:
+        if not waits_for_a_word:
+            return self
+        listening = self.listening
+        if listening.engine is Engine.PORCUPINE and listening.access_key is None:
             raise ValueError(
-                f"listening.mode wake_word needs an access key: listening.access_key or "
-                f"${ACCESS_KEY_VARIABLE} (a free one is at https://console.picovoice.ai/)"
+                f"listening.engine porcupine needs an access key: listening.access_key or "
+                f"${ACCESS_KEY_VARIABLE} (Picovoice gives them to companies and has no free plan: "
+                f"listening.engine openwakeword needs none)"
+            )
+        if listening.engine is Engine.OPENWAKEWORD and listening.word not in WAKE_WORDS:
+            raise ValueError(
+                f"listening.wake_word {listening.word!r} is not a word that openWakeWord has a "
+                f"model for ({', '.join(sorted(WAKE_WORDS))}); one of Porcupine's keywords needs "
+                f"listening.engine porcupine"
             )
         return self
 

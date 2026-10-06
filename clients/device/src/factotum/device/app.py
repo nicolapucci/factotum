@@ -19,6 +19,10 @@ from factotum.client_audio import (
     PushToTalk,
     Speaker,
     WakeWord,
+    WakeWordEngine,
+    WakeWordError,
+    WakeWordModels,
+    wake_word_engine,
 )
 from factotum.client_audio.inputs import Presses
 from factotum.client_core import (
@@ -35,7 +39,7 @@ from factotum.client_core import (
     WebSocketConnection,
     stay_connected,
 )
-from factotum.device.config import Config, ConfigError, Mode
+from factotum.device.config import Config, ConfigError, ListeningSettings, Mode
 from factotum.device.hands import DeviceHands
 
 
@@ -52,6 +56,10 @@ class Hardware:
 
 OpenConnection = Callable[[str], Awaitable[Connection]]
 
+EngineFactory = Callable[[ListeningSettings], Callable[[], WakeWordEngine]]
+"""What makes the engine that watches for the word, from the settings that say which and for what:
+``engine_of``, or another for a test."""
+
 
 def identity_of(config: Config) -> DeviceIdentity:
     """Who the device is, as it says it when it connects."""
@@ -62,15 +70,34 @@ def identity_of(config: Config) -> DeviceIdentity:
     )
 
 
+def engine_of(listening: ListeningSettings) -> Callable[[], WakeWordEngine]:
+    """What makes the engine for the word that the settings name, when it is called (the models are
+    loaded, or the key is validated, then and not before)."""
+    key = listening.access_key.get_secret_value() if listening.access_key is not None else None
+    try:
+        return wake_word_engine(
+            listening.engine,
+            listening.word,
+            access_key=key,
+            models=WakeWordModels(listening.models_dir),
+            threshold=listening.threshold,
+            patience=listening.patience,
+        )
+    except WakeWordError as error:
+        raise ConfigError(str(error)) from None
+
+
 def build_hardware(
     config: Config,
     backend: AudioBackend,
     renderer: Renderer,
     *,
     presses: Presses | None = None,
+    engine: EngineFactory = engine_of,
 ) -> Hardware:
     """The speaker and the way of hearing that the settings describe, on the sound card that
-    ``backend`` is. ``presses`` stands in for the keyboard, for a test."""
+    ``backend`` is. ``presses`` stands in for the keyboard, and ``engine`` for what watches for the
+    word, for a test."""
     speaker = (
         Speaker(backend, device=config.output_device, volume=config.audio.volume)
         if config.can_speak
@@ -85,12 +112,9 @@ def build_hardware(
 
     voice_input: VoiceInput
     if listening.mode is Mode.WAKE_WORD:
-        if listening.access_key is None:
-            raise ConfigError("listening.mode wake_word needs an access key")
         voice_input = WakeWord(
             backend,
-            access_key=listening.access_key.get_secret_value(),
-            wake_word=listening.wake_word,
+            engine=engine(listening),
             device=config.input_device,
             silence_seconds=listening.silence_seconds,
             silence_level=listening.silence_level,

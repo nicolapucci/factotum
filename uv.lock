@@ -645,8 +645,13 @@ dependencies = [
     { name = "factotum-client-core" },
     { name = "factotum-contracts" },
     { name = "numpy" },
-    { name = "pvporcupine" },
+    { name = "onnxruntime" },
     { name = "sounddevice" },
+]
+
+[package.optional-dependencies]
+porcupine = [
+    { name = "pvporcupine" },
 ]
 
 [package.metadata]
@@ -654,9 +659,11 @@ requires-dist = [
     { name = "factotum-client-core", editable = "libs/client_core" },
     { name = "factotum-contracts", editable = "libs/contracts" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "pvporcupine", specifier = ">=3.0" },
+    { name = "onnxruntime", specifier = ">=1.20" },
+    { name = "pvporcupine", marker = "extra == 'porcupine'", specifier = ">=3.0" },
     { name = "sounddevice", specifier = ">=0.5" },
 ]
+provides-extras = ["porcupine"]
 
 [[package]]
 name = "factotum-client-core"
@@ -763,6 +770,7 @@ dependencies = [
     { name = "factotum-client-audio" },
     { name = "factotum-client-core" },
     { name = "factotum-contracts" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
@@ -772,6 +780,7 @@ requires-dist = [
     { name = "factotum-client-audio", editable = "libs/client_audio" },
     { name = "factotum-client-core", editable = "libs/client_core" },
     { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]

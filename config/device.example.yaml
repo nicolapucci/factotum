@@ -18,10 +18,20 @@ audio:
 
 listening:
   mode: push_to_talk                       # Enter begins, being quiet ends it (or Enter again);
-                                           # or wake_word, which needs a Picovoice AccessKey and is
-                                           # the one for a service that nobody sits at
-  wake_word: jarvis                        # one of Porcupine's keywords
-  # access_key: ...                        # or $PICOVOICE_ACCESS_KEY (console.picovoice.ai)
+                                           # or wake_word, which listens for a word and is the one
+                                           # for a service that nobody sits at
+  engine: openwakeword                     # what listens for the word: no account and no key, and
+                                           # its models are fetched once by ``factotum-device
+                                           # wake-word download``; or porcupine, which needs an
+                                           # AccessKey that Picovoice gives to companies
+  # wake_word: hey_jarvis                  # alexa, hey_jarvis, hey_mycroft or hey_rhasspy (the
+                                           # words are English; Porcupine has its own, ``jarvis``)
+  threshold: 0.5                           # the score at which the word is taken to have been said:
+                                           # lower it if it is not heard (``doctor --word`` says how
+                                           # near it came), raise it if a sound is taken for it
+  # patience: 1                            # the frames of 80 ms in a row that must be over it
+  # models_dir: ...                        # where the models are (~/.cache/factotum/openwakeword)
+  # access_key: ...                        # porcupine only: or $PICOVOICE_ACCESS_KEY
   silence_seconds: 1.2                     # how long a person is quiet before it is over
   silence_level: 150                       # the level, of 32768, under which a sound is quiet
   max_seconds: 12                          # the most that one thing said may last
