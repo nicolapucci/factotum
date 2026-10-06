@@ -4,11 +4,13 @@ speaker."""
 from factotum.client_audio import Speaker
 from factotum.client_audio.testing import FakeBackend
 from factotum.client_core.testing import RecordingRenderer
+from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.commands import (
     CommandStatus,
     LedPattern,
     Pause,
+    PlayAudio,
     SetLed,
     SetVolume,
     Speak,
@@ -53,15 +55,19 @@ class TestTheVolume:
 
 
 class TestWhatItCannotDo:
-    async def test_a_text_to_say_is_not_said_and_the_skill_is_told_the_truth(self) -> None:
+    async def test_what_is_said_is_not_for_the_hands_and_the_skill_is_told_the_truth(self) -> None:
+        # The clip is played by the client core and a text is made a clip by the edge: if either
+        # reached these hands, saying that it was done would be an announcement that nobody heard.
         hands, shown = hands_with(Speaker(FakeBackend()))
+        clip = PlayAudio(text="Hi.", audio=wav_of(bytes(100), 22_050))
 
-        result = await hands.execute(Speak(text="dinner is ready"))
+        for command in (Speak(text="dinner is ready"), clip):
+            result = await hands.execute(command)
 
-        assert result.status is CommandStatus.UNSUPPORTED
-        assert "no voice of its own" in (result.detail or "")
+            assert result.status is CommandStatus.UNSUPPORTED
+            assert command.name in (result.detail or "")
         assert shown.of("speech") == []  # a text that was shown is not an announcement
-        assert len(shown.of("event")) == 1
+        assert shown.of("event") == []
 
     async def test_a_command_for_hands_it_has_not_is_unsupported_and_says_which(self) -> None:
         hands, _ = hands_with(Speaker(FakeBackend()))

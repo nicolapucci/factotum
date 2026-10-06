@@ -187,6 +187,22 @@ class TestWhenItCannotBeSaid:
             assert display.spoken() == []
             assert display.shown.of("text") == ["It did not work."]
 
+    async def test_a_device_that_cannot_play_a_clip_is_given_the_words_to_say(self) -> None:
+        async with (
+            running(offer_every_skill=True) as house,
+            connected(house, "speaker", plays_clips=False) as speaker,
+        ):
+            house.model.proposal = proposal(DINNER)
+
+            ended = await speaker.types("Tell everyone that dinner is ready.")
+
+            assert ended.status is TurnStatus.FINISHED, ended
+            assert speaker.client.features == frozenset()
+            assert speaker.hardware.state.spoken == [DINNER]  # as words, which it may say or show
+            assert speaker.sentences() == []
+            [act] = house.acts
+            assert (act.status, act.code) == (ActStatus.DONE, None)
+
     async def test_a_device_that_is_not_connected_is_a_command_that_was_not_done(self) -> None:
         async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
             house.model.proposal = proposal(DINNER, DISPLAY)  # the display is not connected

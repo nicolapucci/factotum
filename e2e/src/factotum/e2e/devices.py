@@ -123,7 +123,8 @@ class Device:
 
     async def answered(self, identity: str) -> TurnEnded:
         """Waits for the answer to what was said to end, and for what was received of its sound to
-        be played, and says how the answer ended."""
+        be played (what a skill had it say besides the answer, as well), and says how the answer
+        ended."""
         ended = await asyncio.wait_for(self.client.wait_for_turn(identity), self.timeout_s)
         assert ended is not None, "the connection ended before the answer did"
         await asyncio.wait_for(self.client.wait_until_played(), self.timeout_s)
@@ -132,12 +133,18 @@ class Device:
 
 @asynccontextmanager
 async def joined(
-    house: House, name: str, *, credential: str | None = None
+    house: House,
+    name: str,
+    *,
+    credential: str | None = None,
+    plays_clips: bool = True,
 ) -> AsyncIterator[Device]:
     """The device of this profile (``speaker``, ``smart-display``, ``phone``...), connected to the
     edge and told it is ready. It does not yet do what the edge sends: whoever takes it on does
     (``client.run()``). It presents the credential it was given when it was paired (the hub's) or
-    the one of its profile, unless ``credential`` says another."""
+    the one of its profile, unless ``credential`` says another. ``plays_clips=False`` is a device
+    that has no sound port for the client to give a voice to: it declares no feature, and is sent
+    the words of what it is to say, as devices were before there were clips."""
     profile = get_profile(name)
     carrier = DEFAULT_CARRIER
     shown = RecordingRenderer()
@@ -150,8 +157,8 @@ async def joined(
         shown,
         hardware,
         token=credential or house.tokens.get(profile.hardware_id),
-        voice_output=None if carrier is Carrier.STREAM else speaker,
-        voice_sink=speaker if isinstance(speaker, FakeSpeaker) else None,
+        voice_output=None if carrier is Carrier.STREAM or not plays_clips else speaker,
+        voice_sink=speaker if isinstance(speaker, FakeSpeaker) and plays_clips else None,
     )
     try:
         await client.connect()
@@ -162,10 +169,14 @@ async def joined(
 
 @asynccontextmanager
 async def connected(
-    house: House, name: str, *, credential: str | None = None
+    house: House,
+    name: str,
+    *,
+    credential: str | None = None,
+    plays_clips: bool = True,
 ) -> AsyncIterator[Device]:
     """The same, doing what the edge sends."""
-    async with joined(house, name, credential=credential) as device:
+    async with joined(house, name, credential=credential, plays_clips=plays_clips) as device:
         listening = asyncio.create_task(device.client.run())
         try:
             yield device

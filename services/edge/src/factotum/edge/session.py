@@ -19,6 +19,10 @@ Things it holds to, because a device is a small computer on a home network and m
   a voice as a stream, and to one that did a track of sound that is made and sent while the text of
   the answer is still being written (``factotum.edge.voice``, ADR 0023). Either way the text of a
   sentence is sent as soon as it is whole, and nothing of the answer comes after its ``turn_ended``.
+* A text that a skill has a device say (``speak``) is made into sound here, a sentence at a time,
+  and sent as clips that the device plays as they arrive (ADR 0026): a device has no voice of its
+  own, and the voice is the model gateway's. A device that did not say it plays them is sent the
+  words, and a clip is sent to a device that did not say so as the words that it carries.
 * A device that says nothing for too long, or cannot be written to, is gone. Its turn is stopped,
   its commands are answered as offline, and it is forgotten by the edge.
 * What goes wrong inside is the device's to be told in a code, never in a stack trace.
@@ -33,9 +37,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from factotum.common.sentences import sentences_of
 from factotum.contracts.audio import MAX_CHUNK_BYTES, MAX_STREAM_BYTES, AudioPayload, wav_of
 from factotum.contracts.capabilities import Capability, DisplayInfo
-from factotum.contracts.commands import CommandResult, CommandStatus, DeviceCommand
+from factotum.contracts.commands import (
+    CommandResult,
+    CommandStatus,
+    DeviceCommand,
+    PlayAudio,
+    Speak,
+)
 from factotum.contracts.conversation import MAX_MESSAGE_CHARS, Failed
 from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.edge import (
@@ -162,6 +173,10 @@ class Session:
         self._settings = settings or SessionSettings()
         self._new_id = new_id
         self._send_lock = asyncio.Lock()
+        self._speaking = asyncio.Lock()
+        """What is said for a command is said in the order that the commands came: two texts are not
+        mixed, a sentence of one and a sentence of the other."""
+
         self._pending: dict[str, asyncio.Future[CommandResult]] = {}
         self._turn: tuple[str, asyncio.Task[None]] | None = None
         self._stream: _Stream | None = None
@@ -194,6 +209,51 @@ class Session:
             )
         if self._closed:
             return CommandResult(status=CommandStatus.OFFLINE, detail="the device is not connected")
+        if Feature.PLAY_AUDIO in self.features:
+            if isinstance(command, Speak):
+                return await self._say_aloud(command, timeout_s)
+        elif isinstance(command, PlayAudio):
+            # A clip that this device cannot play is the words it says, which it may say or show.
+            command = Speak(text=command.text)
+        return await self._deliver(command, timeout_s)
+
+    async def _say_aloud(self, command: Speak, timeout_s: float | None) -> CommandResult:
+        """Have the device say a text: the voice of each sentence is made, in turn, and sent as a
+        clip that the device takes at once and plays when it has said what came before. The first
+        sound is heard after the first sentence, and the command is done when all of it has been
+        taken."""
+        if self._speech is None:
+            return CommandResult(
+                status=CommandStatus.FAILED, detail="the edge has no voice to say it with"
+            )
+        assert self.principal is not None  # noqa: S101 - a session that has commands has said hello
+        owner = Owner.of_subject(self.principal.acts_as)
+        sentences = sentences_of(command.text)
+        if not sentences:
+            return CommandResult(status=CommandStatus.FAILED, detail="there is nothing to say")
+        async with self._speaking:
+            for sentence in sentences:
+                try:
+                    clip = await self._speech.synthesize(owner, sentence)
+                except FactotumError as error:
+                    return CommandResult(
+                        status=CommandStatus.FAILED,
+                        detail=f"the voice could not be made ({error.code})",
+                    )
+                except Exception:
+                    logger.exception(
+                        "a sentence could not be synthesized", extra={"session": self.session_id}
+                    )
+                    return CommandResult(
+                        status=CommandStatus.FAILED, detail="the voice could not be made"
+                    )
+                result = await self._deliver(PlayAudio(text=sentence, audio=clip), timeout_s)
+                if not result.succeeded:
+                    return result
+        return CommandResult.ok()
+
+    async def _deliver(self, command: DeviceCommand, timeout_s: float | None) -> CommandResult:
+        """Send the device a command, as it is, and wait for what became of it."""
         identity = self._new_id("c")
         answered: asyncio.Future[CommandResult] = asyncio.get_running_loop().create_future()
         self._pending[identity] = answered

@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from factotum.actions.instructions.testing import plan_dict, step_command
 from factotum.client_audio.testing import FakeBackend, KeyPresses
 from factotum.client_core import Ending
 from factotum.client_core.testing import RecordingRenderer
@@ -85,6 +86,22 @@ ANNOUNCE_DINNER = {
     "ask": None,
 }
 """What a competent planner proposes for "tell everyone that dinner is ready"."""
+
+SHOUT = """---
+name: shout
+description: Say a message out loud on the device that is spoken to.
+examples:
+  - shout that dinner is ready
+target: system
+parameters:
+  message: {type: string}
+required: [message]
+effect: reversible
+---
+Give the device a speak command with the message as its text.
+"""
+"""A skill that a person taught the assistant: it only gives a device words to say (``speak``), and
+what makes them a voice is the edge, as for every skill."""
 
 
 def words_played(track: Any) -> str:
@@ -197,6 +214,34 @@ class TestAPersonAtTheDevice:
             assert person.shown.of("speech") == ["Done."]  # what a person is answered is an answer
             assert sorted(person.played()) == ["Done.", "dinner is ready"]
             assert house.runner.jobs == []  # the platform did it: nothing was run in a sandbox
+            assert person.shown.of("violation") == []
+
+    async def test_a_text_that_a_skill_gives_to_say_is_made_a_voice_by_the_edge_and_played(
+        self,
+    ) -> None:
+        async with running(offer_every_skill=True) as house:
+            installed = await house.actions.post(
+                "/v1/skills", json={"source": SHOUT}, headers=house.admin
+            )
+            assert installed.status_code == 201, installed.text
+            enabled = await house.actions.post(
+                f"/v1/skills/{installed.json()['id']}/enable", headers=house.admin
+            )
+            assert enabled.status_code == 200, enabled.text
+            house.model.proposal = {**ANNOUNCE_DINNER, "skill": "shout"}
+            house.model.writing = plan_dict(step_command("say", "speak", text="${value.message}"))
+            person = Speaking(house, configured(house))
+            await until(lambda: len(house.sessions) == 1)
+
+            await person.said("Shout that dinner is ready.")
+            await until(lambda: len(person.backend.outputs) == 2 and person.stopped())
+            await person.leaves()
+
+            [act] = house.acts
+            assert (act.status, act.code, act.skill) == (ActStatus.DONE, None, "shout")
+            assert "announcement: dinner is ready" in person.shown.of("event")
+            assert sorted(person.played()) == ["Done.", "dinner is ready"]
+            assert [job.label for job in house.runner.jobs] == ["shout"]  # a plan, in a sandbox
             assert person.shown.of("violation") == []
 
 
