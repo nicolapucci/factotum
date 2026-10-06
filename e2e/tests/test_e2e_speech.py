@@ -16,6 +16,7 @@ a little differently on each device, so what is looked for in what it heard is t
 not a sentence.
 """
 
+import asyncio
 import difflib
 import os
 import re
@@ -281,6 +282,39 @@ class TestAnActionByVoice:
             assert [act.status for act in house.acts] == [ActStatus.REFUSED]
             assert reached(house) == []
             assert speaker.sentences(), "the refusal was not said"
+
+
+class TestAnAnnouncementByVoice:
+    async def test_it_is_made_with_the_real_voice_and_said_by_the_device_that_was_named(
+        self, speech: RealSpeech, person: Person
+    ) -> None:
+        said = PlanCase(
+            "annuncia sul display che la cena è pronta",
+            KITCHEN,
+            "announce",
+            ActStatus.DONE,
+            DISPLAY,
+            {"message": "la cena è pronta"},
+        )
+        async with (
+            running(speech=speech, timeout_s=SLOW_S, offer_every_skill=True) as house,
+            connected(house, "speaker") as speaker,
+            connected(house, "smart-display") as display,
+        ):
+            house.model.proposal = proposal_for(said)
+
+            ended = await speaker.sends(person.saying("Annuncia sul display che la cena è pronta."))
+            await asyncio.wait_for(display.client.wait_until_played(), SLOW_S)
+
+            assert ended.status is TurnStatus.FINISHED, ended
+            # One clip, of the message, made by the voice that was bound and heard by somebody who
+            # listens as what was asked to be said, on the device that was named...
+            [clip] = display.sentences()
+            assert seconds(clip) > 0.8
+            assert_understood(listens(speech, display), ["la cena è pronta"])
+            # ...while the person is told that it is done where they spoke, in their language.
+            assert_says(listens(speech, speaker), "fatto")
+            assert house.runner.jobs == []  # nothing was run in a sandbox for it
 
 
 class TestSomethingThatIsNotASentence:
