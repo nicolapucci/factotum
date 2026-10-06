@@ -31,3 +31,4 @@ the old one instead of rewriting history.
 | [0023](0023-audio-out-the-voice-of-an-answer-is-streamed-from-the-gateway-to-the-device.md) | Audio out: the voice of an answer is streamed, from the gateway through the edge to the device |
 | [0024](0024-the-client-core-one-implementation-of-the-protocol-for-every-client.md) | The client core: one implementation of the protocol for every client |
 | [0025](0025-the-device-application-one-program-for-a-pc-and-a-raspberry-pi.md) | The device application: one program for a PC and a Raspberry Pi, over a library of the sound hardware |
+| [0026](0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md) | Saying something on a device: `play_audio`, `speak` through the edge, and core skills |
