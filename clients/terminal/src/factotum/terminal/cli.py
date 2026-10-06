@@ -35,6 +35,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from factotum.client_audio import (
+    ACCESS_KEY_VARIABLE,
+    DEFAULT_WAKE_WORD,
+    SoundDeviceBackend,
+    Speaker,
+    WakeWord,
+)
 from factotum.client_core import (
     CannotConverse,
     Connection,
@@ -49,12 +56,6 @@ from factotum.client_core import (
     WebSocketConnection,
 )
 from factotum.contracts.capabilities import Capability
-from factotum.terminal.audio import (
-    ACCESS_KEY_VARIABLE,
-    DEFAULT_WAKE_WORD,
-    MicrophoneInput,
-    SpeakerOutput,
-)
 from factotum.terminal.device import TerminalDevice
 from factotum.terminal.profiles import DEFAULT_PROFILE, PROFILES, Profile, get_profile
 from factotum.terminal.render import ConsoleRenderer
@@ -329,7 +330,7 @@ async def run(
         if options.wav_out is not None:
             speaker = sink = wav_out = WavFileOutput(options.wav_out)
         elif options.voice:
-            speaker = SpeakerOutput()
+            speaker = sink = Speaker(SoundDeviceBackend())
     device = TerminalDevice(options.profile.capabilities, renderer)
     client = DeviceClient(
         connection,
@@ -352,8 +353,10 @@ async def run(
             renderer.notice(f"listening for the wake word {options.wake_word!r}")
             if voice_input is None:
                 assert options.access_key is not None  # noqa: S101 - checked above
-                voice_input = MicrophoneInput(
-                    access_key=options.access_key, wake_word=options.wake_word
+                voice_input = WakeWord(
+                    SoundDeviceBackend(),
+                    access_key=options.access_key,
+                    wake_word=options.wake_word,
                 )
         else:
             said = len(options.wav_in)

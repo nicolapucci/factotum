@@ -1,4 +1,4 @@
-"""Where speech ends, for the terminal's real microphone.
+"""Where speech ends, for a real microphone.
 
 The microphone itself needs hardware and is tried by hand. What decides where a stream of samples
 ends does not: it is given frames the way a microphone would hand them over."""
@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from factotum.terminal.audio import capture_speech
+from factotum.client_audio.endpoint import capture_speech
 
 FRAME = 512
 """The samples in a frame of Porcupine's, at 16 kHz: 32 ms."""
@@ -35,8 +35,13 @@ def queue_of(*frames: Any) -> "asyncio.Queue[Any]":
 
 
 def speech_of(frames: "asyncio.Queue[Any]", **changes: float) -> Any:
-    fields: dict[str, float] = {"silence_seconds": 0.5, "silence_level": 150, "max_seconds": 5.0}
-    return capture_speech(frames, RATE, **{**fields, **changes})
+    return capture_speech(
+        frames,
+        RATE,
+        silence_seconds=changes.get("silence_seconds", 0.5),
+        silence_level=changes.get("silence_level", 150),
+        max_seconds=changes.get("max_seconds", 5.0),
+    )
 
 
 def samples_of(chunks: list[bytes]) -> Any:
@@ -85,6 +90,23 @@ class TestWhereSpeechEnds:
         assert len(b"".join(chunks)) // 2 // FRAME == 37  # up to the quiet that did end it
         assert queue.qsize() == 1
 
+    async def test_a_silence_shorter_than_a_frame_still_takes_a_frame_of_quiet(self) -> None:
+        # 10 ms is less than the 32 ms of a frame: a person is quiet when a frame is, not before
+        queue = queue_of(*[loud(i) for i in range(3)], quiet(), loud(9))
+
+        chunks = [chunk async for chunk in speech_of(queue, silence_seconds=0.01)]
+
+        assert len(b"".join(chunks)) // 2 // FRAME == 4  # the three said, and the quiet one
+        assert queue.qsize() == 1
+
+    async def test_a_frame_that_is_a_whole_chunk_is_a_chunk_of_its_own(self) -> None:
+        tenth = np.full(RATE // 10, 1000, dtype=np.int16)
+        queue = queue_of(tenth, tenth, tenth)
+
+        chunks = [chunk async for chunk in speech_of(queue, max_seconds=0.35)]
+
+        assert [len(chunk) // 2 for chunk in chunks] == [RATE // 10] * 3
+
     @pytest.mark.parametrize(
         ("level", "taken"),
         [(149, 15), (150, 28)],
@@ -119,3 +141,31 @@ class TestWhereSpeechEnds:
         chunk = await asyncio.wait_for(taking, 1)
 
         assert len(chunk) // 2 // FRAME == 4
+
+    async def test_a_person_who_says_they_are_done_ends_it_on_the_spot(self) -> None:
+        queue = queue_of(*[loud(i) for i in range(20)])
+        done = iter([False] * 5 + [True])  # asked after each frame that is taken
+
+        chunks = [
+            chunk
+            async for chunk in capture_speech(
+                queue,
+                RATE,
+                silence_seconds=5.0,
+                silence_level=150,
+                max_seconds=5.0,
+                stop=lambda: next(done),
+            )
+        ]
+
+        assert (
+            len(b"".join(chunks)) // 2 // FRAME == 6
+        )  # the frame that was taken when they said so
+        assert queue.qsize() == 14
+
+    async def test_without_being_asked_to_stop_it_never_asks(self) -> None:
+        queue = queue_of(*[loud(i) for i in range(5)])
+
+        chunks = [chunk async for chunk in speech_of(queue, max_seconds=0.13)]
+
+        assert len(b"".join(chunks)) // 2 // FRAME == 4

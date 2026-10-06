@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "factotum",
     "factotum-actions",
+    "factotum-client-audio",
     "factotum-client-core",
     "factotum-common",
     "factotum-contracts",
@@ -636,6 +637,27 @@ requires-dist = [
 ]
 
 [[package]]
+name = "factotum-client-audio"
+version = "0.0.0"
+source = { editable = "libs/client_audio" }
+dependencies = [
+    { name = "factotum-client-core" },
+    { name = "factotum-contracts" },
+    { name = "numpy" },
+    { name = "pvporcupine" },
+    { name = "sounddevice" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-client-core", editable = "libs/client_core" },
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pvporcupine", specifier = ">=3.0" },
+    { name = "sounddevice", specifier = ">=0.5" },
+]
+
+[[package]]
 name = "factotum-client-core"
 version = "0.0.0"
 source = { editable = "libs/client_core" }
@@ -1000,22 +1022,18 @@ name = "factotum-terminal"
 version = "0.0.0"
 source = { editable = "clients/terminal" }
 dependencies = [
+    { name = "factotum-client-audio" },
     { name = "factotum-client-core" },
     { name = "factotum-contracts" },
-    { name = "numpy" },
-    { name = "pvporcupine" },
     { name = "pydantic" },
-    { name = "sounddevice" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "factotum-client-audio", editable = "libs/client_audio" },
     { name = "factotum-client-core", editable = "libs/client_core" },
     { name = "factotum-contracts", editable = "libs/contracts" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pvporcupine", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.11" },
-    { name = "sounddevice", specifier = ">=0.5" },
 ]
 
 [[package]]

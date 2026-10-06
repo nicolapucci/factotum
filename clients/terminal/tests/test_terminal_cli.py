@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from factotum.client_audio import DEFAULT_WAKE_WORD
 from factotum.client_core import Connection, CouldNotConnect
 from factotum.client_core.testing import (
     FakeVoiceInput,
@@ -32,7 +33,6 @@ from factotum.contracts.edge import (
 from factotum.contracts.ids import DeviceId
 from factotum.contracts.response import Speech
 from factotum.terminal import cli
-from factotum.terminal.audio import DEFAULT_WAKE_WORD
 from factotum.terminal.cli import (
     DEFAULT_URL,
     HELP,
