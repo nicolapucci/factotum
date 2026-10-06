@@ -1,0 +1,55 @@
+# A Factotum device that starts with the machine: a Raspberry Pi (or any Linux) with a microphone and a
+# speaker. docs/device.md says how to put it in place; in short:
+#
+#   sudo useradd --system --create-home --groups audio factotum
+#   (the repository goes in /home/factotum/factotum, and: uv sync --package factotum-device)
+#   /etc/factotum/device.yaml    the settings: config/device.example.yaml, with listening.mode wake_word
+#   /etc/factotum/device.env     FACTOTUM_DEVICE_TOKEN=... and PICOVOICE_ACCESS_KEY=... (mode 0640, group
+#                                factotum): the two secrets of a device are not in the file of settings
+#   sudo cp infra/device/factotum-device.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now factotum-device
+#   journalctl -u factotum-device -f
+#
+# Nobody sits at a service, so it listens for a wake word: with push to talk there is no key to press
+# (standard input is the end of a file) and the device says so and stops. Not tried on a Raspberry Pi
+# yet: `systemd-analyze security factotum-device` says how exposed it is, and what is hardened here is
+# only what cannot take the sound card away (loosen it if a sound server needs more).
+
+[Unit]
+Description=Factotum device (a speaker with a microphone)
+Wants=network-online.target
+After=network-online.target sound.target
+# Ten tries in five minutes, and then it stays failed: a settings file that is wrong is not mended by
+# asking again, and `systemctl status` shows it.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=factotum
+Group=factotum
+SupplementaryGroups=audio
+WorkingDirectory=/home/factotum/factotum
+Environment=FACTOTUM_DEVICE_CONFIG=/etc/factotum/device.yaml
+EnvironmentFile=/etc/factotum/device.env
+ExecStart=/home/factotum/factotum/.venv/bin/factotum-device run
+# The device asks for the edge again by itself when it loses it (reconnect, in the settings). What it
+# does not do is ask when the edge has made clear that it is no use: 3 it does not accept the device,
+# 4 another connection of the same device took its place (asking again would be the two of them taking
+# it from each other for ever), 5 it speaks another version of the protocol, 6 it has no use for the
+# device. Those are not restarted. A sound card that is not there yet (a USB one, at boot) or settings
+# that are wrong are exit code 1, and are tried again after a pause.
+Restart=on-failure
+RestartPreventExitStatus=3 4 5 6
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

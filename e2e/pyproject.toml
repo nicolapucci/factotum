@@ -5,11 +5,13 @@ description = "The end-to-end tests of Factotum: every service put together in o
 requires-python = ">=3.13"
 dependencies = [
   "factotum-actions",
+  "factotum-client-audio",
   "factotum-client-core",
   "factotum-common",
   "factotum-contracts",
   "factotum-conversation",
   "factotum-db",
+  "factotum-device",
   "factotum-devices",
   "factotum-edge",
   "factotum-hub",
@@ -37,11 +39,13 @@ packages = ["src/factotum"]
 
 [tool.uv.sources]
 factotum-actions = { workspace = true }
+factotum-client-audio = { workspace = true }
 factotum-client-core = { workspace = true }
 factotum-common = { workspace = true }
 factotum-contracts = { workspace = true }
 factotum-conversation = { workspace = true }
 factotum-db = { workspace = true }
+factotum-device = { workspace = true }
 factotum-devices = { workspace = true }
 factotum-edge = { workspace = true }
 factotum-hub = { workspace = true }

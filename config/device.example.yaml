@@ -1,0 +1,34 @@
+# The settings of a Factotum device. Write it once, and check it with ``factotum-device doctor``.
+# The credential is better in the environment ($FACTOTUM_DEVICE_TOKEN) than in this file.
+
+edge:
+  url: ws://127.0.0.1:8084/v1/connect      # where the edge is (wss:// behind a proxy)
+
+device:
+  hardware_id: kitchen-01                  # the label this device was paired under
+  # token: ...                             # the credential it was given when it was paired
+  capabilities: [audio_in, audio_out]      # what this hardware has: [audio_out] alone is a speaker
+                                           # that is spoken through, with no microphone
+
+audio:
+  input_device: null                       # a number (``devices`` lists them, and a number is the
+  output_device: null                      # surest: the same hardware is listed by each host API)
+                                           # or a part of the name; null is the system's default
+  volume: 100                              # how loud, in percent (a skill can change it)
+
+listening:
+  mode: push_to_talk                       # Enter begins, being quiet ends it (or Enter again);
+                                           # or wake_word, which needs a Picovoice AccessKey and is
+                                           # the one for a service that nobody sits at
+  wake_word: jarvis                        # one of Porcupine's keywords
+  # access_key: ...                        # or $PICOVOICE_ACCESS_KEY (console.picovoice.ai)
+  silence_seconds: 1.2                     # how long a person is quiet before it is over
+  silence_level: 150                       # the level, of 32768, under which a sound is quiet
+  max_seconds: 12                          # the most that one thing said may last
+  listen_while_answering: false            # true only with headphones: a speaker hears itself
+
+reconnect:
+  first_s: 1                               # a device that loses the edge asks again after this,
+  max_s: 30                                # and after twice as long each time, up to this
+
+log_level: INFO

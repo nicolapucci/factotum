@@ -16,6 +16,7 @@ members = [
     "factotum-contracts",
     "factotum-conversation",
     "factotum-db",
+    "factotum-device",
     "factotum-devices",
     "factotum-e2e",
     "factotum-edge",
@@ -755,6 +756,27 @@ requires-dist = [
 ]
 
 [[package]]
+name = "factotum-device"
+version = "0.0.0"
+source = { editable = "clients/device" }
+dependencies = [
+    { name = "factotum-client-audio" },
+    { name = "factotum-client-core" },
+    { name = "factotum-contracts" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "factotum-client-audio", editable = "libs/client_audio" },
+    { name = "factotum-client-core", editable = "libs/client_core" },
+    { name = "factotum-contracts", editable = "libs/contracts" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
 name = "factotum-devices"
 version = "0.0.0"
 source = { editable = "libs/devices" }
@@ -776,11 +798,13 @@ source = { editable = "e2e" }
 dependencies = [
     { name = "asyncpg" },
     { name = "factotum-actions" },
+    { name = "factotum-client-audio" },
     { name = "factotum-client-core" },
     { name = "factotum-common" },
     { name = "factotum-contracts" },
     { name = "factotum-conversation" },
     { name = "factotum-db" },
+    { name = "factotum-device" },
     { name = "factotum-devices" },
     { name = "factotum-edge" },
     { name = "factotum-hub" },
@@ -802,11 +826,13 @@ dependencies = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "factotum-actions", editable = "services/actions" },
+    { name = "factotum-client-audio", editable = "libs/client_audio" },
     { name = "factotum-client-core", editable = "libs/client_core" },
     { name = "factotum-common", editable = "libs/common" },
     { name = "factotum-contracts", editable = "libs/contracts" },
     { name = "factotum-conversation", editable = "services/conversation" },
     { name = "factotum-db", editable = "libs/db" },
+    { name = "factotum-device", editable = "clients/device" },
     { name = "factotum-devices", editable = "libs/devices" },
     { name = "factotum-edge", editable = "services/edge" },
     { name = "factotum-hub", editable = "services/hub" },
