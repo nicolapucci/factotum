@@ -102,6 +102,13 @@ class TerminalDevice:
                 state.led_pattern, state.led_color = command.pattern, command.color
                 colour = f" {command.color}" if command.color else ""
                 self._renderer.event(f"light {command.pattern.value}{colour}")
+            case _:
+                # A clip is played by the client core, which has the speaker; these hands are
+                # never asked to, and what they were not made for is not said to have been done.
+                return CommandResult(
+                    status=CommandStatus.UNSUPPORTED,
+                    detail=f"this device has no hands for {command.name!r}",
+                )
         return CommandResult.ok()
 
 

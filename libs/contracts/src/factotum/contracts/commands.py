@@ -1,9 +1,12 @@
-"""The vocabulary of commands a system device understands (version 1).
+"""The vocabulary of commands a system device understands (version 2).
 
 This is the single definition every other piece derives from: the server-side handle
 (``factotum.devices.SystemDevice``), the command builders offered to skills and the drivers that
 run on the devices. A device only ever receives commands it declared it can execute (see
 ``BaseCommand.requires``) and never receives code.
+
+What a device may be sent (``DeviceCommand``) is not what a skill may give it (``SkillCommand``): a
+clip to play (``play_audio``, ADR 0026) is the platform's, and a script or a plan cannot have one.
 """
 
 from enum import StrEnum
@@ -11,11 +14,16 @@ from typing import Annotated, ClassVar, Literal
 
 from pydantic import AnyHttpUrl, Field
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 
-COMMAND_VOCABULARY_VERSION = 1
+COMMAND_VOCABULARY_VERSION = 2
+"""Version 2 added ``play_audio``."""
+
+MAX_SPOKEN_CHARS = 2000
+"""The most a command says: a text to speak, or the words of a clip."""
 
 
 class MediaKind(StrEnum):
@@ -40,8 +48,23 @@ class Speak(BaseCommand):
     requires: ClassVar[Capability] = Capability.AUDIO_OUT
 
     name: Literal["speak"] = "speak"
-    text: str = Field(min_length=1, max_length=2000)
+    text: str = Field(min_length=1, max_length=MAX_SPOKEN_CHARS)
     language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}(-[A-Z]{2})?$")
+
+
+class PlayAudio(BaseCommand):
+    """Say something with a clip that was made for it (ADR 0026): a whole clip of 16-bit mono PCM,
+    and the words that it says. The device is not to say the words: they are for the trail of what
+    was done (a clip is opaque and a text is not), for a device that shows what is said, and for the
+    edge to say, or show, in place of a clip that a device cannot play.
+
+    The platform makes it (a core skill, or the edge for a ``speak``); a skill does not."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["play_audio"] = "play_audio"
+    text: str = Field(min_length=1, max_length=MAX_SPOKEN_CHARS)
+    audio: AudioPayload
 
 
 class PlayUrl(BaseCommand):
@@ -101,6 +124,7 @@ class SetLed(BaseCommand):
 
 COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
     Speak,
+    PlayAudio,
     PlayUrl,
     Pause,
     Resume,
@@ -112,9 +136,29 @@ COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
 )
 
 DeviceCommand = Annotated[
+    Speak
+    | PlayAudio
+    | PlayUrl
+    | Pause
+    | Resume
+    | Stop
+    | SetVolume
+    | ShowCard
+    | ClearDisplay
+    | SetLed,
+    Field(discriminator="name"),
+]
+"""What a device may be sent."""
+
+SKILL_COMMAND_MODELS: tuple[type[BaseCommand], ...] = tuple(
+    model for model in COMMAND_MODELS if model is not PlayAudio
+)
+
+SkillCommand = Annotated[
     Speak | PlayUrl | Pause | Resume | Stop | SetVolume | ShowCard | ClearDisplay | SetLed,
     Field(discriminator="name"),
 ]
+"""What a skill may give a device: the vocabulary but for what only the platform makes."""
 
 
 class CommandStatus(StrEnum):

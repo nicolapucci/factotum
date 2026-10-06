@@ -9,10 +9,13 @@ from pydantic import AnyHttpUrl, ValidationError
 
 from factotum.contracts.audio import (
     BYTES_PER_SAMPLE,
+    MAX_AUDIO_BYTES,
     MAX_CHUNK_BYTES,
+    WAV_HEADER_BYTES,
     AudioFormat,
     AudioPayload,
     StreamFormat,
+    wav_of,
 )
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.cards import Card, CardItem
@@ -23,6 +26,7 @@ from factotum.contracts.commands import (
     DeviceCommand,
     LedPattern,
     Pause,
+    PlayAudio,
     PlayUrl,
     Resume,
     SetLed,
@@ -47,6 +51,7 @@ from factotum.contracts.edge import (
     ClientInfo,
     CloseCode,
     CommandFrame,
+    CommandRequest,
     ErrorFrame,
     Feature,
     Heard,
@@ -515,6 +520,45 @@ class TestWhatAFeatureIs:
         other = hello(features=frozenset([Feature.VOICE_STREAM, Feature.VOICE_STREAM]))
 
         assert encode_frame(one) == encode_frame(other)
+
+    def test_a_clip_to_play_is_for_a_device_that_has_a_speaker_too(self) -> None:
+        assert FEATURE_NEEDS[Feature.PLAY_AUDIO] is Capability.AUDIO_OUT
+        with pytest.raises(ValidationError, match="requires the 'audio_out' capability"):
+            hello(
+                capabilities=frozenset({Capability.AUDIO_IN}),
+                features=frozenset({Feature.PLAY_AUDIO}),
+            )
+
+    def test_both_features_are_said_by_name_in_order(self) -> None:
+        both = frozenset({Feature.VOICE_STREAM, Feature.PLAY_AUDIO})
+
+        assert json.loads(encode_frame(hello(features=both)))["features"] == [
+            "play_audio",
+            "voice_stream",
+        ]
+
+
+class TestACommandThatCarriesAClip:
+    def test_it_is_one_frame_whatever_the_clip(self) -> None:
+        # The longest clip there is, in base64, is a frame of the protocol and not more than one.
+        clip = wav_of(b"\x01\x02" * ((MAX_AUDIO_BYTES - WAV_HEADER_BYTES) // 2), 22_050)
+        frame = CommandFrame(id="c1", command=PlayAudio(text="Hi.", audio=clip))
+
+        wire = encode_frame(frame)
+        restored = decode_edge_frame(wire)
+
+        assert len(wire) < MAX_FRAME_BYTES
+        assert isinstance(restored, CommandFrame)
+        assert isinstance(restored.command, PlayAudio)
+        assert restored.command.audio.data == clip.data
+
+    def test_a_request_to_the_edge_carries_it_as_well(self) -> None:
+        clip = wav_of(b"\x01\x02" * 100, 22_050)
+        request = CommandRequest(command=PlayAudio(text="Hi.", audio=clip))
+
+        restored = CommandRequest.model_validate_json(request.model_dump_json())
+
+        assert restored == request
 
 
 class TestTheVoiceOfAnAnswer:

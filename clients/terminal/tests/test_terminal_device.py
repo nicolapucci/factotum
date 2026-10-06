@@ -2,6 +2,7 @@ import pytest
 from pydantic import AnyHttpUrl
 
 from factotum.client_core.testing import RecordingRenderer
+from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
@@ -10,6 +11,7 @@ from factotum.contracts.commands import (
     DeviceCommand,
     LedPattern,
     Pause,
+    PlayAudio,
     PlayUrl,
     Resume,
     SetLed,
@@ -131,6 +133,17 @@ class TestWhenItCannotDoIt:
         assert missing in (result.detail or "")
         assert shown.shown == []
         assert hardware.state.describe() == before
+
+    async def test_a_clip_is_not_for_these_hands_and_is_not_said_to_have_been_played(self) -> None:
+        hardware, shown = device()
+        clip = PlayAudio(text="Hi.", audio=wav_of(bytes(100), 22_050))
+
+        result = await hardware.execute(clip)
+
+        assert result.status is CommandStatus.UNSUPPORTED
+        assert "play_audio" in (result.detail or "")
+        assert shown.shown == []
+        assert hardware.state.spoken == []
 
 
 class TestWhatItIsDoing:

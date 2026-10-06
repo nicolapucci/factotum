@@ -15,6 +15,7 @@ from collections.abc import Iterable
 
 from pydantic import AnyHttpUrl
 
+from factotum.contracts.audio import AudioPayload
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
@@ -24,6 +25,7 @@ from factotum.contracts.commands import (
     LedPattern,
     MediaKind,
     Pause,
+    PlayAudio,
     PlayUrl,
     Resume,
     SetLed,
@@ -74,6 +76,10 @@ class SystemDevice(ABC):
 
     async def speak(self, text: str, *, language: str | None = None) -> CommandResult:
         return await self.execute(Speak(text=text, language=language))
+
+    async def play_audio(self, text: str, audio: AudioPayload) -> CommandResult:
+        """Have the device say ``text`` with a clip of it that was already made (ADR 0026)."""
+        return await self.execute(PlayAudio(text=text, audio=audio))
 
     async def play_url(
         self, url: str, *, kind: MediaKind = MediaKind.AUDIO, title: str | None = None

@@ -21,7 +21,7 @@ from typing import Any, Self
 from pydantic import Field, field_validator, model_validator
 
 from factotum.contracts.base import Contract
-from factotum.contracts.commands import DeviceCommand
+from factotum.contracts.commands import SkillCommand
 from factotum.contracts.identity import Owner
 from factotum.contracts.ids import SkillId, TenantId
 from factotum.contracts.instructions import InstructionPlan
@@ -93,8 +93,9 @@ class SkillOutput(Contract):
     data: dict[str, Any] = Field(default_factory=dict)
     """What the skill found, for whoever asked (never spoken)."""
 
-    commands: tuple[DeviceCommand, ...] = Field(default=(), max_length=MAX_COMMANDS_PER_RUN)
-    """What the platform is to have a device do, once the checks are made."""
+    commands: tuple[SkillCommand, ...] = Field(default=(), max_length=MAX_COMMANDS_PER_RUN)
+    """What the platform is to have a device do, once the checks are made: the commands that a skill
+    may give (``play_audio`` is the platform's, ADR 0026)."""
 
 
 class RunResult(SkillOutput):

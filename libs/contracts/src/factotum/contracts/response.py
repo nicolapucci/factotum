@@ -13,7 +13,7 @@ from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
-from factotum.contracts.commands import DeviceCommand, MediaKind
+from factotum.contracts.commands import MediaKind, SkillCommand
 
 
 class StatusState(StrEnum):
@@ -52,10 +52,12 @@ class MediaPart(Contract):
 
 
 class CommandPart(Contract):
-    """A command for the device itself (set the volume, pause the music...)."""
+    """A command for the device itself (set the volume, pause the music...). It is one that a skill
+    may give: a clip (``play_audio``) is the platform's, given as a command of its own and not as a
+    part of what the conversation service writes (ADR 0026)."""
 
     type: Literal["command"] = "command"
-    command: DeviceCommand
+    command: SkillCommand
 
 
 class StatusPart(Contract):

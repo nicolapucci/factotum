@@ -24,7 +24,9 @@ from factotum.edge.router import EdgeDevice, Sessions
 from factotum.edge.session import Session, SessionSettings
 from factotum.web import Authenticator, Caller, create_base_app
 
-MAX_BODY_BYTES = 64 * 1024
+MAX_BODY_BYTES = MAX_FRAME_BYTES
+"""What a request may hold: a command that carries a clip is a frame of the protocol, and not more
+(it is a service that asks, and an authenticated one)."""
 
 
 class StarletteWire:

@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
+from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
@@ -16,6 +17,7 @@ from factotum.contracts.commands import (
     LedPattern,
     MediaKind,
     Pause,
+    PlayAudio,
     PlayUrl,
     Resume,
     SetLed,
@@ -32,12 +34,18 @@ command_adapter: TypeAdapter[Any] = TypeAdapter(DeviceCommand)
 
 ALL_CAPABILITIES = frozenset(Capability)
 CARD = Card(title="Pasta al pomodoro")
+CLIP = wav_of(bytes(range(100)) * 2, 22_050)
 RADIO = "https://radio.example.org/stream"
 
 Call = Callable[[SystemDevice], Awaitable[CommandResult]]
 
 CALLS: list[tuple[str, Call, DeviceCommand]] = [
     ("speak", lambda d: d.speak("Ciao", language="it"), Speak(text="Ciao", language="it")),
+    (
+        "play_audio",
+        lambda d: d.play_audio("Ciao", CLIP),
+        PlayAudio(text="Ciao", audio=CLIP),
+    ),
     (
         "play_url",
         lambda d: d.play_url(RADIO, kind=MediaKind.VIDEO, title="Radio"),

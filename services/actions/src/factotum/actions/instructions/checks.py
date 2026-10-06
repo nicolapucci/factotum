@@ -37,7 +37,7 @@ from factotum.actions.instructions.executor import (
     substitute_text,
 )
 from factotum.common.hosts import match_host, normalize_host
-from factotum.contracts.commands import COMMAND_MODELS, BaseCommand, DeviceCommand
+from factotum.contracts.commands import SKILL_COMMAND_MODELS, BaseCommand, SkillCommand
 from factotum.contracts.effects import Effect
 from factotum.contracts.instructions import InstructionPlan, PlanStep
 from factotum.contracts.skills import HOST_PATTERN, ParamValue, SkillManifest, SkillPermissions
@@ -53,9 +53,9 @@ _FORBIDDEN_HEADERS = frozenset(
 what a request is."""
 
 _COMMANDS: dict[str, type[BaseCommand]] = {
-    str(model.model_fields["name"].default): model for model in COMMAND_MODELS
+    str(model.model_fields["name"].default): model for model in SKILL_COMMAND_MODELS
 }
-_COMMAND: TypeAdapter[DeviceCommand] = TypeAdapter(DeviceCommand)
+_COMMAND: TypeAdapter[SkillCommand] = TypeAdapter(SkillCommand)
 
 
 class PlanRejected(Exception):  # noqa: N818 - it says what the checks did with the plan
@@ -73,7 +73,7 @@ def _clipped(text: str, limit: int = 60) -> str:
 
 
 def command_names() -> tuple[str, ...]:
-    """The commands a plan may give a device: the vocabulary, and nothing else."""
+    """The commands a plan may give a device: the vocabulary of skills, and nothing else."""
     return tuple(sorted(_COMMANDS))
 
 

@@ -6,7 +6,7 @@ from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 from factotum.contracts.audio import AudioFormat, AudioPayload
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
-from factotum.contracts.commands import LedPattern, Pause, SetLed, SetVolume, Speak
+from factotum.contracts.commands import LedPattern, Pause, PlayAudio, SetLed, SetVolume, Speak
 from factotum.contracts.response import (
     CardPart,
     CommandPart,
@@ -45,6 +45,17 @@ def test_a_command_part_asks_for_whatever_its_command_asks_for() -> None:
     part = CommandPart(command=Speak(text="Ciao"))
 
     assert required_capability(part) is part.command.requires
+
+
+def test_an_answer_cannot_carry_a_clip_which_is_a_command_of_the_platform() -> None:
+    clip = PlayAudio(
+        text="Hi.", audio=AudioPayload(format=AudioFormat.WAV, sample_rate=22_050, data=b"x")
+    )
+
+    with pytest.raises(ValidationError):
+        CommandPart(command=clip)  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        part_adapter.validate_python({"type": "command", "command": clip.model_dump(mode="json")})
 
 
 @pytest.mark.parametrize(("part", "_"), CASES, ids=lambda x: type(x).__name__)

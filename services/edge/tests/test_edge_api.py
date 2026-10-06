@@ -7,11 +7,20 @@ import pytest
 from fastapi import FastAPI
 
 from factotum.common.devauth import DEV_TENANT_ID, DEVICE_HEADER, DevAuthenticator
+from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability, DisplayInfo
-from factotum.contracts.commands import CommandResult, CommandStatus, SetLed, SetVolume
+from factotum.contracts.commands import (
+    CommandResult,
+    CommandStatus,
+    PlayAudio,
+    SetLed,
+    SetVolume,
+)
 from factotum.contracts.edge import (
+    MAX_FRAME_BYTES,
     Ack,
     CommandRequest,
+    Feature,
 )
 from factotum.edge.api import create_app
 from factotum.edge.testing import (
@@ -189,11 +198,27 @@ class TestHavingADeviceDoSomething:
         async with Rig() as rig, client_for(app_for(rig)) as http:
             response = await http.post(
                 f"/v1/devices/{rig.devices[0][0].id}/commands",
-                content=b"x" * (70 * 1024),
+                content=b"x" * (MAX_FRAME_BYTES + 1024),
                 headers={"content-type": "application/json"},
             )
 
             assert response.status_code == 413
+
+    async def test_a_command_that_carries_a_clip_is_taken_as_big_as_a_frame_is(self) -> None:
+        async with Rig() as rig, client_for(app_for(rig)) as http:
+            connected = await rig.connect(features=(Feature.PLAY_AUDIO,))
+            clip = wav_of(b"" * 300_000, 22_050)  # 600 KB of samples
+            command = PlayAudio(text="Dinner is ready.", audio=clip)
+            assert len(CommandRequest(command=command).model_dump_json()) > 64 * 1024
+
+            asked = asyncio.create_task(self.send(http, rig.devices[0][0].id, command))
+            [sent] = await connected.wire.wait_for("command")
+            connected.wire.say(Ack(id=sent.id, result=CommandResult.ok()))
+            response = await asked
+
+            assert (response.status_code, response.json()["status"]) == (200, "ok")
+            assert isinstance(sent.command, PlayAudio)
+            assert sent.command.audio.data == clip.data
 
     async def test_the_device_is_asked_for_as_the_tenant_knows_it(self) -> None:
         async with Rig() as rig, client_for(app_for(rig)) as http:

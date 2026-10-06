@@ -104,8 +104,16 @@ class Feature(StrEnum):
     """The sound of a spoken answer is sent as ``voice_start``, ``voice_chunk`` and ``voice_end``
     frames as it is made, and not as a clip in each ``speech`` part (ADR 0023)."""
 
+    PLAY_AUDIO = "play_audio"
+    """The device plays a clip that a ``play_audio`` command carries, and the edge makes the voice
+    of a ``speak`` command and sends it as such clips (ADR 0026). A device that did not say it is
+    sent a ``speak`` as words, and a ``play_audio`` as the words that it carries."""
 
-FEATURE_NEEDS: Mapping[Feature, Capability] = {Feature.VOICE_STREAM: Capability.AUDIO_OUT}
+
+FEATURE_NEEDS: Mapping[Feature, Capability] = {
+    Feature.VOICE_STREAM: Capability.AUDIO_OUT,
+    Feature.PLAY_AUDIO: Capability.AUDIO_OUT,
+}
 """What a device must be able to do to take a feature: a voice is played by a speaker."""
 
 
