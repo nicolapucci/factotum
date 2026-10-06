@@ -11,6 +11,11 @@ chunks as the voice makes them, which a ``VoicePlayer`` gives the sink without h
 that follow. A person who speaks while an answer plays stops it on the spot, before the edge is told
 (ADR 0022): what plays is the device's.
 
+A command can carry a clip too (``play_audio``, ADR 0026): what a skill of the platform has a
+device say. It is not played where it is read: it is accepted at once, and said once nothing else
+is, in the order it came, by a task of its own (a ping, a command and a person speaking over it
+never wait for it).
+
 It also checks the edge. A part that this device could not render, parts out of order, an
 answer that nobody asked for, sound after the end of its turn: the edge is not to do any of it, and
 a device that saw it would say so. That is what a client is good for, before there is a real one.
@@ -18,15 +23,22 @@ a device that saw it would say so. That is what a client is good for, before the
 
 import asyncio
 import contextlib
+from collections import deque
 from dataclasses import dataclass
 
 from factotum.client_core.audio import AudioStream, VoiceOutput, VoiceSink
 from factotum.client_core.connection import Connection, ConnectionLost
 from factotum.client_core.playback import VoicePlayer
 from factotum.client_core.ports import CommandHandler, Identity, Renderer
-from factotum.contracts.audio import AudioPayload
+from factotum.contracts.audio import AudioPayload, pcm_of
 from factotum.contracts.capabilities import Capability
-from factotum.contracts.commands import CommandStatus, PlayUrl
+from factotum.contracts.commands import (
+    CommandResult,
+    CommandStatus,
+    DeviceCommand,
+    PlayAudio,
+    PlayUrl,
+)
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
     Ack,
@@ -72,6 +84,11 @@ _NOT_ACCEPTED = frozenset({"capability_missing", "speech_not_configured"})
 """The codes of an ``error`` frame that says an utterance was not taken at all: no ``turn_ended``
 will follow it, so the wait for the answer ends with it."""
 
+MAX_QUEUED_AUDIO_BYTES = 12 * 1024 * 1024
+"""The most that a client holds of what it was given to say and has not said: a few minutes of
+speech at the rate of a Piper voice. A long text is many clips, so what is bounded is their size and
+not their number."""
+
 
 class Refused(Exception):  # noqa: N818 - it says what the edge did, not what failed
     """The edge did not accept the device, and said why (or did not)."""
@@ -92,6 +109,16 @@ class _Track:
 
     open: bool = False
     next_seq: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _Announcement:
+    """A clip that a command carried, accepted and waiting to be said."""
+
+    text: str
+    audio: AudioPayload
+    pcm: bytes
+    sample_rate: int
 
 
 class DeviceClient:
@@ -124,6 +151,23 @@ class DeviceClient:
         self._asks_for_voice = (
             voice_sink is not None and Capability.AUDIO_OUT in identity.capabilities
         )
+        self._plays_clips = (
+            voice_sink is not None or voice_output is not None
+        ) and Capability.AUDIO_OUT in identity.capabilities
+        """Whether this device has a speaker, and so says that it plays what a command carries."""
+
+        self._announcements: deque[_Announcement] = deque()
+        self._queued_bytes = 0
+        self._announcer: asyncio.Task[None] | None = None
+        """The task that says what is queued, one after the other, when nothing else is said."""
+
+        self._announcing: asyncio.Task[None] | None = None
+        """What is being said now, so that a person speaking over it can cut it."""
+
+        self._said = asyncio.Event()
+        self._said.set()
+        """Set when nothing is queued and nothing is being said."""
+
         self._streams_voice = False
         """Whether the edge said it will send the sound as a stream."""
 
@@ -146,7 +190,12 @@ class DeviceClient:
     @property
     def features(self) -> frozenset[Feature]:
         """What this client asks the edge for beyond version 1."""
-        return frozenset({Feature.VOICE_STREAM}) if self._asks_for_voice else frozenset()
+        wanted = set[Feature]()
+        if self._asks_for_voice:
+            wanted.add(Feature.VOICE_STREAM)
+        if self._plays_clips:
+            wanted.add(Feature.PLAY_AUDIO)
+        return frozenset(wanted)
 
     # ---- saying hello --------------------------------------------------------------------------
 
@@ -217,6 +266,7 @@ class DeviceClient:
             for event in self._turns.values():
                 event.set()  # nobody is left waiting for an answer that will not come
             self.active = None
+            await self._drop_announcements()  # nobody is left to be told what became of them
             if self._player is not None:
                 await self._player.stop()  # what is being said is for an answer that is gone
         return lost
@@ -237,7 +287,7 @@ class DeviceClient:
                 self._renderer.turn_ended(frame)
                 self._end(frame)
             case CommandFrame():
-                result = await self._commands.execute(frame.command)
+                result = await self._command(frame.command)
                 with contextlib.suppress(ConnectionLost):
                     await self._connection.send(encode_frame(Ack(id=frame.id, result=result)))
             case ErrorFrame():
@@ -247,6 +297,22 @@ class DeviceClient:
                 pass
             case Ready():
                 self._renderer.violation("the edge said ready a second time")
+
+    async def _command(self, command: DeviceCommand) -> CommandResult:
+        """What became of a command. A clip is taken here, by this device's speaker, and the rest by
+        its hands. A clip for a device that did not say it plays them is the edge's mistake (it
+        makes words of it for such a device): it is said loudly and not done, and the hands, which
+        have no clips, are not asked."""
+        if isinstance(command, PlayAudio):
+            if self._plays_clips:
+                return self._accept(command)
+            self._renderer.violation(
+                "the edge sent a clip to a device that did not say it plays them"
+            )
+            return CommandResult(
+                status=CommandStatus.UNSUPPORTED, detail="this device does not play clips"
+            )
+        return await self._commands.execute(command)
 
     def _end(self, ended: TurnEnded) -> None:
         identity = ended.utterance_id
@@ -413,14 +479,102 @@ class DeviceClient:
         self._player.end()
 
     async def wait_until_played(self) -> None:
-        """Everything of the sound that has been received is played, or given up on."""
+        """Everything of the sound that has been received is played, or given up on: what an answer
+        sent and what a command carried and was accepted."""
         if self._player is not None:
             await self._player.idle()
+        await self._said.wait()
 
     @property
     def playing(self) -> bool:
-        """Whether sound that has been received is still being played."""
-        return self._player is not None and self._player.playing
+        """Whether sound that has been received is still being played, or waits to be."""
+        return (self._player is not None and self._player.playing) or not self._said.is_set()
+
+    # ---- what a command has the device say ----------------------------------------------------
+
+    def _accept(self, command: PlayAudio) -> CommandResult:
+        """Take a clip to say, and answer at once: it is said when nothing else is, and what is
+        answered is that it was accepted (ADR 0026), because whoever asked for it is not to wait for
+        it to end."""
+        try:
+            pcm, sample_rate = pcm_of(command.audio.data)
+        except ValueError as error:
+            return CommandResult(status=CommandStatus.FAILED, detail=str(error)[:300])
+        if self._queued_bytes + len(pcm) > MAX_QUEUED_AUDIO_BYTES:
+            return CommandResult(
+                status=CommandStatus.FAILED, detail="there is too much waiting to be said"
+            )
+        self._announcements.append(_Announcement(command.text, command.audio, pcm, sample_rate))
+        self._queued_bytes += len(pcm)
+        self._said.clear()
+        if self._announcer is None or self._announcer.done():
+            self._announcer = asyncio.create_task(self._announce(), name="announcements")
+        return CommandResult.ok()
+
+    async def _announce(self) -> None:
+        """Say what was accepted, in order, each when nothing else is being said."""
+        try:
+            while self._announcements:
+                await self._quiet()
+                if not self._announcements:
+                    return  # it was all given up on while this waited
+                said = self._announcements.popleft()
+                self._queued_bytes -= len(said.pcm)
+                self._announcing = asyncio.create_task(self._say(said), name="announcing")
+                try:
+                    await asyncio.wait({self._announcing})
+                finally:
+                    announcing, self._announcing = self._announcing, None
+                    if not announcing.done():  # this task was ended in the middle of it
+                        announcing.cancel()
+                        await asyncio.wait({announcing})
+        finally:
+            if not self._announcements:
+                self._said.set()
+
+    async def _quiet(self) -> None:
+        """Wait until there is nothing that an announcement would talk over: no answer is being
+        given on this device and nothing is playing."""
+        while True:
+            if self.active is not None:
+                await self.wait_for_turn(self.active)
+            elif self._player is not None and self._player.playing:
+                await self._player.idle()
+            else:
+                return
+
+    async def _say(self, said: _Announcement) -> None:
+        """Say one clip, as far as the speaker lets it, and say that it did not when it did not."""
+        self._renderer.event(f"announcement: {said.text}")
+        try:
+            if self._player is not None:
+                self._player.begin(said.sample_rate)
+                self._player.write(said.pcm)
+                self._player.end()
+                await self._player.idle()
+            elif self._voice_output is not None:
+                await self._voice_output.play(said.audio)
+        except Exception as error:  # noqa: BLE001 - whatever a speaker fails with, the next is tried
+            self._renderer.notice(f"the speaker could not say an announcement: {error}")
+
+    async def _cut_announcement(self) -> None:
+        """What is being said, if it is a command's and not an answer's, stops: a person is
+        speaking over it."""
+        announcing = self._announcing
+        if announcing is not None and not announcing.done():
+            announcing.cancel()
+            await asyncio.wait({announcing})
+
+    async def _drop_announcements(self) -> None:
+        """Nothing that was accepted is said any more: the connection is gone, or the client is."""
+        self._announcements.clear()
+        self._queued_bytes = 0
+        announcer, self._announcer = self._announcer, None
+        if announcer is not None and not announcer.done():
+            announcer.cancel()
+            await asyncio.wait({announcer})
+        await self._cut_announcement()
+        self._said.set()
 
     # ---- speaking ------------------------------------------------------------------------------
 
@@ -482,6 +636,7 @@ class DeviceClient:
         on the spot, before the edge is told. What is still on its way for it is let go of."""
         if self.active is not None:
             self._abandoned.add(self.active)
+        await self._cut_announcement()
         if self._player is not None:
             await self._player.stop()
 
@@ -531,5 +686,6 @@ class DeviceClient:
         if self._heartbeat is not None:
             self._heartbeat.cancel()
             await asyncio.wait({self._heartbeat})
+        await self._drop_announcements()
         if self._player is not None:
             await self._player.stop()

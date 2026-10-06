@@ -25,7 +25,7 @@ import asyncio
 
 from factotum.client_core import VoiceLoop
 from factotum.client_core.testing import FakeSpeaker
-from factotum.contracts.edge import CloseCode, TurnStatus
+from factotum.contracts.edge import CloseCode, Feature, TurnStatus
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.e2e.devices import Carrier, connected, joined, remembered, until
 from factotum.e2e.house import TIMEOUT_S, running
@@ -104,10 +104,10 @@ class TestAskingByVoice:
                     [track] = speaker.speaker.tracks
                     assert (track.sample_rate, track.finished) == (22_050, True)
                     assert speaker.speaker.played == []  # no clip was sent, so none was played
-                    assert speaker.client.features
+                    assert speaker.client.features == {Feature.VOICE_STREAM, Feature.PLAY_AUDIO}
                 else:
                     assert len(speaker.speaker.played) == len(SPOKEN_ANSWER)  # a clip each
-                    assert not speaker.client.features
+                    assert speaker.client.features == {Feature.PLAY_AUDIO}  # and no stream
 
     async def test_a_screen_with_a_speaker_shows_the_answer_and_where_it_comes_from_and_says_it(
         self,

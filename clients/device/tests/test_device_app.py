@@ -148,7 +148,7 @@ class TestSayingHello:
         [hello] = edge.connection.frames("hello")
         assert (hello.hardware_id, hello.token) == ("kitchen-01", "kitchen-credential")
         assert hello.capabilities == {Capability.AUDIO_IN, Capability.AUDIO_OUT}
-        assert hello.features == {Feature.VOICE_STREAM}
+        assert hello.features == {Feature.VOICE_STREAM, Feature.PLAY_AUDIO}
         assert hello.client is not None
         await client.close()
 

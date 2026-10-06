@@ -32,6 +32,7 @@ from factotum.contracts.response import Speech
 
 RECORDING = AudioPayload(sample_rate=16000, data=b"raw-microphone-bytes")
 STREAMING = frozenset({Feature.VOICE_STREAM})
+PLAYING = frozenset({Feature.PLAY_AUDIO})
 
 
 def words(seq: int, text: str = "Hold the button.", utterance: str = "u1") -> PartFrame:
@@ -79,8 +80,8 @@ class TestAskingForAVoice:
         await rig.client.connect()
 
         [hello] = rig.connection.frames("hello")
-        assert hello.features == STREAMING
-        assert rig.client.features == STREAMING
+        assert hello.features == STREAMING | PLAYING  # a speaker plays clips that commands carry
+        assert rig.client.features == STREAMING | PLAYING
         await rig.client.close()
 
     async def test_a_device_with_no_speaker_asks_for_none_whatever_it_has_to_play_with(
@@ -95,14 +96,14 @@ class TestAskingForAVoice:
         assert hello.features == frozenset()
         await rig.client.close()
 
-    async def test_a_device_with_a_speaker_that_plays_clips_only_asks_for_none(self) -> None:
+    async def test_a_device_with_a_speaker_that_plays_clips_only_asks_for_no_stream(self) -> None:
         rig = ClientRig("speaker", voice_output=FakeVoiceOutput())
         rig.connection.say(rig.ready())
 
         await rig.client.connect()
 
         [hello] = rig.connection.frames("hello")
-        assert hello.features == frozenset()
+        assert hello.features == PLAYING
         await rig.client.close()
 
     async def test_an_edge_that_does_not_do_it_is_not_a_bug_and_clips_are_played_as_before(
