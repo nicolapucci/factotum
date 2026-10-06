@@ -15,7 +15,7 @@ import pytest
 
 from factotum.actions.instructions.checks import check_plan
 from factotum.actions.instructions.executor import Context, run
-from factotum.actions.instructions.testing import FakeWeb, plan_dict, step_command, step_http
+from factotum.actions.instructions.testing import FakeWeb, plan_dict, step_http
 from factotum.actions.planner import EXAMPLES as PLANNER_EXAMPLES
 from factotum.actions.planner import view_of
 from factotum.actions.runner_client import hosts_of, read_output
@@ -58,9 +58,9 @@ def test_the_skills_that_the_planner_is_shown_as_examples_are_shown_as_these_are
 
 
 def test_every_example_skill_is_a_skill() -> None:
+    # announce is not here: it is a skill of the platform (``factotum.actions.core``)
     assert sorted(examples()) == [
         "air-quality",
-        "announce",
         "garage-door",
         "lamp",
         "movie-scene",
@@ -398,10 +398,6 @@ AIR = (
 
 PLANS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     # what a model is to write for each of them, and what the person asked for
-    "announce": (
-        plan_dict(step_command("say", "speak", text="${value.message}")),
-        {"message": "Dinner is ready"},
-    ),
     "movie-scene": (
         plan_dict(
             step_http(
@@ -494,24 +490,6 @@ class TestTheSkillsThatAreInstructions:
 
         assert skill.manifest.effect is Effect.REVERSIBLE
         assert skill.manifest.permissions.secrets == ("HA_TOKEN",)
-
-    def test_what_is_only_said_to_a_device_needs_no_network_and_no_secret(self) -> None:
-        skill = examples()["announce"]
-
-        assert skill.manifest.permissions.network == ()
-        assert skill.manifest.permissions.secrets == ()
-        assert skill.manifest.target is SkillTarget.SYSTEM
-
-    def test_announcing_is_a_command_for_the_device_with_the_message_as_its_text(self) -> None:
-        plan, values = PLANS["announce"]
-
-        answer = run(
-            plan,
-            context=Context(secrets={}, device={}, values=values),
-            budget_s=5,
-        )
-
-        assert answer["commands"] == [{"name": "speak", "text": "Dinner is ready"}]
 
     def test_the_movie_scene_makes_two_calls_with_the_token_and_says_it_is_set(self) -> None:
         skill = examples()["movie-scene"]

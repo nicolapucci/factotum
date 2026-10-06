@@ -137,6 +137,7 @@ def window(**changes: Any) -> Window:
         "web": (),
         "events": dict.fromkeys(NAMES, ()),
         "announced": dict.fromkeys(NAMES, ()),
+        "sentences": dict.fromkeys(NAMES, 0),
         "volumes": dict.fromkeys(NAMES, 50),
         "spoken": None,
         "chat": 1,
@@ -219,11 +220,7 @@ class TestWhatIsWrittenForASkillThatIsOnlyInstructions:
 
     @pytest.mark.parametrize(
         ("skill", "values"),
-        [
-            ("announce", {"message": "dinner is ready"}),
-            ("movie-scene", {}),
-            ("air-quality", {"place": "Rome"}),
-        ],
+        [("movie-scene", {}), ("air-quality", {"place": "Rome"})],
     )
     def test_the_plan_is_one_the_checks_accept_for_what_the_skill_declares(
         self, skill: str, values: dict[str, Any]
@@ -241,7 +238,7 @@ class TestWhatIsWrittenForASkillThatIsOnlyInstructions:
             device_params={},
         )
 
-    @pytest.mark.parametrize("skill", ["announce", "movie-scene", "air-quality"])
+    @pytest.mark.parametrize("skill", ["movie-scene", "air-quality"])
     def test_and_it_is_written_as_strictly_as_a_model_is_asked_to_write_it(
         self, skill: str
     ) -> None:
@@ -254,6 +251,11 @@ class TestWhatIsWrittenForASkillThatIsOnlyInstructions:
 
     def test_a_skill_that_has_a_script_has_no_plan_written(self) -> None:
         assert writing_for(self.done_case("lamp", state="on")) is None
+
+    def test_a_skill_of_the_platform_has_none_either_because_it_is_code_and_not_a_plan(
+        self,
+    ) -> None:
+        assert writing_for(self.done_case("announce", message="dinner is ready")) is None
 
     @pytest.mark.parametrize(
         "status", [ActStatus.NEEDS_MORE, ActStatus.REFUSED, ActStatus.NEEDS_CONFIRMATION]
@@ -428,6 +430,120 @@ class TestJudgingWhatCameOfAMessage:
         found = judge(Played(A_QUESTION, window(announced=said)))
 
         assert found == [f"{DISPLAY} was told to say ['hello']"]
+
+
+DINNER = PlanCase(
+    "tell everyone that dinner is ready",
+    KITCHEN,
+    "announce",
+    ActStatus.DONE,
+    None,
+    {"message": "dinner is ready"},
+)
+DINNER_AT_THE_DISPLAY = PlanCase(
+    "announce on the living room display that dinner is ready",
+    KITCHEN,
+    "announce",
+    ActStatus.DONE,
+    "Living room display",
+    {"message": "dinner is ready"},
+)
+
+
+def announced(message: str, speaker: str, target: str, **changes: Any) -> Window:
+    """What the series sees of an announcement that went as it should: the speaker says "Done."
+    where it was spoken to and the target says the message (both, on the same device)."""
+    heard: dict[str, list[str]] = {name: [] for name in NAMES}
+    heard[speaker].append("Done.")
+    heard[target].append(message)
+    fields: dict[str, Any] = {
+        "sentences": {name: len(words) for name, words in heard.items()},
+        "spoken": {name: tuple(words) for name, words in heard.items()},
+    }
+    return done("announce", **{**fields, **changes})
+
+
+class TestJudgingAnAnnouncement:
+    def test_a_message_said_on_the_device_that_was_spoken_to_is_right(self) -> None:
+        window_ = announced("dinner is ready", KITCHEN, KITCHEN)
+
+        assert judge(Played(DINNER, window_)) == []
+
+    def test_so_is_one_said_on_the_device_that_was_named_while_the_answer_goes_to_the_speaker(
+        self,
+    ) -> None:
+        window_ = announced("dinner is ready", KITCHEN, DISPLAY)
+
+        assert judge(Played(DINNER_AT_THE_DISPLAY, window_)) == []
+
+    def test_the_order_that_the_two_are_said_in_is_not_what_is_judged(self) -> None:
+        window_ = announced(
+            "dinner is ready",
+            KITCHEN,
+            KITCHEN,
+            spoken={KITCHEN: ("Done.", "dinner is ready"), DISPLAY: (), PHONE: ()},
+        )
+
+        assert judge(Played(DINNER, window_)) == []
+
+    def test_where_the_sound_cannot_be_read_back_it_is_the_number_of_sentences_that_is(
+        self,
+    ) -> None:
+        window_ = announced("dinner is ready", KITCHEN, DISPLAY, spoken=None)
+
+        assert judge(Played(DINNER_AT_THE_DISPLAY, window_)) == []
+
+    def test_a_message_that_was_said_nowhere_is_said(self) -> None:
+        silent = announced("dinner is ready", KITCHEN, KITCHEN, sentences=dict.fromkeys(NAMES, 0))
+
+        [problem] = judge(Played(DINNER, silent))
+
+        assert "sentences were said instead of" in problem
+
+    def test_a_message_said_on_another_device_than_the_one_it_was_for_is_said(self) -> None:
+        wrong = announced("dinner is ready", KITCHEN, PHONE)
+
+        counted, words = judge(Played(DINNER_AT_THE_DISPLAY, wrong))
+
+        assert "sentences were said instead of" in counted
+        assert "was said instead of" in words
+
+    def test_other_words_than_the_message_are_said(self) -> None:
+        wrong = announced(
+            "dinner is ready",
+            KITCHEN,
+            KITCHEN,
+            spoken={KITCHEN: ("Done.", "lunch is ready"), DISPLAY: (), PHONE: ()},
+        )
+
+        [problem] = judge(Played(DINNER, wrong))
+
+        assert "lunch is ready" in problem
+
+    def test_what_was_run_in_a_sandbox_for_it_is_said(self) -> None:
+        ran = announced("dinner is ready", KITCHEN, KITCHEN, jobs=(job("announce"),))
+
+        assert judge(Played(DINNER, ran)) == ["it ran ['announce']"]
+
+    def test_what_it_reached_on_the_network_is_said(self) -> None:
+        reached = announced(
+            "dinner is ready", KITCHEN, KITCHEN, web=(call(LAMP_CALL, {"entity_id": "x"}),)
+        )
+
+        [problem] = judge(Played(DINNER, reached))
+
+        assert problem.startswith("it reached")
+
+    def test_words_that_a_device_was_told_to_speak_are_said_for_an_announcement_is_a_clip(
+        self,
+    ) -> None:
+        told = dict.fromkeys(NAMES, ()) | {KITCHEN: ("dinner is ready",)}
+
+        [problem] = judge(
+            Played(DINNER, announced("dinner is ready", KITCHEN, KITCHEN, announced=told))
+        )
+
+        assert "was told to speak words" in problem
 
 
 def questioned(**changes: Any) -> Window:
@@ -650,11 +766,11 @@ class TestTheStandInOfTheModel:
 
     async def test_what_it_was_told_to_write_is_what_the_writer_of_plans_gets(self) -> None:
         model = HouseholdModel()
-        model.writing = writing_for(PlanCase("said", KITCHEN, "announce", ActStatus.DONE))
+        model.writing = writing_for(PlanCase("said", KITCHEN, "movie-scene", ActStatus.DONE))
 
         text = await ask(model, "the instructions", {"reason": {}, "steps": {}, "say": {}})
 
-        assert json.loads(text)["steps"][0]["name"] == "speak"
+        assert json.loads(text)["steps"][0]["id"] == "ceiling"
         assert model.writings == ["the instructions"]
 
     async def test_asked_to_write_what_it_was_not_told_to_it_says_so_and_does_not_make_one_up(
@@ -694,6 +810,8 @@ class TestACase:
         return SimpleNamespace(
             shown=RecordingRenderer(),
             hardware=SimpleNamespace(state=SimpleNamespace(spoken=[], volume=50)),
+            client=SimpleNamespace(wait_until_played=lambda: asyncio.sleep(0)),
+            timeout_s=1.0,
             sentences=list,
             understood=lambda: ["words"],
             spoken=list,
@@ -729,6 +847,34 @@ class TestACase:
             await series.play(A_QUESTION)
 
         assert house.model.proposal is None
+
+    async def test_what_every_device_was_given_to_say_is_played_before_what_came_of_it_is_read(
+        self,
+    ) -> None:
+        # A skill may have another device say something while the answer is given on this one: a
+        # window read before that device had finished would be one in which it had said less.
+        house = self.a_house()
+        events: list[str] = []
+
+        def device_of(name: str) -> Any:
+            device = self.a_device()
+
+            async def wait() -> None:
+                events.append(f"waited for {name}")
+
+            device.client = SimpleNamespace(wait_until_played=wait)
+            return device
+
+        async def say(device: Any, words: str) -> TurnEnded:
+            events.append("said")
+            return ENDED
+
+        devices = {name: device_of(name) for name in NAMES}
+        series = Series(house, devices, say)
+
+        await series.play(A_QUESTION)
+
+        assert events == ["said", *(f"waited for {name}" for name in NAMES)]
 
     async def test_the_skill_that_cannot_run_here_is_told_what_it_prints(self) -> None:
         house = self.a_house()

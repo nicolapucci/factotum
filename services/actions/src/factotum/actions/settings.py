@@ -27,6 +27,11 @@ class ActionsSettings(DatabaseSettings):
     actions_gateway_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8081")
     """Where the model gateway is: it is asked to read every message and to embed every skill."""
 
+    actions_speech_timeout_s: float = Field(default=60.0, gt=0, le=600)
+    """How long the model gateway is waited for to make the voice of one sentence of what a skill
+    of the platform says. The first one after a start is slow (a voice is loaded when it is first
+    asked for, which takes seconds on a processor)."""
+
     actions_runner_url: AnyHttpUrl | None = None
     """Where the runner is, which runs the scripts of skills in a container each. Without one
     nothing is run: a skill that is asked for answers with what it would have run (a dry run)."""

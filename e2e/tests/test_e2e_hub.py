@@ -12,15 +12,18 @@ only the hub has to say: a credential it did not issue, and a call that comes wi
 
 import pytest
 
+from factotum.actions.plan_cases import DISPLAY, KITCHEN, PlanCase
 from factotum.client_core import Refused
 from factotum.common.devauth import SUBJECT_HEADER
 from factotum.common.tokens import encode_token
+from factotum.contracts.actions import ActStatus
 from factotum.contracts.edge import TurnStatus
 from factotum.contracts.identity import Principal
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.e2e.devices import connected
 from factotum.e2e.house import House, running
 from factotum.e2e.models import LANGUAGES, NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
+from factotum.e2e.series import proposal_for
 from factotum.e2e.wiring import HA_TOKEN, TENANT, Auth
 
 HOME_ASSISTANT = "http://homeassistant.local:8123"
@@ -76,6 +79,32 @@ class TestADeviceThatTheHubPaired:
                 {"HA_TOKEN": HA_TOKEN},
             )
             assert speaker.spoken() == ["The lamp is on."]
+
+    async def test_an_announcement_is_made_a_voice_with_the_binding_the_hub_keeps(self) -> None:
+        said = PlanCase(
+            "announce on the living room display that dinner is ready",
+            KITCHEN,
+            "announce",
+            ActStatus.DONE,
+            DISPLAY,
+            {"message": "dinner is ready"},
+        )
+        async with (
+            running(auth=Auth.HUB, offer_every_skill=True) as house,
+            connected(house, "speaker") as speaker,
+            connected(house, "smart-display") as display,
+        ):
+            house.model.proposal = proposal_for(said)
+
+            ended = await speaker.says_aloud(said.message)
+            await display.client.wait_until_played()
+
+            # What the actions service asked the gateway for, it asked as the tenant (the token that
+            # it minted for it), and the clips reached the device that the hub knows as the display.
+            assert ended.status is TurnStatus.FINISHED, ended
+            assert display.spoken() == ["dinner is ready"]
+            assert speaker.spoken() == ["Done."]
+            assert house.runner.jobs == []
 
     async def test_the_garage_door_follows_the_policy_the_hub_has_for_each_device(self) -> None:
         async with (

@@ -16,6 +16,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from factotum.actions.core import CoreSkills
 from factotum.actions.matching import SkillIndex, owners_of
 from factotum.actions.skills import load_folder, parse_skill
 from factotum.actions.store import ActionsStore, StoredSkill, VersionMeta
@@ -89,7 +90,8 @@ class Catalog:
     ``folder`` is a folder of skills (each a folder with a ``SKILL.md`` and its scripts), which is
     the one way to install a skill that has scripts. ``enable_folder`` takes what is read from it to
     be reviewed already and enables it as it is read: for development, where the folder is one's
-    own.
+    own. ``core`` is the skills of the platform (ADR 0026): they are installed for a tenant before
+    its administrators first see what is there, as they are before its first message.
     """
 
     def __init__(
@@ -99,12 +101,14 @@ class Catalog:
         *,
         folder: Path | None = None,
         enable_folder: bool = False,
+        core: CoreSkills | None = None,
         now: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._store = store
         self._index = index
         self._folder = folder
         self._enable_folder = enable_folder
+        self._core = core
         self._now = now
 
     # ---- who may do what ------------------------------------------------------------------------
@@ -120,6 +124,12 @@ class Catalog:
         else can see them to try (``_found``)."""
         if owner.kind is OwnerKind.TENANT and Role.ADMIN not in principal.roles:
             raise PolicyViolationError("the skills of the tenant are managed by its administrators")
+
+    async def _provided(self, principal: Principal) -> None:
+        """Have the skills of the platform there for the caller's tenant, once, before what is
+        there is shown or added to."""
+        if self._core is not None:
+            await self._core.ensure(self._store, principal.tenant_id, now=self._now())
 
     async def _found(self, principal: Principal, skill_id: SkillId) -> StoredSkill:
         """A skill the caller may see, or the same answer as for one that is not there."""
@@ -141,6 +151,7 @@ class Catalog:
     async def list(self, principal: Principal) -> SkillList:
         """The skills the caller may see: the tenant's and their own."""
         self._at_the_hub(principal)
+        await self._provided(principal)
         skills = await self._store.list_skills(principal.tenant_id, owners_of(principal))
         return SkillList(skills=tuple(_info(skill) for skill in skills))
 
@@ -157,6 +168,7 @@ class Catalog:
         self._at_the_hub(principal)
         owner = self._owner_of(principal, request.owner)
         self._tenants(principal, owner)
+        await self._provided(principal)
         loaded = parse_skill(request.source, where="the skill")
         installed = await self._store.install(principal.tenant_id, owner, loaded, now=self._now())
         stored = await self._store.get_skill(principal.tenant_id, installed.skill_id)
@@ -180,6 +192,7 @@ class Catalog:
             raise ConflictError("no folder of skills is set up")
         owner = Owner.of_subject(Subject.tenant(principal.tenant_id))
         self._tenants(principal, owner)
+        await self._provided(principal)
         loaded, problems = await asyncio.to_thread(load_folder, self._folder)
         installed: list[str] = []
         enabled: list[str] = []

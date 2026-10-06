@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from factotum.actions.store import StoredSkill, StoredVersion, VersionMeta
+from factotum.contracts.audio import AudioPayload, wav_of
 from factotum.contracts.chat import (
     ChatRequest,
     ChatResult,
@@ -52,6 +53,44 @@ class Clock:
     def advance(self, **how_much: float) -> datetime:
         self.current += timedelta(**how_much)
         return self.current
+
+
+class FakeSpeech:
+    """The voice of a text, as the model gateway gives it, made up: a clip that carries the words
+    (so that a test reads what a device was made to say) at a rate of its own. It keeps what it was
+    asked, and what it is told to fail with (``failures``, in order, one for each ask) is raised.
+    ``delay_s`` is how long each takes."""
+
+    RATE = 22_050
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[Owner, str]] = []
+        self.failures: list[Exception | None] = []
+        self.delay_s = 0.0
+
+    async def synthesize(self, owner: Owner, text: str) -> AudioPayload:
+        self.asked.append((owner, text))
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        if self.failures:
+            failure = self.failures.pop(0)
+            if failure is not None:
+                raise failure
+        return self.clip_of(text)
+
+    @classmethod
+    def clip_of(cls, text: str) -> AudioPayload:
+        """The clip that ``text`` is made into: its words, as the bytes of the samples."""
+        pcm = text.encode("utf-8")
+        return wav_of(pcm + b"\0" * (len(pcm) % 2), cls.RATE)
+
+    @staticmethod
+    def words_in(clip: AudioPayload) -> str:
+        """The words that a clip made here carries."""
+        from factotum.contracts.audio import pcm_of
+
+        pcm, _ = pcm_of(clip.data)
+        return pcm.rstrip(b"\0").decode("utf-8")
 
 
 class ScriptedChat:

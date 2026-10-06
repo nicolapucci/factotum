@@ -12,12 +12,14 @@ What is made up is the reading of the message. The planner proposes what a compe
 the message that was *meant* (``HouseholdModel.proposal``), so that what is looked at is what the
 rest of the assistant does with it: the way the words get to it, the checks of what was proposed,
 the policy of the device they were said to, the yes that is asked for, the script or the plan that
-runs, the command that reaches a device and the words that come back. How well a model reads a
+runs (or, for a skill of the platform, the code of the actions service), the command that reaches a
+device and the words that come back. How well a model reads a
 message is the measure of ``services/actions/tests/live``; how well Whisper hears it is told here by
 what the edge took each recording for. The same series is said with the stand-in speech, which is
 fast and exact, and, for the part of it that is in Italian, with the real one.
 """
 
+import asyncio
 import difflib
 import json
 import re
@@ -29,7 +31,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from factotum.actions.instructions.testing import Seen as WebRequest
-from factotum.actions.instructions.testing import plan_dict, step_command, step_http
+from factotum.actions.instructions.testing import plan_dict, step_http
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PHONE, PLAN_CASES, PlanCase
 from factotum.contracts.actions import ActCode, ActOutcome, ActStatus
 from factotum.contracts.audit import ActionResult, AuditRecord
@@ -142,12 +144,11 @@ def proposal_for(case: PlanCase) -> dict[str, Any]:
 def writing_for(case: PlanCase) -> dict[str, Any] | None:
     """What a competent model writes as the plan of a skill that is only instructions, for what the
     case asks: what a plan is for is in the notes of each skill (``skills/examples``). Nothing for a
-    skill that has a script, and nothing for what is not going to be done."""
+    skill that has a script, nothing for a skill of the platform (``announce`` is code, and no model
+    writes what it does) and nothing for what is not going to be done."""
     if case.status is not ActStatus.DONE:
         return None
     match case.skill:
-        case "announce":
-            return plan_dict(step_command("say", "speak", text="${value.message}"))
         case "movie-scene":
             return plan_dict(
                 step_http(
@@ -224,7 +225,12 @@ class Window:
     """By device: what its hardware was told to do (a volume, a light)."""
 
     announced: dict[str, tuple[str, ...]]
-    """By device: what its hardware was told to say."""
+    """By device: what its hardware was told to say (a ``speak`` that its edge did not make a voice
+    of)."""
+
+    sentences: dict[str, int]
+    """By device: how many sentences its speaker was made to say, whatever the sound is: the answer
+    to a person is one, and so is each clip that a skill had it play."""
 
     volumes: dict[str, int]
     """By device: the volume its hardware has when it is over."""
@@ -336,6 +342,9 @@ class Series:
     async def _window(self, speaker: str, words: str) -> Window:
         before = self._mark()
         ended = await self._say(self._devices[speaker], words)
+        for device in self._devices.values():
+            # What a skill had another device say is played there while the answer is given here.
+            await asyncio.wait_for(device.client.wait_until_played(), device.timeout_s)
         house = self._house
         acts = house.acts[before.acts :]
         heard = self._devices[speaker].understood()[before.devices[speaker].heard :]
@@ -356,6 +365,10 @@ class Series:
                 for name, device in self._devices.items()
             },
             volumes={name: device.hardware.state.volume for name, device in self._devices.items()},
+            sentences={
+                name: len(device.sentences()) - before.devices[name].sentences
+                for name, device in self._devices.items()
+            },
             spoken=(
                 {
                     name: tuple(device.spoken()[before.devices[name].sentences :])
@@ -476,12 +489,7 @@ def _done(case: PlanCase, window: Window) -> list[str]:
             problems += _job(window, "volume", (), {})
             problems += _nothing_else_was_reached(window)
         case "announce":
-            target = case.device or case.speaker
-            announced = {name: said for name, said in window.announced.items() if said}
-            if announced != {target: (str(case.params["message"]),)}:
-                problems.append(f"{announced} was said instead of {case.params['message']!r}")
-            problems += _job(window, "announce", (), {})
-            problems += _nothing_else_was_reached(window)
+            problems += _announced(case, window)
         case "movie-scene":
             lights = "/api/services/light/turn_"
             expected = [
@@ -508,6 +516,34 @@ def _done(case: PlanCase, window: Window) -> list[str]:
                 problems.append(f"the place and the index are not in what was said: {spoken!r}")
         case _:
             problems.append(f"the series does not know what {case.skill} is to do")
+    return problems
+
+
+def _announced(case: PlanCase, window: Window) -> list[str]:
+    """An announcement is the code of the actions service and nothing that a sandbox runs: no job,
+    nothing reached on the network, no word handed to a device to say (what a device is given is a
+    clip, which its speaker plays). The message is said once on the device that it was for, and each
+    speaker says the answer that the person was given besides, where they were spoken to."""
+    message = str(case.params["message"])
+    target = case.device or case.speaker
+    problems = _nothing_else_was_reached(window)
+    if window.jobs:
+        problems.append(f"it ran {[job.label for job in window.jobs]}")
+    told = {name: said for name, said in window.announced.items() if said}
+    if told:
+        problems.append(f"{told} was told to speak words, and an announcement is a clip")
+    sentences = dict.fromkeys(window.sentences, 0)
+    sentences[case.speaker] += 1  # the answer to the person: "Done."
+    sentences[target] += 1  # the message
+    if window.sentences != sentences:
+        problems.append(f"{window.sentences} sentences were said instead of {sentences}")
+    if window.spoken is not None and window.outcome is not None:
+        wanted: dict[str, list[str]] = {name: [] for name in window.spoken}
+        wanted[case.speaker].append(window.outcome.reply or "")
+        wanted[target].append(message)
+        said = {name: sorted(words) for name, words in window.spoken.items()}
+        if said != {name: sorted(words) for name, words in wanted.items()}:
+            problems.append(f"{said} was said instead of {wanted}")
     return problems
 
 

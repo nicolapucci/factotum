@@ -11,6 +11,7 @@ is for a person who runs ``factotum-device doctor --play``.
 """
 
 import asyncio
+import struct
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,7 @@ import pytest
 from factotum.client_audio.testing import FakeBackend, KeyPresses
 from factotum.client_core import Ending
 from factotum.client_core.testing import RecordingRenderer
+from factotum.contracts.actions import ActStatus
 from factotum.contracts.audio import pcm_of
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.device.app import build_hardware, run_device
@@ -73,6 +75,24 @@ def configured(house: House, **sections: dict[str, Any]) -> Config:
     )
 
 
+ANNOUNCE_DINNER = {
+    "reason": "it asks for an announcement",
+    "skill": "announce",
+    "device": None,
+    "parameters": {"message": "dinner is ready"},
+    "language": "en",
+    "question": None,
+    "ask": None,
+}
+"""What a competent planner proposes for "tell everyone that dinner is ready"."""
+
+
+def words_played(track: Any) -> str:
+    """The words that a track of the stand-in voice carries: its samples are the bytes of them."""
+    count = len(track.sound) // 2
+    return bytes(struct.unpack(f"<{count}h", track.sound[: 2 * count])).rstrip(b"\0").decode()
+
+
 class Speaking:
     """A person at the device: they press the key, say something, and wait for the answer."""
 
@@ -102,6 +122,14 @@ class Speaking:
             lambda: len(self.backend.outputs) > before and "stop" in self.backend.outputs[-1].calls,
             seconds=self.house.timeout_s,
         )
+
+    def stopped(self) -> bool:
+        """Whether every sound that the speaker was given has been played to its end."""
+        return all("stop" in track.calls for track in self.backend.outputs)
+
+    def played(self) -> list[str]:
+        """The words of each sound that the speaker was given, in the order they were opened."""
+        return [words_played(track) for track in self.backend.outputs]
 
     async def leaves(self) -> Any:
         self.presses.leave()
@@ -151,42 +179,25 @@ class TestAPersonAtTheDevice:
             [job] = house.runner.jobs
             assert job.label == "volume"
 
-    async def test_a_text_to_say_is_what_the_device_cannot_yet_do_and_the_skill_is_told(
+    async def test_an_announcement_is_clips_that_the_device_plays_besides_what_it_answers(
         self,
     ) -> None:
         async with running(offer_every_skill=True) as house:
-            house.model.proposal = {
-                "reason": "it asks for an announcement",
-                "skill": "announce",
-                "device": None,
-                "parameters": {"message": "dinner is ready"},
-                "language": "en",
-                "question": None,
-                "ask": None,
-            }
-            house.model.writing = {
-                "reason": "say it",
-                "steps": [
-                    {
-                        "id": "say",
-                        "kind": "command",
-                        "name": "speak",
-                        "args": {"text": "${value.message}"},
-                    }
-                ],
-                "say": None,
-            }
+            house.model.proposal = ANNOUNCE_DINNER
             person = Speaking(house, configured(house))
             await until(lambda: len(house.sessions) == 1)
 
             await person.said("Tell everyone that dinner is ready.")
+            await until(lambda: len(person.backend.outputs) == 2 and person.stopped())
             await person.leaves()
 
-            assert "asked to say a text, which this device cannot yet" in person.shown.of("event")
             [act] = house.acts
-            assert act.status.value == "failed"  # a command that did not work is said so
-            assert act.code is not None
-            assert act.code.value == "command_failed"
+            assert (act.status, act.code, act.reply) == (ActStatus.DONE, None, "Done.")
+            assert "announcement: dinner is ready" in person.shown.of("event")
+            assert person.shown.of("speech") == ["Done."]  # what a person is answered is an answer
+            assert sorted(person.played()) == ["Done.", "dinner is ready"]
+            assert house.runner.jobs == []  # the platform did it: nothing was run in a sandbox
+            assert person.shown.of("violation") == []
 
 
 class TestADeviceThatTheEdgeDoesNotKnow:

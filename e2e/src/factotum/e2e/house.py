@@ -3,7 +3,8 @@ together: the edge on a real socket, and behind it the conversation, knowledge, 
 model-gateway applications, each reached through its own HTTP interface (an in-memory transport, so
 no port is needed) and each with its store in memory instead of Postgres. Nothing above the
 stores is replaced, and the home is the example one (``config/devices.example.yaml``) with the
-example skills (``skills/examples``), as a person who copies the files has it.
+example skills (``skills/examples``), as a person who copies the files has it, and the skills of the
+platform (``factotum.actions.core``), which every tenant has.
 
 What is made up is what a unit test cannot have, and it is at the edges: the models
 (``factotum.e2e.models``), the voice (``factotum.e2e.voice``), the Home Assistant that skills reach
@@ -27,6 +28,7 @@ from factotum.actions.api import create_app as create_actions_app
 from factotum.actions.audit import AuditReader
 from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import ConfirmationReader
+from factotum.actions.core import platform_skills
 from factotum.actions.edge_client import EdgeDispatcher
 from factotum.actions.instructions.testing import FakeWeb
 from factotum.actions.instructions.writer import PlanWriter
@@ -381,6 +383,9 @@ async def running(
         for path, found in OPEN_METEO:
             home_assistant.answer("GET", path, json_body=found)
         local_runner = HouseRunner(proxy=home_assistant.url())
+        # What the platform itself does (``announce``) is made of the same voice that an answer is
+        # made of, asked of the same gateway.
+        core = platform_skills(GatewaySpeech(gateway, wiring.delegation))
         skills = stores.actions
         index = SkillIndex(skills, embedder, timeout_s=TIMEOUT_S)
         closing.push_async_callback(index.aclose)
@@ -417,8 +422,11 @@ async def running(
                             delegation=wiring.principals,
                         ),
                         dispatcher=EdgeDispatcher(edge_client, wiring.principals),
+                        core=core,
                     ),
-                    catalog=Catalog(skills, index, folder=SKILLS_FOLDER, enable_folder=True),
+                    catalog=Catalog(
+                        skills, index, folder=SKILLS_FOLDER, enable_folder=True, core=core
+                    ),
                     audit=AuditReader(skills),
                 ),
             ),

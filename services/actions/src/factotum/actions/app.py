@@ -22,6 +22,7 @@ from factotum.actions.api import Operations, create_app
 from factotum.actions.audit import AuditReader
 from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import ConfirmationReader
+from factotum.actions.core import platform_skills
 from factotum.actions.directory import (
     DeviceDirectory,
     FileDeviceDirectory,
@@ -48,7 +49,12 @@ from factotum.common.hubauth import authenticator_for, principal_delegation_for
 from factotum.contracts.identity import SINGLE_TENANT_ID
 from factotum.db.pool import Database
 from factotum.devices.home import Home
-from factotum.model_client import GatewayChat, GatewayEmbedder, delegation_for
+from factotum.model_client import (
+    GatewayChat,
+    GatewayEmbedder,
+    GatewaySpeech,
+    delegation_for,
+)
 
 logger = logging.getLogger("factotum.actions")
 
@@ -161,6 +167,18 @@ def build_app(settings: ActionsSettings) -> FastAPI:
                         ),
                         principals,
                     )
+                speech_client = await clients.enter_async_context(
+                    httpx.AsyncClient(
+                        base_url=str(settings.actions_gateway_url),
+                        timeout=httpx.Timeout(
+                            connect=3.0,
+                            read=settings.actions_speech_timeout_s,
+                            write=10.0,
+                            pool=5.0,
+                        ),
+                    )
+                )
+                core = platform_skills(GatewaySpeech(speech_client, delegation))
                 chat = GatewayChat(gateway, delegation)
                 writer = (
                     None
@@ -193,6 +211,7 @@ def build_app(settings: ActionsSettings) -> FastAPI:
                         runner=runner,
                         dispatcher=dispatcher,
                         writer=writer,
+                        core=core,
                         settings=settings.action,
                     ),
                     catalog=Catalog(
@@ -200,6 +219,7 @@ def build_app(settings: ActionsSettings) -> FastAPI:
                         index,
                         folder=settings.actions_skills_dir,
                         enable_folder=settings.actions_enable_skills_dir,
+                        core=core,
                     ),
                     audit=AuditReader(store),
                 )

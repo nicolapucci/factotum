@@ -352,6 +352,52 @@ class TestCommandsForADevice:
 
         assert outcome.code is ActCode.COMMAND_FAILED
 
+    async def test_the_first_command_that_is_not_done_stops_the_ones_after_it(self) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME)
+        commands = (SetVolume(level=30), SetVolume(level=20), SetVolume(level=10))
+        rig.runner.results["volume"] = RunResult(commands=commands)
+        rig.dispatcher.answers = [
+            CommandResult.ok(),
+            CommandResult(status=CommandStatus.FAILED, detail="the device was busy"),
+        ]
+        rig.plans(plan_of("volume", parameters={"level": 30}))
+
+        outcome = await rig.hear(KITCHEN, "set the volume to 30")
+
+        assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.COMMAND_FAILED)
+        assert [command for _, _, command in rig.dispatcher.given] == list(commands[:2])
+        [record] = await rig.audit()
+        assert record.detail == "a command was not done (failed)"
+
+    async def test_a_command_that_is_not_done_because_the_dispatcher_failed_stops_the_rest_too(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME)
+        rig.runner.results["volume"] = RunResult(
+            commands=(SetVolume(level=30), SetVolume(level=20))
+        )
+        rig.dispatcher.answers = [GatewayUnavailableError("the edge is away")]
+        rig.plans(plan_of("volume", parameters={"level": 30}))
+
+        outcome = await rig.hear(KITCHEN, "set the volume to 30")
+
+        assert outcome.code is ActCode.COMMAND_FAILED
+        assert [command for _, _, command in rig.dispatcher.given] == [SetVolume(level=30)]
+
+    async def test_commands_that_are_all_done_are_all_given_in_order(self) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME)
+        commands = (SetVolume(level=30), SetVolume(level=20), SetVolume(level=10))
+        rig.runner.results["volume"] = RunResult(commands=commands)
+        rig.plans(plan_of("volume", parameters={"level": 30}))
+
+        outcome = await rig.hear(KITCHEN, "set the volume to 30")
+
+        assert outcome.status is ActStatus.DONE
+        assert [command for _, _, command in rig.dispatcher.given] == list(commands)
+
     async def test_a_skill_asked_for_from_no_device_has_no_device_to_give_commands_to(self) -> None:
         rig = ActionsRig()
         await rig.install(WEATHER)

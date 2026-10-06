@@ -11,7 +11,9 @@ spoken to (``authorize``), and then, by the decision:
   action is refused with a plain reason;
 * **confirmation needed**: the person is asked a yes or a no, what was understood is kept, and the
   next message on that device answers it;
-* **allow**: the skill is run and the commands it answers with are given to the device.
+* **allow**: the skill is run and the commands it answers with are given to the device. A skill of
+  the platform (``factotum.actions.core``, ADR 0026) is run here, in this process; any other is run
+  by the runner, in a container of its own.
 
 Whatever the outcome, an action that got as far as a decision leaves one record in the audit trail
 per step (asked, declined, refused, executed), and a record never says that something ran without
@@ -20,7 +22,7 @@ the confirmation or the approval its decision required.
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -29,6 +31,7 @@ from pydantic import ValidationError
 
 from factotum.actions.approvals import NullApprover
 from factotum.actions.confirmations import Answer, ConfirmationReader
+from factotum.actions.core import CoreSkill, CoreSkills
 from factotum.actions.directory import BoundDevice, DeviceDirectory
 from factotum.actions.execution import CommandDispatcher, NullDispatcher, SkillRunner
 from factotum.actions.instructions.checks import PlanRejected, check_plan, describe
@@ -39,6 +42,7 @@ from factotum.actions.planner import PlanDevices, Planner, view_of
 from factotum.actions.proposal import Proposal
 from factotum.actions.runner_client import hosts_of
 from factotum.actions.store import ActionsStore, PendingRow
+from factotum.actions.store import StoredSkill as SkillStore
 from factotum.actions.understanding import NeedsMore, NothingToDo, Understood, understand
 from factotum.common.authorization import authorize
 from factotum.common.redaction import redact
@@ -59,13 +63,13 @@ from factotum.contracts.authorization import (
     SkillRef,
     TargetRef,
 )
-from factotum.contracts.commands import CommandResult, CommandStatus
+from factotum.contracts.commands import CommandResult, CommandStatus, DeviceCommand
 from factotum.contracts.devices import ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.errors import FactotumError, RunnerUnavailableError, SkillRunError
 from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.ids import ApprovalId, AuditId, DeviceId, SkillId
 from factotum.contracts.instructions import InstructionPlan
-from factotum.contracts.runner import RunRequest, RunResult
+from factotum.contracts.runner import RunRequest
 from factotum.contracts.skills import ParamValue, SkillMode, SkillPermissions, SkillTarget
 
 logger = logging.getLogger("factotum.actions")
@@ -116,6 +120,17 @@ def _with_plan(detail: str | None, plan: InstructionPlan | None) -> str | None:
     return f"{detail}; plan: {describe(plan)}" if detail else f"plan: {describe(plan)}"
 
 
+@dataclass(frozen=True, slots=True)
+class _Ran:
+    """What a skill came to, whether the runner ran it or it is a skill of the platform."""
+
+    message: str | None
+    commands: Sequence[DeviceCommand]
+    dry_run: bool
+    audit: str | None
+    """What the trail says of it, when the skill says it (a skill of the platform does)."""
+
+
 def _kind_of(target: SystemDeviceRecord | ExternalDeviceRecord | None) -> str | None:
     if target is None:
         return None
@@ -135,6 +150,7 @@ class ActionService:
         dispatcher: CommandDispatcher | None = None,
         writer: PlanWriter | None = None,
         approver: Approver | None = None,
+        core: CoreSkills | None = None,
         settings: ActionSettings | None = None,
         now: Callable[[], datetime] = _utc_now,
         new_id: Callable[[], UUID] = uuid4,
@@ -148,6 +164,7 @@ class ActionService:
         self._dispatcher = dispatcher or NullDispatcher()
         self._writer = writer
         self._approver = approver or NullApprover()
+        self._core = core
         self._settings = settings or ActionSettings()
         self._now = now
         self._new_id = new_id
@@ -156,6 +173,8 @@ class ActionService:
         """What a message asks for, and what became of it. A message that asks for none of the
         skills is ``NO_ACTION``: it is to be answered as a question."""
         now = self._now()
+        if self._core is not None:
+            await self._core.ensure(self._store, principal.tenant_id, now=now)
         pending = await self._store.get_pending(
             principal.tenant_id, principal.acts_as, principal.device_id
         )
@@ -560,6 +579,7 @@ class ActionService:
         assert stored.enabled is not None  # noqa: S101
         manifest = stored.enabled.manifest
         language = understood.language
+        core = self._core_skill_of(stored)
         planned = await self._planned(
             principal, understood, decision, plan=plan, confirmed=confirmed, approval=approval
         )
@@ -601,9 +621,15 @@ class ActionService:
             timeout_s=manifest.timeout_s,
             plan=plan,
         )
+        ran: _Ran
         try:
             async with asyncio.timeout(manifest.timeout_s + self._settings.run_margin_s):
-                result = await self._runner.run(request)
+                if core is not None:
+                    done = await core.run(request, principal)
+                    ran = _Ran(done.message, done.commands, False, done.audit)
+                else:
+                    result = await self._runner.run(request)
+                    ran = _Ran(result.message, result.commands, result.dry_run, None)
         except RunnerUnavailableError as error:
             logger.warning(
                 "the runner could not run a skill",
@@ -632,7 +658,7 @@ class ActionService:
                 f"the skill failed: {reason}"[:MAX_FAILURE_DETAIL_CHARS],
             )
 
-        if result.dry_run:
+        if ran.dry_run:
             return await settle(
                 ActStatus.DONE,
                 None,
@@ -640,7 +666,7 @@ class ActionService:
                 ActionResult.NOT_EXECUTED,
                 "dry run: nothing was run",
             )
-        given = await self._give(principal, understood, result)
+        given = await self._give(principal, understood, ran.commands)
         failed = next((outcome for outcome in given if not outcome.succeeded), None)
         if failed is not None:
             return await settle(
@@ -653,10 +679,14 @@ class ActionService:
         return await settle(
             ActStatus.DONE,
             None,
-            _clip(result.message, MAX_REPLY_CHARS) if result.message else say(language, Say.DONE),
+            _clip(ran.message, MAX_REPLY_CHARS) if ran.message else say(language, Say.DONE),
             ActionResult.EXECUTED,
-            _with_plan(None, plan),
+            _with_plan(ran.audit, plan),
         )
+
+    def _core_skill_of(self, stored: SkillStore) -> CoreSkill | None:
+        """The skill of the platform that the version which runs is, if it is one."""
+        return None if self._core is None else self._core.recognize(stored)
 
     async def _planned(
         self,
@@ -675,6 +705,8 @@ class ActionService:
         stored = understood.candidate.skill
         assert stored.enabled is not None  # noqa: S101
         manifest = stored.enabled.manifest
+        if self._core_skill_of(stored) is not None:
+            return None  # what it does is code, and not what a model writes
         if manifest.mode is not SkillMode.INSTRUCTIONS or self._writer is None:
             return None
         granted = stored.enabled.granted or SkillPermissions()
@@ -730,13 +762,15 @@ class ActionService:
             )
 
     async def _give(
-        self, principal: Principal, understood: Understood, result: RunResult
+        self, principal: Principal, understood: Understood, commands: Sequence[DeviceCommand]
     ) -> list[CommandResult]:
         """Have a device do what the skill answered with, after the checks. The device is the one
         the skill was aimed at if it acts on a system device, and the one that was spoken to
         otherwise: a script cannot choose it, and a command the device did not declare it can run is
-        not given."""
-        if not result.commands:
+        not given. The commands are given in order and the first that is not done stops the rest:
+        what follows a step that did not happen (the third sentence of an announcement whose second
+        was refused) is not given."""
+        if not commands:
             return []
         target = understood.target
         device_id: DeviceId | None = (
@@ -748,27 +782,24 @@ class ActionService:
             else await self._directory.system_device(principal.tenant_id, device_id)
         )
         given: list[CommandResult] = []
-        for command in result.commands:
+        for command in commands:
             if record is None:
-                given.append(
-                    CommandResult(
-                        status=CommandStatus.UNSUPPORTED, detail="there is no device for it"
-                    )
+                done = CommandResult(
+                    status=CommandStatus.UNSUPPORTED, detail="there is no device for it"
                 )
             elif command.requires not in record.capabilities:
-                given.append(
-                    CommandResult(
-                        status=CommandStatus.UNSUPPORTED,
-                        detail=f"the device did not declare {command.requires.value!r}",
-                    )
+                done = CommandResult(
+                    status=CommandStatus.UNSUPPORTED,
+                    detail=f"the device did not declare {command.requires.value!r}",
                 )
             else:
                 try:
-                    given.append(
-                        await self._dispatcher.dispatch(principal.tenant_id, record.id, command)
-                    )
+                    done = await self._dispatcher.dispatch(principal.tenant_id, record.id, command)
                 except FactotumError as error:
-                    given.append(CommandResult(status=CommandStatus.FAILED, detail=error.message))
+                    done = CommandResult(status=CommandStatus.FAILED, detail=error.message)
+            given.append(done)
+            if not done.succeeded:
+                break
         return given
 
     # ---- what is left behind ------------------------------------------------------------------

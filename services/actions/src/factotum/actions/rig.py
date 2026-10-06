@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from factotum.actions.confirmations import ConfirmationReader
+from factotum.actions.core import CoreSkills
 from factotum.actions.directory import DeviceDirectory, FileDeviceDirectory
 from factotum.actions.execution import CommandDispatcher, SkillRunner
 from factotum.actions.instructions.testing import LocalRunner
@@ -57,19 +58,23 @@ class FakeRunner:
 
 
 class FakeDispatcher:
-    """A dispatcher that keeps the commands it was given, and answers OK unless told otherwise."""
+    """A dispatcher that keeps the commands it was given, and answers OK unless told otherwise:
+    ``answers`` are what it says to the next commands, in order, and ``answer`` is what it says
+    when there are none left."""
 
     def __init__(self) -> None:
         self.given: list[tuple[TenantId, DeviceId, DeviceCommand]] = []
         self.answer: CommandResult | Exception = CommandResult.ok()
+        self.answers: list[CommandResult | Exception] = []
 
     async def dispatch(
         self, tenant_id: TenantId, device_id: DeviceId, command: DeviceCommand
     ) -> CommandResult:
         self.given.append((tenant_id, device_id, command))
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return self.answer
+        answer = self.answers.pop(0) if self.answers else self.answer
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
 
 class FakeApprover:
@@ -179,13 +184,16 @@ class ActionsRig:
         embedder: Embedder | None = None,
         patience_s: float | None = None,
         instructions: bool = False,
+        core: CoreSkills | None = None,
     ) -> None:
         """``instructions`` sets the service up to write and run the plans of skills that have no
         script (its model is the same scripted one, asked after the reading of the message).
         ``chat`` and ``embedder`` are real models for a test that measures them; without them
         the doubles are used, and ``plans`` and ``embedder`` are how they are told what to do.
         ``patience_s`` is how long each model is waited for, where the defaults would give up on a
-        model that is only slow, which is not what such a test measures."""
+        model that is only slow, which is not what such a test measures. ``core`` is the skills of
+        the platform that the service is given (it has none without)."""
+        self.core = core
         self.tenant = make_tenant_id()
         self.user = make_user_id()
         self.home: Home = parse_home(home_text, tenant_id=self.tenant, user_id=self.user)
@@ -224,6 +232,7 @@ class ActionsRig:
             dispatcher=self._dispatcher,
             writer=self._writer,
             approver=self.approver,
+            core=self.core,
             settings=self._settings,
             now=self.clock,
         )

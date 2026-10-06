@@ -6,7 +6,9 @@ from uuid import uuid4
 import pytest
 
 from factotum.actions.catalog import Catalog
+from factotum.actions.core import platform_skills
 from factotum.actions.rig import ActionsRig
+from factotum.actions.testing import FakeSpeech
 from factotum.contracts.actions import SkillEnable, SkillInstall, SkillOwner
 from factotum.contracts.errors import (
     ConflictError,
@@ -17,6 +19,7 @@ from factotum.contracts.errors import (
 )
 from factotum.contracts.identity import Owner, Principal, Role, Subject
 from factotum.contracts.ids import SkillId, TenantId, UserId
+from factotum.contracts.skills import SkillMode
 
 ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES = ROOT / "skills" / "examples"
@@ -522,7 +525,6 @@ class TestReadingAFolder:
         assert read.problems == ()
         assert sorted(read.enabled) == [
             "air-quality@1",
-            "announce@1",
             "garage-door@1",
             "lamp@1",
             "movie-scene@1",
@@ -536,3 +538,112 @@ class TestReadingAFolder:
         assert "scripts/run.py" in files
         # a skill that is instructions has no files: what it says is the text of the document
         assert await rig.store.get_files(rig.tenant, by_name["movie-scene"], 1) == {}
+
+
+class TestTheSkillsOfThePlatform:
+    """ADR 0026: what the platform provides is there, enabled, for a tenant that has not yet said a
+    word, so that an administrator who opens the catalog first sees what the assistant can do."""
+
+    @staticmethod
+    def with_core(rig: ActionsRig) -> Catalog:
+        return Catalog(rig.store, rig.index, core=platform_skills(FakeSpeech()), now=rig.clock)
+
+    async def test_what_an_administrator_first_sees_is_the_skills_of_the_platform_enabled(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+
+        [skill] = (await self.with_core(rig).list(rig.principal(None))).skills
+
+        assert (skill.name, skill.owner, skill.mode) == (
+            "announce",
+            rig.shared_owner,
+            SkillMode.INSTRUCTIONS,
+        )
+        assert (skill.latest_version, skill.enabled_version) == (1, 1)
+
+    async def test_so_does_a_member_of_the_household(self) -> None:
+        rig = ActionsRig()
+
+        listed = await self.with_core(rig).list(member(rig))
+
+        assert [skill.name for skill in listed.skills] == ["announce"]
+
+    async def test_what_is_granted_to_it_is_what_it_declares_and_it_was_nobodys_review(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        catalog = self.with_core(rig)
+        admin = rig.principal(None)
+        [skill] = (await catalog.list(admin)).skills
+
+        detail = await catalog.get(admin, skill.id)
+
+        assert detail.granted == detail.manifest.permissions
+        assert detail.versions[0].enabled
+        assert detail.versions[0].enabled_by is None  # the platform enabled it, and no person
+
+    async def test_a_device_is_not_a_way_to_have_them_installed(self) -> None:
+        rig = ActionsRig()
+
+        with pytest.raises(PolicyViolationError, match="never through a device"):
+            await self.with_core(rig).list(rig.principal("Kitchen speaker"))
+
+        assert await rig.store.list_skills(rig.tenant, [rig.shared_owner]) == []
+
+    async def test_a_catalog_that_was_given_none_has_none(self) -> None:
+        rig = ActionsRig()
+
+        assert (await catalog_of(rig).list(rig.principal(None))).skills == ()
+
+    async def test_an_administrator_who_installs_a_skill_first_finds_the_platforms_there_too(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        catalog = self.with_core(rig)
+        admin = rig.principal(None)
+
+        await catalog.install(admin, SkillInstall(source=NOTES))
+
+        # what the store has, and not what a listing would have put there
+        stored = await rig.store.list_skills(rig.tenant, [rig.shared_owner])
+        assert [skill.name for skill in stored] == ["announce", "notes"]
+        announce = stored[0]
+        assert [meta.version for meta in announce.versions] == [1]
+        assert announce.enabled is not None
+
+    async def test_a_folder_that_is_read_finds_them_there_too(self, tmp_path: Path) -> None:
+        write_skill(tmp_path, "weather", WEATHER)
+        rig = ActionsRig()
+        catalog = Catalog(
+            rig.store, rig.index, folder=tmp_path, core=platform_skills(FakeSpeech()), now=rig.clock
+        )
+
+        await catalog.reload(rig.principal(None))
+
+        stored = await rig.store.list_skills(rig.tenant, [rig.shared_owner], enabled_only=True)
+        assert [skill.name for skill in stored] == ["announce"]  # weather is installed, not enabled
+
+    async def test_one_that_an_administrator_disables_stays_disabled(self) -> None:
+        rig = ActionsRig()
+        catalog = self.with_core(rig)
+        admin = rig.principal(None)
+        [skill] = (await catalog.list(admin)).skills
+        await catalog.disable(admin, skill.id)
+
+        [still] = (await self.with_core(rig).list(admin)).skills  # a service that was restarted
+
+        assert still.enabled_version is None
+
+    async def test_two_tenants_are_each_given_their_own_and_see_no_other(self) -> None:
+        one, two = ActionsRig(), ActionsRig()
+        speech = FakeSpeech()
+        core = platform_skills(speech)
+        mine = Catalog(one.store, one.index, core=core, now=one.clock)
+        yours = Catalog(two.store, two.index, core=core, now=two.clock)
+
+        [first] = (await mine.list(one.principal(None))).skills
+        [second] = (await yours.list(two.principal(None))).skills
+
+        assert first.id != second.id
+        assert (first.tenant_id, second.tenant_id) == (one.tenant, two.tenant)

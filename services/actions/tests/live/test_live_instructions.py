@@ -15,9 +15,11 @@ Opt-in, because it needs a running Ollama with the models pulled:
 
 *Right* is what a web server that this test runs was asked, and what a device was told to say: a
 plan is not judged by how it reads but by what it does, and it is run by the program that the
-sandbox runs. The skills are the ones that come with the project, and five more that are written
-here and that nothing was tuned on (they say how a model does with a skill it has not been shown
-anything like).
+sandbox runs. The skills are the ones that come with the project, one more that was one of them
+(``shout``: what the example ``announce`` was before the platform took that name for a skill of its
+own, ADR 0026) and five that are written here and that nothing was tuned on (they say how a model
+does with a skill it has not been shown anything like). What the platform's own ``announce`` comes
+to, through the model that reads the message, is the last test.
 """
 
 import json
@@ -34,6 +36,7 @@ import httpx
 import pytest
 
 from factotum.actions.catalog import Catalog
+from factotum.actions.core import platform_skills
 from factotum.actions.instructions.checks import check_plan
 from factotum.actions.instructions.executor import Context, StepError, run
 from factotum.actions.instructions.testing import FakeWeb
@@ -41,6 +44,7 @@ from factotum.actions.instructions.writer import PlanInputs, PlanWriter
 from factotum.actions.rig import ActionsRig
 from factotum.actions.runner_client import hosts_of
 from factotum.actions.skills import LoadedSkill, load_folder
+from factotum.actions.testing import FakeSpeech
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
 from factotum.common.urlguard import UrlPolicy
@@ -94,7 +98,28 @@ TOKEN = "the-token-of-the-home"
 TOPIC = "the-topic-of-the-home"
 TRACK_KEY = "the-key-of-the-tracking-service"
 
-# ---- five skills that nothing was tuned on ----------------------------------------------------
+# ---- a skill that a person taught, and five that nothing was tuned on ------------------------
+
+SHOUT = """\
+---
+name: shout
+description: Say something out loud on a device, such as that dinner is ready.
+examples:
+  - shout that dinner is ready
+  - say loudly on the living room display that the guests have arrived
+  - say that it is time to go
+  - grida in cucina che la cena è pronta
+  - dì in salotto che è ora di andare
+target: system
+parameters:
+  message: {type: string, description: "what to say, as the person said it"}
+required: [message]
+effect: reversible
+---
+Have the device say the message out loud: one `speak` command, with the message as its text. The
+device is the one that was named, or the one that was spoken to when none was. There is nothing to
+reach on the network, so nothing is granted.
+"""
 
 THERMOSTAT = """\
 ---
@@ -213,6 +238,7 @@ Say where the parcel is, in the language of the message.
 """
 
 HELD_OUT = {
+    "shout": SHOUT,
     "thermostat": THERMOSTAT,
     "notify": NOTIFY,
     "garage-state": GARAGE_STATE,
@@ -237,10 +263,10 @@ THERMOSTAT_OF = {"host": "ha.local", "entity_id": "climate.living_room"}
 DOOR_OF = {"host": "ha.local", "entity_id": "cover.garage"}
 
 CASES = (
-    Case("announce", {"message": "Dinner is ready"}, "en"),
-    Case("announce", {"message": "the guests have arrived"}, "en"),
-    Case("announce", {"message": "la cena è pronta, venite a tavola"}, "it"),
-    Case("announce", {"message": 'Tom said "come here" \U0001f600'}, "en"),
+    Case("shout", {"message": "Dinner is ready"}, "en"),
+    Case("shout", {"message": "the guests have arrived"}, "en"),
+    Case("shout", {"message": "la cena è pronta, venite a tavola"}, "it"),
+    Case("shout", {"message": 'Tom said "come here" \U0001f600'}, "en"),
     Case("movie-scene", {}, "en"),
     Case("movie-scene", {}, "it"),
     Case("air-quality", {"place": "Rome"}, "en"),
@@ -261,7 +287,8 @@ CASES = (
     Case("parcel", {"number": "AB987654321XY"}, "it"),
 )
 
-SHIPPED = {"announce", "movie-scene", "air-quality"}
+SHIPPED = {"movie-scene", "air-quality"}
+TUNED_ON = SHIPPED | {"shout"}
 
 Answer = dict[str, Any]
 """What the program that runs a plan answers: the ``message`` to say, the ``commands`` to give."""
@@ -299,7 +326,7 @@ def spoken(answer: Answer) -> list[str]:
     return [*said, answer.get("message") or ""]
 
 
-def wrong_announce(case: Case, answer: Answer, web: FakeWeb) -> list[str]:
+def wrong_shout(case: Case, answer: Answer, web: FakeWeb) -> list[str]:
     problems = []
     if answer["commands"] != [{"name": "speak", "text": case.values["message"]}]:
         problems.append(f"it gave {answer['commands']}")
@@ -410,7 +437,7 @@ def wrong_coffee(case: Case, answer: Answer, web: FakeWeb) -> list[str]:
 
 
 JUDGES: dict[str, Callable[[Case, Answer, FakeWeb], list[str]]] = {
-    "announce": wrong_announce,
+    "shout": wrong_shout,
     "movie-scene": wrong_movie_scene,
     "air-quality": wrong_air_quality,
     "thermostat": wrong_thermostat,
@@ -626,7 +653,7 @@ async def test_a_model_writes_plans_that_the_checks_accept_and_that_do_what_the_
         skills = skills_by_name(tmp_path)
         skills.update({s.manifest.name: s for s in load_folder(EXAMPLES)[0]})
         # The first call loads the model: it is not what a plan pays for, so it is not measured.
-        await write_and_run(opened, skills["announce"], CASES[0])
+        await write_and_run(opened, skills["shout"], CASES[0])
         judged = [await write_and_run(opened, skills[case.skill], case) for case in CASES]
     finally:
         await close_gateway(opened)
@@ -640,7 +667,9 @@ async def test_a_model_writes_plans_that_the_checks_accept_and_that_do_what_the_
 
     print(f"\n  plan writer {model}: {len(judged)} plans, embeddings and reading by {FAST_MODEL}")
     share("the skills that come with the project", [j for j in judged if j.case.skill in SHIPPED])
-    share("skills that nothing was tuned on   ", [j for j in judged if j.case.skill not in SHIPPED])
+    share(
+        "skills that nothing was tuned on   ", [j for j in judged if j.case.skill not in TUNED_ON]
+    )
     by_skill: dict[str, list[Judged]] = {}
     for j in judged:
         by_skill.setdefault(j.case.skill, []).append(j)
@@ -706,11 +735,13 @@ MESSAGES = (
 
 
 def wrong_announced(case: Case, answer: Answer, web: FakeWeb) -> list[str]:
-    """What a person said is not what a model has to repeat letter for letter."""
-    given = [c for c in answer["commands"] if c.get("name") == "speak"]
+    """What a person said is not what a model has to repeat letter for letter. What the platform's
+    ``announce`` gives a device is a clip for each part of the message (``play_audio``), with the
+    words that it was made from."""
+    given = [c for c in answer["commands"] if c.get("name") == "play_audio"]
     wanted = str(case.values["message"]).casefold()
     if len(answer["commands"]) != 1 or len(given) != 1:
-        return [f"it gave {answer['commands']}"]
+        return [f"it gave {[c.get('name') for c in answer['commands']]}"]
     if given[0]["text"].strip().strip(".!").casefold() != wanted:
         return [f"it said {given[0]['text']!r}"]
     return ["it reached the web"] if web.seen else []
@@ -748,6 +779,7 @@ async def test_a_message_becomes_what_the_skill_says_through_both_models(
                 embedder=opened.embedder,
                 patience_s=PATIENCE_S,
                 instructions=True,
+                core=platform_skills(FakeSpeech()),  # `announce` is the platform's, not a folder's
             )
             rig.use_local_runner(secrets=f'tenant:\n  HA_TOKEN: "{TOKEN}"\n')
             catalog = Catalog(

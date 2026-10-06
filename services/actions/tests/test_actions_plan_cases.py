@@ -8,9 +8,11 @@ from typing import Any
 
 import pytest
 
+from factotum.actions.core import platform_skills
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PHONE, PLAN_CASES, PlanCase
 from factotum.actions.rig import ActionsRig, plan_of
 from factotum.actions.skills import load_folder
+from factotum.actions.testing import FakeSpeech
 from factotum.actions.values import check_values
 from factotum.contracts.actions import ActStatus
 from factotum.contracts.skills import SkillManifest, SkillTarget
@@ -26,9 +28,11 @@ ITALIAN = (
 
 
 def manifests() -> dict[str, SkillManifest]:
+    """The skills of the example home: those of the folder, and those that the platform provides."""
     skills, problems = load_folder(EXAMPLES)
     assert problems == []
-    return {skill.manifest.name: skill.manifest for skill in skills}
+    found = {skill.manifest.name: skill.manifest for skill in skills}
+    return {**found, **platform_skills(FakeSpeech()).manifests()}
 
 
 def ideal_plan(case: PlanCase) -> dict[str, Any]:
@@ -120,7 +124,7 @@ def case_id(index: int, case: PlanCase) -> str:
 async def test_a_planner_that_reads_it_right_gets_the_outcome_the_case_expects(
     case: PlanCase,
 ) -> None:
-    rig = ActionsRig(home_text=HOME_TEXT)
+    rig = ActionsRig(home_text=HOME_TEXT, core=platform_skills(FakeSpeech()))
     skills, _ = load_folder(EXAMPLES)
     for skill in skills:  # enabled but not indexed: every one of them is offered to the model
         installed = await rig.store.install(rig.tenant, rig.shared_owner, skill, now=rig.clock())
