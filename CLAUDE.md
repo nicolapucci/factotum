@@ -41,6 +41,8 @@ uv run factotum-terminal --profile smart-display
 # the same with no hardware: a recording in a file is streamed as a microphone would, and what is
 # said comes back as a file (the client that tests the whole stack)
 uv run factotum-terminal --profile speaker --wav-in question.wav --wav-out answer.wav
+# the program of a real device on this machine, with a push to talk (docs/device.md): settings, check, run
+uv run factotum-device init && uv run factotum-device doctor && uv run factotum-device
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```
@@ -131,6 +133,19 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   for an answer that was left is dropped in silence (it is nobody's bug), and what the edge gets wrong
   is a `violation`, said loudly. `stay_connected` does not ask again of an edge that refused the
   device or replaced it with its twin. Do not copy the protocol into a client.
+- **A device application is the core, the library of the sound hardware and its settings** (ADR 0025).
+  Everything that is a sound card goes through `AudioBackend` (`factotum.client_audio`) and
+  `sounddevice` is imported in one place, when it is first needed. A device declares only what it has
+  hands for (`audio_in`, `audio_out`), and a text to say (`speak`) is *unsupported* by it and the skill
+  is told, never `ok`: a device with no voice that answered `ok` would leave a trail that says an
+  announcement was made which nobody heard (the voice is the gateway's, which a device does not
+  reach). The volume is the speaker's own, in software, and the system's is left alone. The two
+  secrets of a device (its credential, the key of the wake word) are in the environment, which wins
+  over the file, and in no line it says and no error. A push to talk needs a keyboard, so a service
+  listens for a word. A supervisor restarts a device for what failed (exit code 1) and never for what
+  the edge decided (3 to 6: asking again is the two connections of one device taking it from each
+  other for ever). `doctor` connects *as the device*, and the edge keeps the last connection:
+  `--no-edge` when one is running.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
@@ -202,7 +217,21 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   devices and skills would): do not take a command that was heard well once for one that is.
 - Tests import `--import-mode=importlib`: one test module cannot import another, so what tests share
   lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`,
-  `factotum.client_core.testing`: the fakes of every port of a client, and `ClientRig`).
+  `factotum.client_core.testing`: the fakes of every port of a client, and `ClientRig`;
+  `factotum.client_audio.testing`: a sound card and a key that a test plays; `factotum.device.testing`:
+  settings and an edge that a test plays).
+- A fake that is looser than the real thing hides what the real thing does: the key of a test
+  (`KeyPresses.pending`) never looked at the presses that were waiting, which `EnterKey` does, so a
+  press that came after what was said was over began another thing to say and no test noticed. A test
+  of the pair feeds the real key a line at a time (`Typing`, in `test_client_audio_inputs.py`), and a
+  fake that is asked something remembers what it was asked (`FakeBackend.checked`), or what was
+  asked of it at the wrong rate looks right.
+- `logging.basicConfig(level=...)` does nothing once the root logger has a handler (pytest's, a
+  library's): the level is set on the logger. Under a service standard input is the end of a file and
+  standard output a pipe (not written until it is full: a line is flushed as it is written), so a
+  push to talk ends at once and says so.
+- Windows lists the same hardware once for each host API (45 entries for a handful of devices) and
+  `sounddevice` refuses a part of a name that fits more than one: a device is chosen by its number.
 - Starlette's `TestClient` is unusable here (its deprecation warning is an error): what needs a
   WebSocket runs on a real one, with uvicorn (`ws="websockets-sansio"`, the implementation that is
   not deprecated) and the `websockets` client, as `factotum.edge.testing.serving` does.

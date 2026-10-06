@@ -18,10 +18,12 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 > which skill does it and whether this device may have it done, asks for a yes when it must, runs the
 > skill (its script in a container of its own, that reaches only the hosts it was granted; or, for a
 > skill that is only words, a plan that a model writes and that code checks before the same container
-> runs it) and has a device do what it answers with, and keeps a trail of it; and a basic voice
-> pipeline (Slice 8): a device's own wake word, speech-to-text and text-to-speech through two local
-> providers in the gateway, one recording and one spoken answer at a time. Linked accounts, a real
-> stream of audio instead, and the web app are not built yet. See
+> runs it) and has a device do what it answers with, and keeps a trail of it; and a voice pipeline
+> (Slice 8, in beta): a device hears a person by a key or by its own wake word, what they say streams
+> to the edge as they say it and stops the answer that is going on, speech-to-text and
+> text-to-speech go through two local providers in the gateway, and the sound of the answer streams
+> back and is played as it arrives, by the software of a device (`factotum-device`, for a PC and a
+> Raspberry Pi). Linked accounts and the web app are not built yet. See
 > the roadmap in [`docs/design.md`](docs/design.md).
 
 ## Principles
@@ -49,6 +51,7 @@ A self-hosted voice assistant that answers from **your own documents** and from 
 | [`docs/knowledge.md`](docs/knowledge.md) | The knowledge service: from a file to a passage, hybrid search, ownership, API, what was measured |
 | [`docs/conversation.md`](docs/conversation.md) | The conversation service: a turn with no history, the log searched when a message refers to it, API, what was measured |
 | [`docs/edge.md`](docs/edge.md) | The edge: the protocol of the devices, what each is sent, commands, the client core and the terminal client, API, what was measured |
+| [`docs/device.md`](docs/device.md) | The device application: a speaker with a microphone for a PC and a Raspberry Pi, its settings, how a person is heard, `doctor`, running it as a service |
 | [`docs/actions.md`](docs/actions.md) | The actions service: skills, choosing one, deciding, confirmations and approvals, running them, the audit trail, API, what was measured |
 | [`docs/skills.md`](docs/skills.md) | Writing skills: the `SKILL.md`, scripts, and instructions that a model turns into a plan (the language of a plan, what is checked, what a small model does with it) |
 | [`docs/runner.md`](docs/runner.md) | The runner and the egress proxy: a container for each run, the grant that says where it may go, secrets, how it is deployed and tested, what was measured |

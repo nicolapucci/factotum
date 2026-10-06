@@ -19,7 +19,10 @@ registers and pairs them (slice 7b, [`hub.md`](hub.md)), an HTTP API, a containe
 core that the software of every device is made of
 ([ADR 0024](decisions/0024-the-client-core-one-implementation-of-the-protocol-for-every-client.md)),
 a terminal client that is a device (`factotum-terminal`, with `--voice` for a real microphone and
-speaker, and `--wav-in` and `--wav-out` for none), and (slice 5b) the `actions` service giving a device the
+speaker, and `--wav-in` and `--wav-out` for none), the program of a real device for a PC and a
+Raspberry Pi (`factotum-device`, [`device.md`](device.md), [ADR
+0025](decisions/0025-the-device-application-one-program-for-a-pc-and-a-raspberry-pi.md)), and (slice
+5b) the `actions` service giving a device the
 commands a skill answers with, through the endpoint below, once it has decided that the device may
 have something done ([`actions.md`](actions.md)). *Not yet*: partial transcripts, the edge
 deciding where speech ends, pacing the sound it sends, and a device hearing its wake word over its
@@ -415,6 +418,12 @@ A client is tried with `factotum.client_core.testing`: a connection that a test 
 (`MemoryConnection`), a client with a fake for each port (`ClientRig`), and speakers that remember
 what they were given (`FakeVoiceOutput`, `FakeVoiceSink`, `FakeMarkedSink`, `FakeSpeaker`).
 
+A client with a real sound card has the hardware that is the same for every one of them in a library
+of its own, `factotum.client_audio` (a microphone, a speaker with a volume, where speech ends, a key
+and a wake word as a `VoiceInput`, all behind a backend that a test plays): the terminal and the
+device application are made of it. The device application (`factotum-device`,
+[`device.md`](device.md)) is the core, that library and its settings, and runs `stay_connected`.
+
 ## The terminal client
 
 `factotum-terminal` is a client of the core with the hardware of a terminal: a console for a renderer
@@ -530,6 +539,15 @@ Or, with no microphone and no key, say a recording that is in a file and keep wh
 uv run factotum-terminal --profile speaker --wav-in question.wav --wav-out answer.wav
 ```
 
+Or be the real device on this machine, with a push to talk (Enter) and no key for a wake word
+([`device.md`](device.md#trying-it)):
+
+```bash
+uv run factotum-device init                                              # once: the file of settings
+FACTOTUM_DEVICE_TOKEN=kitchen-dev-token uv run factotum-device doctor    # what is wrong, if anything
+FACTOTUM_DEVICE_TOKEN=kitchen-dev-token uv run factotum-device           # press Enter and speak
+```
+
 ## Tests
 
 The edge is tested through its interfaces: sessions over an in-memory wire and a conversation
@@ -552,7 +570,9 @@ and model-gateway services ([`development.md`](development.md#end-to-end-tests))
 is no client reads the frames the edge sent and a voice is served from the gateway on a real
 socket. A series of more than eighty commands, said to three devices of the example home at once and
 each on the one connection it holds, is judged from what the planner proposed to what each device
-did and what the audit trail says ([`development.md`](development.md#end-to-end-tests)).
+did and what the audit trail says ([`development.md`](development.md#end-to-end-tests)). The
+device application is run against the whole assistant in the same place, with a sound card and a
+key that a test plays and the edge on a real socket (`e2e/tests/test_e2e_device_app.py`).
 
 ## Measured
 

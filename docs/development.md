@@ -41,9 +41,13 @@ libs/db/          the Postgres pool, migrations and the harness for tests agains
 libs/model_client/ how a service reaches the model gateway: chat, streamed chat, embeddings, profiles
 libs/client_core/ what every client of the edge shares: the protocol, the sound of an answer, the
                   conversation by voice, staying connected, and the ports that hardware plugs into
+libs/client_audio/ the sound hardware that clients share: a microphone, a speaker with a volume,
+                  where speech ends, a key and a wake word as the ports of a client, and a sound
+                  card that a test plays
 services/         one folder per service (so far: model_gateway, knowledge, conversation, edge, actions, runner, egress, hub)
 clients/          the devices that talk to the edge, made of the client core (so far: terminal, a
-                  device in a terminal)
+                  device in a terminal, and device, the program of a speaker with a microphone for a
+                  PC and a Raspberry Pi)
 e2e/              the end-to-end tests, and the rig they share: every service in one process,
                   from a device to the models
 config/           example configuration, such as the model bindings
@@ -182,6 +186,17 @@ all the same) were each noticed, one of them only once the series had a phone wi
 skill that reaches the weather does it over https, which the stand-in of the web does not speak, so
 the runner of the house prints what it would have (`HouseRunner.canned`) and keeps the job it was
 given.
+
+**The device application** is run against the same house in `test_e2e_device_app.py`
+(`factotum-device` as it will be on a PC or a Raspberry Pi, with a sound card and a key that a test
+plays and the edge on a real socket): a person presses the key and says a question (the blocks the
+microphone hands over carry the words of the stand-in speech), the answer comes back as the voice of
+the assistant and is given to the speaker as it arrives, a command that a skill answers with is run
+by the hands of the device (a volume that is turned down), a text to say is what the device cannot do
+and the skill is told so, a credential that the edge does not know is refused and not asked for
+again, and the doctor says which setting to look at. It runs in memory and in Postgres. What a sound
+card does is the audio library's to test, and what a person hears is for a person who runs
+`factotum-device doctor --play`.
 
 A document can be a file: a PDF is uploaded as a person uploads it, read by the knowledge service in
 a process of its own, and answered from with the page it is on; a Word file with its heading; an
@@ -339,6 +354,9 @@ uv run factotum-terminal --profile speaker --wav-in question.wav --wav-out answe
 
 The tests of the terminal run against a real edge served by uvicorn on a loopback port, so they need
 no Docker.
+
+The program of a real device, with a push to talk (Enter) and no key for a wake word, is described in
+[`device.md`](device.md#trying-it): `uv run factotum-device init`, `doctor`, then run it.
 
 ## Trying the actions
 

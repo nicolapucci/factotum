@@ -2,8 +2,8 @@
 
 Status: **Slices 0 to 6 are implemented, and slices 7a-7d**: the foundations and shared contracts, the
 `model-gateway`, `knowledge`, `conversation`, `edge`, `actions`, `runner`, `egress` and `hub`
-services, a client core that every device's software is made of, and a terminal client that is a
-device. Of the hub, its tenant, its users, the tokens every
+services, a client core that every device's software is made of, a terminal client that is a device,
+and the device application for a PC and a Raspberry Pi. Of the hub, its tenant, its users, the tokens every
 service checks, a device's pairing, the external devices a skill is bound to, the models bound to a
 role, and now the secrets a skill is given are there: its spaces and linked accounts are not slices
 of their own yet, and a skill that needs a linked account or an approval does not run until they are.
@@ -11,7 +11,7 @@ Sections say whether something is *implemented* or *planned*.
 The reasons behind the biggest decisions live in [`decisions/`](decisions/README.md); the services
 have their own documents, [`model-gateway.md`](model-gateway.md), [`knowledge.md`](knowledge.md),
 [`conversation.md`](conversation.md), [`edge.md`](edge.md), [`actions.md`](actions.md),
-[`runner.md`](runner.md) and [`hub.md`](hub.md).
+[`runner.md`](runner.md), [`hub.md`](hub.md) and, for a device's software, [`device.md`](device.md).
 
 ## 1. What Factotum is
 
@@ -172,7 +172,10 @@ are registered in a YAML file and the edge only runs in development. What every 
 protocol is one library, `factotum.client_core` ([ADR 0024](decisions/0024-the-client-core-one-implementation-of-the-protocol-for-every-client.md)):
 a client is that and the ports of what its device has (a microphone, a speaker, a screen, hands for a
 volume), and declares what it was given. `factotum-terminal` is a device in a terminal, with a
-profile for each kind of device.
+profile for each kind of device, and `factotum-device` is the program of a real one: a speaker with
+a microphone, on a PC or a Raspberry Pi, that a person speaks to by a key or a wake word
+([ADR 0025](decisions/0025-the-device-application-one-program-for-a-pc-and-a-raspberry-pi.md),
+[`device.md`](device.md)).
 
 **External devices** (lights, a TV...) are registered by hand, through the hub, and have no built-in
 methods: everything they can do is supplied by skills the user explicitly binds to them. A
@@ -373,7 +376,7 @@ answer and other things than actions, voice.
 | 7b | `hub`: a device's pairing, the external devices a skill is bound to | done |
 | 7c | `hub`: model bindings, the gateway reading them from it, a real delegation for `actions`, `conversation` and `knowledge` | done |
 | 7d | `hub`: skill secrets, the actions service reading them from it | done |
-| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway; what a person says streams in to the edge and interrupts the answer as it begins (ADR 0022), and the sound of the answer streams out, from the gateway through the edge to a device that says it takes it (ADR 0023); the client core that every client shares (ADR 0024); still owed: the real client for a PC and a Raspberry Pi, and hearing a wake word over the device's own voice | beta |
+| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway; what a person says streams in to the edge and interrupts the answer as it begins (ADR 0022), and the sound of the answer streams out, from the gateway through the edge to a device that says it takes it (ADR 0023); the client core that every client shares (ADR 0024); the device application, push to talk first and the wake word behind the same port, over a library of the sound hardware (ADR 0025); still owed: a text that a skill asks to be said, said by a device (the edge making the voice), a conversation by voice tried on the hardware, and hearing a wake word over the device's own voice | beta |
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |
 
