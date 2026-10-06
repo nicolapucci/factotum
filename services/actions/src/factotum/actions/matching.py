@@ -139,6 +139,11 @@ class SkillMatcher:
         self._max_unscored = max_unscored
         self._timeout_s = timeout_s
 
+    @property
+    def index(self) -> SkillIndex:
+        """What measures the skills, for whoever enables one and is to have it found by meaning."""
+        return self._index
+
     async def candidates(self, principal: Principal, message: str) -> Candidates:
         """The skills of the caller that the message may be asking for, the nearest first, then the
         ones that could not be measured."""

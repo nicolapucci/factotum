@@ -109,15 +109,17 @@ class CoreSkills:
 
     async def ensure(
         self, store: ActionsStore, tenant_id: TenantId, *, now: datetime
-    ) -> tuple[str, ...]:
+    ) -> tuple[StoredSkill, ...]:
         """Have the skills of the platform installed for a tenant, and enabled when nobody ever
         enabled that version of them: a first time, a version that the platform did not carry
         before, or one that was installed and never enabled because the service stopped in between.
         A version that was enabled and then disabled stays disabled. Done once for a tenant for as
-        long as the service runs; the names of those that were enabled now."""
+        long as the service runs; the skills that were enabled now, which whoever asked is to have
+        indexed by meaning (a skill that is not is offered to a model unscored, for every message
+        until it is)."""
         if tenant_id in self._ready:
             return ()
-        enabled_now: list[str] = []
+        enabled_now: list[StoredSkill] = []
         async with self._lock:
             if tenant_id in self._ready:
                 return ()
@@ -126,7 +128,7 @@ class CoreSkills:
                 installed = await store.install(tenant_id, owner, core.loaded, now=now)
                 held = await store.get_version(tenant_id, installed.skill_id, installed.version)
                 if held is not None and held.meta.enabled_at is None:
-                    await store.enable(
+                    enabled = await store.enable(
                         tenant_id,
                         installed.skill_id,
                         installed.version,
@@ -134,8 +136,12 @@ class CoreSkills:
                         by=None,
                         now=now,
                     )
-                    enabled_now.append(f"{core.name}@{installed.version}")
+                    if enabled is not None:
+                        enabled_now.append(enabled)
             self._ready.add(tenant_id)
         if enabled_now:
-            logger.info("the skills of the platform were enabled", extra={"skills": enabled_now})
+            logger.info(
+                "the skills of the platform were enabled",
+                extra={"skills": [f"{skill.name}" for skill in enabled_now]},
+            )
         return tuple(enabled_now)

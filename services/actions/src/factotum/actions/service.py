@@ -174,7 +174,11 @@ class ActionService:
         skills is ``NO_ACTION``: it is to be answered as a question."""
         now = self._now()
         if self._core is not None:
-            await self._core.ensure(self._store, principal.tenant_id, now=now)
+            # A skill of the platform is found by meaning from the first message: it is indexed as
+            # the tenant is given it, or it would be offered to the model unscored (and the model
+            # asked about every message) until the index caught up in the background.
+            for skill in await self._core.ensure(self._store, principal.tenant_id, now=now):
+                await self._matcher.index.index(skill)
         pending = await self._store.get_pending(
             principal.tenant_id, principal.acts_as, principal.device_id
         )

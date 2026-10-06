@@ -129,7 +129,8 @@ class Catalog:
         """Have the skills of the platform there for the caller's tenant, once, before what is
         there is shown or added to."""
         if self._core is not None:
-            await self._core.ensure(self._store, principal.tenant_id, now=self._now())
+            for skill in await self._core.ensure(self._store, principal.tenant_id, now=self._now()):
+                await self._index.index(skill)  # enabled, and found by meaning from now on
 
     async def _found(self, principal: Principal, skill_id: SkillId) -> StoredSkill:
         """A skill the caller may see, or the same answer as for one that is not there."""

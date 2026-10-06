@@ -116,8 +116,10 @@ runs it, in this process, with what this service has (`factotum.actions.core`).
   is the platform's and gains nothing by it.
 * **A tenant has them from the first time it is asked for**: the first message that is asked about,
   or the first time its administrators list, install or read the skills. They are installed and
-  enabled (`enabled_by` is nobody: the platform did it), once for a tenant for as long as the service
-  runs. One that an administrator **disabled stays disabled**, whatever the service does at a start;
+  enabled (`enabled_by` is nobody: the platform did it) and indexed by meaning at once, so that the
+  first message is matched as every other is (a skill that is enabled and not indexed is offered to
+  the model unscored, and the model is asked about every message until the index is made), once for a
+  tenant for as long as the service runs. One that an administrator **disabled stays disabled**, whatever the service does at a start;
   a version that the platform did not carry before (a new text) is enabled where it ships; one that
   was installed and never enabled (the service stopped between the two) is enabled. A skill of the
   tenant of the same name gets the platform's text as a new version, and an administrator who enables

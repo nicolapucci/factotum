@@ -201,3 +201,12 @@ What building it found, besides the mistakes that a test caught as they were wri
 - **A catalog that is shown first.** A tenant's administrator who opened the list of skills before
   anyone had said a word saw no `announce`: the catalog provides the skills of the platform too, not
   only the first message.
+- **A skill that is enabled and not indexed asks a model about every message.** Every tenant has
+  `announce` now, so a tenant with no skills of its own is a tenant with one, and until the index of
+  what it says about itself had been made (in the background, after the first message) it was offered
+  to the model unscored: the model was asked about a message that has nothing to do with any skill, and
+  a service that cannot embed would ask for all of them. The gate that runs without a database passed;
+  the test of the actions application against Postgres is the one that asked the model when it was
+  not to. The skills of the platform are indexed as the tenant is given them (by the service and by
+  the catalog), which costs one embedding of what `announce` says, once, and keeps the rule that a
+  message that is near no skill asks no model.

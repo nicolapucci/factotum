@@ -148,6 +148,43 @@ class TestAnnouncing:
         assert rig.dispatcher.given == []
 
 
+class TestFoundByMeaning:
+    """A skill of the platform is measurable from the first message: it is indexed as the tenant is
+    given it, or it would be offered to a model unscored, and a model asked, for every message until
+    an index that is made in the background caught up."""
+
+    async def test_a_message_far_from_what_the_platform_does_asks_no_model_even_the_first_time(
+        self,
+    ) -> None:
+        rig, speech = a_rig()
+
+        outcome = await rig.hear(KITCHEN, "explain photosynthesis to me slowly")
+
+        assert outcome == ActOutcome.no_action()
+        assert rig.chat.requests == []
+        assert speech.asked == []
+
+    async def test_the_skill_is_indexed_when_the_tenant_is_given_it(self) -> None:
+        rig, _ = a_rig()
+
+        await rig.hear(KITCHEN, "explain photosynthesis to me slowly")
+
+        [announce] = await rig.store.list_skills(rig.tenant, [rig.shared_owner])
+        indexed = await rig.store.indexed(rig.tenant, rig.shared_owner, rig.embedder.space_id)
+        assert indexed == {announce.id}
+
+    async def test_a_message_near_it_is_offered_to_the_model_by_meaning_the_first_time(
+        self,
+    ) -> None:
+        rig, _ = a_rig()
+        rig.plans(announce_plan(device=DISPLAY))
+
+        outcome = await rig.hear(KITCHEN, "tell the living room that dinner is ready")
+
+        assert (outcome.status, outcome.skill) == (ActStatus.DONE, "announce")
+        assert len(rig.chat.requests) == 1  # asked once, for a message that is near it
+
+
 class TestWhoseVoice:
     async def test_the_voice_of_a_shared_device_is_the_tenants(self) -> None:
         rig, speech = a_rig()

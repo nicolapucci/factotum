@@ -335,7 +335,7 @@ class TestAgainstARealDatabase:
             asked = "what is the weather in Rome"
             before = await http.post("/v1/act", json={"message": asked}, headers=speaker_headers)
             assert before.json()["status"] == "no_action"
-            assert model.asked == []  # nothing runs, so nothing was offered to the model
+            assert model.asked == []  # nothing that runs is near it, so no model was asked
 
             for skill in (weather, garage):
                 enabled = await http.post(f"/v1/skills/{skill['id']}/enable")

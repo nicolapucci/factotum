@@ -562,6 +562,14 @@ class TestTheSkillsOfThePlatform:
         )
         assert (skill.latest_version, skill.enabled_version) == (1, 1)
 
+    async def test_and_they_are_found_by_meaning_from_then_on(self) -> None:
+        rig = ActionsRig()
+
+        [skill] = (await self.with_core(rig).list(rig.principal(None))).skills
+
+        indexed = await rig.store.indexed(rig.tenant, rig.shared_owner, rig.embedder.space_id)
+        assert indexed == {skill.id}
+
     async def test_so_does_a_member_of_the_household(self) -> None:
         rig = ActionsRig()
 

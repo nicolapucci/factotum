@@ -4,6 +4,7 @@ mistaken for a skill that somebody wrote."""
 
 import asyncio
 import dataclasses
+from collections.abc import Sequence
 from datetime import datetime
 from typing import ClassVar
 
@@ -55,6 +56,15 @@ async def skills_of(
     return await store.list_skills(tenant, [owner_of(tenant)], enabled_only=enabled_only)
 
 
+def labels(skills: Sequence[StoredSkill]) -> list[str]:
+    """What was enabled, as name and version."""
+    found: list[str] = []
+    for skill in skills:
+        assert skill.enabled is not None
+        found.append(f"{skill.name}@{skill.enabled.meta.version}")
+    return found
+
+
 class TestHavingThemInstalled:
     async def test_a_tenant_that_is_asked_for_has_them_installed_and_enabled(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
@@ -62,13 +72,22 @@ class TestHavingThemInstalled:
 
         enabled = await core.ensure(store, tenant, now=START)
 
-        assert list(enabled) == ["announce@1"]
+        assert labels(enabled) == ["announce@1"]
         [skill] = await skills_of(store, tenant)
         assert skill.name == "announce"
         assert skill.enabled is not None
         assert skill.enabled.granted == skill.enabled.manifest.permissions
         assert skill.enabled.meta.enabled_by is None  # the platform did it, and no person
         assert core.recognize(skill) is not None
+
+    async def test_what_is_returned_is_the_skills_as_they_run_not_their_names(self) -> None:
+        store, tenant = InMemoryStore(), make_tenant_id()
+
+        [skill] = await platform_skills(FakeSpeech()).ensure(store, tenant, now=START)
+
+        assert (skill.name, skill.tenant_id, skill.owner) == ("announce", tenant, owner_of(tenant))
+        assert skill.enabled is not None
+        assert skill.enabled.meta.version == 1
 
     async def test_it_is_done_once_for_a_tenant_for_as_long_as_the_service_runs(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
@@ -111,7 +130,7 @@ class TestHavingThemInstalled:
             core.ensure(store, tenant, now=START), core.ensure(store, tenant, now=START)
         )
 
-        assert sorted([list(first), list(second)]) == [[], ["announce@1"]]
+        assert sorted([labels(first), labels(second)]) == [[], ["announce@1"]]
         [skill] = await skills_of(store, tenant)
         assert len(skill.versions) == 1
 
@@ -139,7 +158,7 @@ class TestWhatIsLeftAlone:
 
         enabled = await CoreSkills(announce).ensure(store, tenant, now=START)
 
-        assert list(enabled) == ["announce@1"]
+        assert labels(enabled) == ["announce@1"]
         [skill] = await skills_of(store, tenant)
         assert skill.enabled is not None
 
@@ -151,7 +170,7 @@ class TestWhatIsLeftAlone:
 
         enabled = await newer.ensure(store, tenant, now=START)
 
-        assert list(enabled) == ["announce@2"]
+        assert labels(enabled) == ["announce@2"]
         [skill] = await skills_of(store, tenant)
         assert skill.enabled is not None
         assert skill.enabled.meta.version == 2
@@ -167,7 +186,7 @@ class TestWhatIsLeftAlone:
 
         enabled = await CoreSkills(Newer()).ensure(store, tenant, now=START)
 
-        assert list(enabled) == ["announce@2"]
+        assert labels(enabled) == ["announce@2"]
         assert len(await skills_of(store, tenant)) == 1
 
 
@@ -198,7 +217,7 @@ class TestASkillOfThatNameThatSomebodyWrote:
 
         enabled = await core.ensure(store, tenant, now=START)
 
-        assert list(enabled) == ["announce@2"]
+        assert labels(enabled) == ["announce@2"]
         [skill] = await skills_of(store, tenant)
         assert skill.id == theirs.id  # one skill of that name, which has two versions now
         assert [meta.version for meta in skill.versions] == [1, 2]
