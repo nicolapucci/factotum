@@ -29,13 +29,16 @@ import pytest
 
 from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import Answer, ConfirmationReader
+from factotum.actions.core import platform_skills
 from factotum.actions.matching import SkillMatcher
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PLAN_CASES, PlanCase
 from factotum.actions.rig import ActionsRig
+from factotum.actions.testing import FakeSpeech
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
 from factotum.common.urlguard import UrlPolicy
 from factotum.contracts.actions import ActOutcome, ActStatus
+from factotum.contracts.commands import PlayAudio
 from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.models import BindingOptions, ModelRole, ProviderKind
 from factotum.contracts.runner import RunRequest
@@ -147,14 +150,22 @@ async def close_gateway(opened: Gateway) -> None:
 
 
 async def home_of(opened: Gateway) -> ActionsRig:
-    """The example home with the example skills installed, enabled and indexed by meaning."""
+    """The example home with the example skills installed, enabled and indexed by meaning, and the
+    skills of the platform that every tenant has (``announce`` is one of them, ADR 0026)."""
+    core = platform_skills(FakeSpeech())
     rig = ActionsRig(
-        home_text=HOME_TEXT, chat=opened.chat, embedder=opened.embedder, patience_s=PATIENCE_S
+        home_text=HOME_TEXT,
+        chat=opened.chat,
+        embedder=opened.embedder,
+        patience_s=PATIENCE_S,
+        core=core,
     )
-    catalog = Catalog(rig.store, rig.index, folder=EXAMPLES, enable_folder=True, now=rig.clock)
+    catalog = Catalog(
+        rig.store, rig.index, folder=EXAMPLES, enable_folder=True, core=core, now=rig.clock
+    )
     read = await catalog.reload(rig.principal(None))
     assert read.problems == ()
-    assert len(read.enabled) == 8
+    assert len(read.enabled) == 7  # the folder: the platform's skills are not in it
     return rig
 
 
@@ -187,15 +198,26 @@ def same(understood: object, wanted: ParamValue) -> bool:
     return understood == wanted
 
 
-def judge(case: PlanCase, outcome: ActOutcome, ran: RunRequest | None) -> list[str]:
+def judge(
+    case: PlanCase, outcome: ActOutcome, ran: RunRequest | None, said: Sequence[str] = ()
+) -> list[str]:
     """What is wrong with what became of a message, in a few words each; nothing when it is
-    right."""
+    right. ``said`` is the words of the clips that a device was given: a skill of the platform
+    (``announce``) is not run by the runner, it gives clips."""
     problems: list[str] = []
     if outcome.status is not case.status:
         problems.append(f"{outcome.status.value} instead of {case.status.value}")
     if outcome.skill != case.skill:
         problems.append(f"skill {outcome.skill} instead of {case.skill}")
-    if ran is not None:
+    if case.skill == "announce":
+        if case.status is ActStatus.DONE:
+            if not said:
+                problems.append("nothing was said")
+            elif not same(" ".join(said), case.params["message"]):
+                problems.append(
+                    f"{' '.join(said)!r} was said instead of {case.params['message']!r}"
+                )
+    elif ran is not None:
         for name, value in case.params.items():
             if not same(ran.params.get(name), value):
                 problems.append(f"{name}={ran.params.get(name)!r} instead of {value!r}")
@@ -216,11 +238,13 @@ async def run_corpus(rig: ActionsRig) -> list[Judged]:
         principal = rig.principal(case.speaker)
         await forget_what_is_asked(rig, principal)
         before = len(rig.runner.requests)
+        given = len(rig.dispatcher.given)
         began = time.perf_counter()
         outcome = await rig.hear(case.speaker, case.message)
         seconds = time.perf_counter() - began
         ran = rig.runner.requests[-1] if len(rig.runner.requests) > before else None
-        judged.append(Judged(case, outcome, seconds, ran, judge(case, outcome, ran)))
+        said = [c.text for _, _, c in rig.dispatcher.given[given:] if isinstance(c, PlayAudio)]
+        judged.append(Judged(case, outcome, seconds, ran, judge(case, outcome, ran, said)))
     return judged
 
 
