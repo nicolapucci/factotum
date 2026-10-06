@@ -56,10 +56,11 @@ A skill is a folder with a `SKILL.md` and, if it runs code, the scripts. The `SK
 frontmatter (the manifest of [ADR 0006](decisions/0006-skills-and-sandboxed-execution.md): name,
 description, examples, target, parameters, required, device parameters, permissions, effect, confirm,
 approval, entrypoint) between two lines of three dashes, then instructions or notes in markdown.
-[`skills/`](../skills/README.md) has eight worked examples: a lamp, a garage door, a volume, the
-weather and a router restart, each showing a different way an action is decided, and three that are
-only instructions (an announcement, a scene for a movie, the air quality). How to write one is in
-[`skills.md`](skills.md).
+[`skills/`](../skills/README.md) has seven worked examples: a lamp, a garage door, a volume, the
+weather and a router restart, each showing a different way an action is decided, and two that are
+only instructions (a scene for a movie, the air quality). How to write one is in
+[`skills.md`](skills.md). What the platform itself does (an announcement) is not an example but a
+skill of the platform, [below](#skills-of-the-platform).
 
 * **Versions never change.** A version is identified by the SHA-256 of the `SKILL.md` and of every
   other file, so changing a script is a new version and reading the same folder again is not one.
@@ -96,6 +97,61 @@ What loads is what can run: the entrypoint is a **Python** file, every file in t
 container can be given (letters, digits, `.`, `-`, `_`), and a secret cannot be called what the runner
 sets or what changes how a program starts (`PATH`, `HTTPS_PROXY`, `PYTHON*`, `LD_*`, `FACTOTUM_*`). A
 script has the standard library and nothing installed.
+
+## Skills of the platform
+
+Some skills are not a folder: they are code of this service, and the platform gives every tenant
+the same ones ([ADR
+0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)).
+They are for what a sandbox and a plan cannot do (a skill of a person has no voice of its own: it
+gives a device a `speak`, and has no way to ask the gateway for anything) and for what other skills
+may use later. A skill of the platform is **found, chosen, authorized, confirmed and audited as any
+skill is**: it has a `SKILL.md`, which is what the matcher and the planner read, and a function that
+runs it, in this process, with what this service has (`factotum.actions.core`).
+
+* **What makes a version the platform's is its text.** A stored version is the platform's skill when
+  its name and the hash of its content are those of the `SKILL.md` that the code carries. Anybody can
+  write a manifest, so nothing in a manifest says "core": a person's skill that is called `announce`
+  and says something else is a skill of theirs, run in the sandbox as any is, and the very same text
+  is the platform's and gains nothing by it.
+* **A tenant has them from the first time it is asked for**: the first message that is asked about,
+  or the first time its administrators list, install or read the skills. They are installed and
+  enabled (`enabled_by` is nobody: the platform did it), once for a tenant for as long as the service
+  runs. One that an administrator **disabled stays disabled**, whatever the service does at a start;
+  a version that the platform did not carry before (a new text) is enabled where it ships; one that
+  was installed and never enabled (the service stopped between the two) is enabled. A skill of the
+  tenant of the same name gets the platform's text as a new version, and an administrator who enables
+  their own back is not overruled at the next start.
+* **Nothing about them is a model's**: no plan is written for one and nothing is run in a sandbox,
+  so they work with no runner (a dry run is what a skill that is run by the runner comes to without
+  one). What they give a device is commands, which go through the same checks (the device declared
+  what a command needs, the one that was named or the one that was spoken to) as any.
+* **What they ask of the platform is a port, not the service**: `announce` is given a
+  `SpeechMaker` (the voice of a text, as the gateway makes it), and a clip costs a model's time, so
+  every skill of the platform limits what it makes and reads what it is given as the input that it
+  is: it is called with what a message said, and later with what other skills say. A skill calling
+  another is not built (ADR 0026 leaves it for a decision of its own).
+
+**`announce`** says something out loud on a device: *tell the kitchen that dinner is ready*. It acts
+on a system device (the one that was named, or the one that was spoken to), is `reversible`, reaches
+nothing on the network, and is granted nothing. What it says is not the reply to the person (that is
+*Done*, as every action's is, and goes the way an answer goes): it is the message, for the device.
+
+* The message is cut into sentences as an answer is (`factotum.common.sentences`), the sentences are
+  put together in blocks of at most 400 characters, and the gateway is asked for the voice of each
+  block at the same time as the others (`tts`, of the tenant for a device of the household and of the
+  person for a device of their own). A person says a phrase (a value of a skill is at most 500
+  characters), so it is one clip or two; what other skills ask for later may be up to 2000
+  characters, and more is `failed`.
+* The device is given a `play_audio` for each block, in order ([`edge.md`](edge.md#audio-out-a-clip-that-a-command-carries)):
+  nothing is given until every voice is made, and **none if one cannot be** (`failed`; the trail says
+  `the voice could not be made (gateway_unavailable)` and never what the gateway said). The commands
+  are given in order and **the first that is not done stops the rest**: the second half of a message
+  is not said without the first.
+* The trail says what was said and in how many clips (`said 'dinner is ready' in 1 clip`), never
+  the sound. `FACTOTUM_ACTIONS_SPEECH_TIMEOUT_S` is how long the gateway is waited for each block (the
+  first voice after a start is loaded when it is asked for: seconds on a processor), and the skill's
+  own limit is 60 seconds, which is what the whole of it is given.
 
 ## Choosing a skill
 
@@ -188,6 +244,7 @@ not set is not there, and the service says so when it starts):
   the skill answered with, after checking that the device declared what the command needs.
   **`EdgeDispatcher`** gives it through the edge (`FACTOTUM_ACTIONS_EDGE_URL`, acting for the tenant).
   `NullDispatcher`, without one, reaches no device: the command is not done, and the person is told.
+  The commands of one run are given **in order, and the first that is not done stops the rest**.
 
 **What is settled on this side of the wire, before a script runs** (the runner knows nothing of
 skills, tenants or devices):
@@ -273,7 +330,8 @@ wrote to ask for a yes, are said as they are.
 | A skill fails or takes too long | `failed`, a plain sentence, audited; the log says why |
 | The runner cannot be reached, is busy or does not know the service | `failed` with `runner_unavailable`: *I cannot run that right now* |
 | A secret is not set, or the skill needs a linked account | `failed`; the log names the secret, never its value |
-| A command is not done (the device is not connected, is slow, or the edge is away) | `failed` with `command_failed`: *I asked the device, and it did not do it* |
+| A command is not done (the device is not connected, is slow, or the edge is away) | `failed` with `command_failed`: *I asked the device, and it did not do it*; the commands after it are not given |
+| The voice of an announcement cannot be made (no `tts` bound, the gateway away or slow) | `failed` with `skill_failed`, nothing is given to a device; the trail says `the voice could not be made (code)` |
 | The actions service is away (seen from the conversation service) | the turn goes on as a question and says so in a warning |
 | The database is away | `/readyz` says so, and the calls fail |
 
@@ -306,7 +364,7 @@ not there and one that is another person's are the same `404`.
 | `_HOST`, `_PORT` | `127.0.0.1`, `8085` | loopback unless told otherwise |
 | `_GATEWAY_URL` | `http://127.0.0.1:8081` | where the gateway is |
 | `_RUNNER_URL` | none | where the runner is; without it a skill is a dry run |
-| `_EDGE_URL`, `_EDGE_TIMEOUT_S` | none, `15` | where the edge is (without it commands are not done), and how long it is waited for to say what became of one |
+| `_EDGE_URL`, `_EDGE_TIMEOUT_S` | none, `15` | where the edge is (without it commands are not done), and how long it is waited for to say what became of one (a `speak` is waited for until every sentence of it has been taken, so a long text on a slow voice wants more) |
 | `_SECRETS_FILE` | none | the secrets skills are given, for development (`config/secrets.example.yaml`); overridden by the hub once it is configured, below |
 | `_DEVICES_FILE` | none | the file of devices, for development, the one the edge reads too; overridden by the hub once it is configured, below |
 | `_HUB_URL` | none | where the hub is; once `FACTOTUM_HUB_TOKEN_SECRET` is also set, its devices, bindings and secrets replace the two files above |
@@ -319,6 +377,7 @@ not there and one that is another person's are the same `404`.
 | `_CONFIRMATION_SECONDS` | `60` | how long a yes or a no is waited for |
 | `_APPROVAL_WAIT_S`, `_APPROVAL_MINUTES` | `20`, `10` | how long a turn waits for an approver, and how long a request is open |
 | `_RUN_MARGIN_S` | `5` | added to the time limit of a skill |
+| `_SPEECH_TIMEOUT_S` | `60` | how long the gateway is waited for to make the voice of one block of an announcement |
 | `_PLAN_TIMEOUT_S`, `_PLAN_ATTEMPTS` | `30`, `2` | how long a model is waited for to write the plan of a skill that is instructions (each try), and how many tries it has when the checks refuse a plan |
 | `_MAX_DEVICES_SHOWN` | `10` | other devices the model is shown by name |
 
@@ -405,7 +464,12 @@ FACTOTUM_LIVE_PLAN_MODELS=llama3.2:3b-instruct-q8_0,gemma3:4b  ...same command..
 ```
 
 The plans of the skills that are instructions have a live test of their own
-(`tests/live/test_live_instructions.py`, [`skills.md`](skills.md#what-was-measured)).
+(`tests/live/test_live_instructions.py`, [`skills.md`](skills.md#what-was-measured)); the same file
+says what a real model makes of a message for the platform's own `announce`. The skills of the
+platform have tests of their own: the registry (`test_actions_core.py`: installed once for each
+tenant, left alone when disabled, found by the hash of the text), the skill (`test_actions_announce.py`:
+the blocks, whose voice, all at once, what is left when a voice fails) and the service with them
+(`test_actions_core_service.py`: authorized, confirmed, audited, two tenants).
 
 ## Measured
 
@@ -545,6 +609,10 @@ first messages after a pause, below.
 
 ### Eight skills (slice 6)
 
+(*The announcement that these numbers are about was a skill of instructions. ADR 0026 made it a skill
+of the platform, which is code and not a plan, so what a model has to get right for it is the choice
+of the skill and the message, and no longer a plan: the live test measures that again.*)
+
 Slice 6 added three skills (a scene of two calls, a lookup of two requests, and an announcement that
 only tells a device something) and the 21 messages for them: **82 messages, 55 that ask for
 something and 27 that do not**, said to the speaker, the display and the phone, in English and
@@ -682,6 +750,17 @@ measured in `skills.md`.
   over the question is a change to the conversation (it would have to know what was being asked).
 * **A message that is several requests is one.** "Turn on the lamp and open the garage" is read as
   whichever the model picks, and the other is lost.
+* **`ok` of a clip is *accepted*, not played.** The announcement is given to the device and the
+  person is told that it was done; a speaker that is unplugged, or a person who speaks over it, is
+  not known to the trail. The whole chain from a message to a speaker is a request and an answer, and
+  one that stayed open for as long as a sentence lasts is not one worth having.
+* **An announcement is made whole before any of it is said.** The clips are made at the same time and
+  given together, so the first sound comes after the slowest block is made: a message of 500
+  characters waits for a block of 400. Giving each clip as soon as it is made is a change to what a
+  skill answers with (a stream of commands, and not a result).
+* **Skills of the platform cannot call each other yet**, nor can a skill of a person call them.
+  `announce` is built to be called (it reads its input as an input, not as a message), and how one skill
+  asks for another is a decision of its own.
 * **The audit trail can be a record short** if it cannot be written after something was done; it
   says so in the log.
 * **A file without the hub.** Once `FACTOTUM_HUB_TOKEN_SECRET` and `FACTOTUM_ACTIONS_HUB_URL` are

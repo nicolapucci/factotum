@@ -146,9 +146,13 @@ with a credential issued at pairing, declare **capabilities**, and are driven th
 | `media_player` | playing a URL or stream; pause, resume, stop |
 | `buttons`, `led`, `sensors` | input events and status commands |
 
-The **command vocabulary v1** is the single definition every other piece derives from. Each command
-requires one capability: `speak`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `show_card`,
-`clear_display`, `set_led`. `SystemDevice` has one ready-made method per command; a method refuses
+The **command vocabulary** (version 2) is the single definition every other piece derives from. Each
+command requires one capability: `speak`, `play_audio` (a clip, which the platform's own skills give:
+[ADR 0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)),
+`play_url`, `pause`, `resume`, `stop`, `set_volume`, `show_card`, `clear_display`, `set_led`. What a
+skill, a script or a plan may give is that vocabulary but for `play_audio` (`SkillCommand`), and a
+`speak` is made a voice by the edge for a device that takes clips. `SystemDevice` has one ready-made
+method per command; a method refuses
 with `CapabilityNotSupportedError` when the device did not declare the capability, and a test keeps
 vocabulary and interface from diverging. Devices only receive commands they declared they can run,
 never code.
@@ -238,6 +242,14 @@ Markdown instructions for the model, or notes for humans.
   of its own, which resolves the placeholders there. A model never reads what a service answers, so
   nothing a service says can steer what happens next. `mqtt.publish` is not among the primitives
   (there is no broker, and the proxy tunnels to port 443 only).
+- **Core skills** (*implemented*, [`actions.md`](actions.md#skills-of-the-platform), [ADR
+  0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)):
+  skills that the platform provides, written in code and run in the actions service, for what a
+  sandbox and a plan cannot do (a voice made by the gateway, for a clip to play on a device) and as
+  blocks that other skills may use one day. They have a `SKILL.md`, which is what is matched and read,
+  and are found, chosen, authorized, confirmed and audited as any skill is; what makes a version one of
+  them is the hash of its text, and a skill of a person of the same name is run in the sandbox.
+  `announce` is the first.
 - **Selection** (*implemented*): skill descriptions and examples are embedded and matched by
   similarity; a model of the `chat.fast` role picks the skill and extracts parameters with structured
   output, validated against the skill's schema, and then checked in code (the model proposes, the
@@ -376,7 +388,7 @@ answer and other things than actions, voice.
 | 7b | `hub`: a device's pairing, the external devices a skill is bound to | done |
 | 7c | `hub`: model bindings, the gateway reading them from it, a real delegation for `actions`, `conversation` and `knowledge` | done |
 | 7d | `hub`: skill secrets, the actions service reading them from it | done |
-| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway; what a person says streams in to the edge and interrupts the answer as it begins (ADR 0022), and the sound of the answer streams out, from the gateway through the edge to a device that says it takes it (ADR 0023); the client core that every client shares (ADR 0024); the device application, push to talk first and the wake word behind the same port, over a library of the sound hardware (ADR 0025); still owed: a text that a skill asks to be said, said by a device (the edge making the voice), a conversation by voice tried on the hardware, and hearing a wake word over the device's own voice | beta |
+| 8 | Voice: wake word on the device, speech-to-text and text-to-speech through the gateway; what a person says streams in to the edge and interrupts the answer as it begins (ADR 0022), and the sound of the answer streams out, from the gateway through the edge to a device that says it takes it (ADR 0023); the client core that every client shares (ADR 0024); the device application, push to talk first and the wake word behind the same port, over a library of the sound hardware (ADR 0025); what a skill has a device say: a clip that the platform's own skills give (`play_audio`), a text that any skill gives (`speak`) made a voice by the edge, and the first skill of the platform, `announce` (ADR 0026); still owed: a conversation by voice tried on the hardware, and hearing a wake word over the device's own voice | beta |
 | 9 | Web app | |
 | 10 | Cloud gates (optional) | |
 

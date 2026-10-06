@@ -13,7 +13,9 @@ markdown), and it is one of two kinds:
 
 How the actions service reads, chooses, decides on and audits skills is in
 [`actions.md`](actions.md); this page is about writing them. [`skills/`](../skills/README.md) has
-eight worked examples.
+seven worked examples. Some skills are not written by anybody who uses the project: the platform
+provides them in code ([`actions.md`](actions.md#skills-of-the-platform), ADR 0026), and a skill of
+yours that says something out loud gives the device a `speak`, which the edge makes a voice of.
 
 ## The `SKILL.md`
 
@@ -121,7 +123,8 @@ A step is one of:
 * **a command for a device**: `name` and `args`, one of the vocabulary of the edge (`set_volume`,
   `speak`, `play_url`, `pause`, `resume`, `stop`, `show_card`, `clear_display`, `set_led`), which
   the actions service gives to the device that was spoken to (or that the skill acts on) if it
-  declared it can.
+  declared it can. `play_audio`, which carries a clip, is **not** among them: a clip is what a skill of
+  the platform gives, and a script or a plan that says `speak` has the edge make the voice of it.
 
 A plan is a straight line: no conditions, no loops. A request that does not give what it should (a
 status of 300 or more, a connection that failed, a redirect, a value that is not there) **ends the run**
@@ -255,8 +258,12 @@ A plan is judged by **what it does**, not by how it reads. It is run by the prog
 runs, against a web server on this machine, and what the server was asked (and with what header) and
 what a device was told to say is compared with what the skill says. That is
 `services/actions/tests/live/test_live_instructions.py` (opt-in). Its 22 plans are three skills that
-come with the project (an announcement, a scene of two calls, a lookup of two requests over six
-places) and **five that were written for the test and that nothing was tuned on**: a thermostat (a
+came with the project (an announcement, a scene of two calls, a lookup of two requests over six
+places) and **five that were written for the test and that nothing was tuned on**. (The announcement
+became a skill of the platform, ADR 0026, which is code and has no plan: the test keeps its text as
+`shout`, a skill of a person that gives a `speak`, and says what a model makes of a message for the
+platform's own `announce` in its last test. The numbers below are those of the measurement, with the
+instructions skill that it was.) a thermostat (a
 number of degrees, one of them 19.5), a notification (a plain-text body), the state of a garage door
 (a request that only reads, of a device), a coffee machine (a request, then a command) and a parcel (a
 request that only reads, with a key in a header).

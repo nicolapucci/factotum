@@ -123,23 +123,51 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   is given the *names* of secrets and never a value, and never anything that came from a document or
   a page. Do not feed the answer of a request back to a model, do not add a step that runs code,
   and do not let a model choose a host that was not granted.
+- **What a device is made to say is a clip, and the platform makes it** (ADR 0026). `play_audio` (a
+  `text` and the clip of it) is the platform's command: what a skill, a script or a plan may give is
+  `SkillCommand`, the vocabulary without it (`SKILL_COMMAND_MODELS`: the checks of a plan and the
+  reading of what a script prints use it), so a skill of a person can never hand a device sound that
+  nobody made. A `speak` that any skill gives is made a voice by the *edge* (the gateway's `tts` of
+  the tenant, a clip for each sentence, each sent as soon as it is made) for a device that declared
+  `play_audio`, and is sent as words to one that did not; a `play_audio` for such a device is sent as
+  the words it carries. **`ok` of a clip is *accepted*, not played**: a device answers at once and
+  says it when nothing else is, in order, from a task of its own (the chain from a message to a
+  speaker is a request and an answer, and one that stays open for as long as a sentence lasts is not
+  worth having); it holds a bounded amount of what it has not said, and a person who speaks cuts what
+  is being said. The commands of one run are given in order and the first that is not done stops the
+  rest. Do not make a device wait for a clip to end, and do not let a model or a script give one.
+- **A core skill is code of the platform, and what makes a version one is the hash of its text**
+  (ADR 0026). `factotum.actions.core`: a `SKILL.md` that the code carries (matched, read by the
+  planner, authorized, confirmed and audited as any skill is) and a function that runs it in the
+  actions service, with a port for what it needs (`SpeechMaker`) and never the service. A stored
+  version is the platform's when its name and the hash of its content are the platform's: a skill of a
+  person that is called `announce` and says something else is run in the sandbox as theirs, and
+  nothing is gained by writing the platform's text. They are installed and enabled for a tenant the
+  first time it is asked for (a message, or its administrators looking at the catalog) and **one that
+  was disabled stays disabled**; a new text is enabled where it ships. No model writes a plan for
+  one and no sandbox runs one. A core skill reads what it is given as the input that it is (it is
+  called with what a message said, and later with what other skills say), limits what it makes (a
+  clip costs a model's time), says what failed as a kind (the code of the error, never what a service
+  said) and is tested with two tenants. Skills calling each other is not built: it is a decision of
+  its own.
 - **A client is the core and the ports of its device** (ADR 0024). What every client does of the
   protocol (`hello`, the parts of an answer, commands and their `ack`, the sound of an answer, speaking
   over it, a stream sent as a person speaks, staying connected) is `factotum.client_core` and nowhere
   else: a client has the hardware of its device and none of the protocol, and the core has no
   `sounddevice`, no `numpy` and no terminal. A client declares what it was given and nothing more
-  (`voice_stream` only with a sink and a speaker; the capabilities of its `Identity`). The sound that
-  plays is cut *before* the edge is told that the person speaks or cancels, what is still in flight
-  for an answer that was left is dropped in silence (it is nobody's bug), and what the edge gets wrong
-  is a `violation`, said loudly. `stay_connected` does not ask again of an edge that refused the
+  (`voice_stream` only with a sink and a speaker, `play_audio` only with a sink or a speaker of clips;
+  the capabilities of its `Identity`). The sound that plays is cut *before* the edge is told that the
+  person speaks or cancels, what is still in flight for an answer that was left is dropped in silence
+  (it is nobody's bug), and what the edge gets wrong (a clip for a device that did not say it plays
+  them, sound it did not ask for) is a `violation`, said loudly. `stay_connected` does not ask again of an edge that refused the
   device or replaced it with its twin. Do not copy the protocol into a client.
 - **A device application is the core, the library of the sound hardware and its settings** (ADR 0025).
   Everything that is a sound card goes through `AudioBackend` (`factotum.client_audio`) and
   `sounddevice` is imported in one place, when it is first needed. A device declares only what it has
-  hands for (`audio_in`, `audio_out`), and a text to say (`speak`) is *unsupported* by it and the skill
-  is told, never `ok`: a device with no voice that answered `ok` would leave a trail that says an
-  announcement was made which nobody heard (the voice is the gateway's, which a device does not
-  reach). The volume is the speaker's own, in software, and the system's is left alone. The two
+  hands for (`audio_in`, `audio_out`), and what it has no hands for (what is said is not the hands'
+  work: the core plays a clip, and a text never reaches a device that takes clips) is *unsupported*
+  and the skill is told, never `ok`. The volume is the speaker's own, in software, and the system's
+  is left alone. The two
   secrets of a device (its credential, the key of the wake word) are in the environment, which wins
   over the file, and in no line it says and no error. A push to talk needs a keyboard, so a service
   listens for a word. A supervisor restarts a device for what failed (exit code 1) and never for what

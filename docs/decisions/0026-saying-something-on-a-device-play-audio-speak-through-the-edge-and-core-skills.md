@@ -1,6 +1,6 @@
 # 0026. Saying something on a device: `play_audio`, `speak` through the edge, and core skills
 
-Status: proposed, 2026-10-06.
+Status: accepted, 2026-10-06.
 
 ## Context
 
@@ -72,21 +72,29 @@ directly, are a convenience worth having in numbers, so that other skills can la
     hash of its content is the hash of that text. A person's own skill of the same name and another
     text is a skill of theirs, run in the sandbox as any is; the very same text is the core skill, and
     nothing is gained by it;
-  - the first time a tenant is asked for, the skills of the platform are installed for it and
+  - the first time a tenant is asked for (a message that is asked about, or its administrators
+    listing, installing or reading the skills), the skills of the platform are installed for it and
     enabled, and left alone after that: one that an administrator disabled stays disabled until a new
-    version of it ships, which is installed and enabled as a version of a folder is;
+    version of it ships, which is installed and enabled as a version of a folder is. What decides it is
+    whether that version was ever enabled, so that a skill that was installed and never enabled (the
+    service stopped between the two) is enabled, and one that was enabled and then disabled is not;
   - a service is given its core skills (`CoreSkills`) and has none without: the others (tests,
     stand-ins) are as they were;
   - what it asks of the platform is what it is given (a speech port, a clock), never the whole
     service, and it validates what it is given as the input that it is: a skill of the platform is
     called with what a message said, and later with what other skills say.
-- **`announce` is a core skill.** It cuts the message into sentences (blocks of at most 400 characters:
-  a clip is at most 2 MiB), asks the gateway for each once, and gives the device a `play_audio` for
-  each, in order. The device is the one that was named, or the one that was spoken to: the rest of the
-  decision is the actions service's, as for any command (the capability is checked, the device is the
-  one it was aimed at, a command it did not declare is not given). The feedback to the person is what a
-  skill says. The `SKILL.md` that was a skill of instructions in `skills/examples` is gone from there:
-  the name is the platform's.
+- **`announce` is a core skill.** It cuts the message into sentences as an answer is cut, puts them
+  together in blocks of at most 400 characters (a clip is at most 2 MiB), asks the gateway for the
+  voice of every block at the same time, and gives the device a `play_audio` for each, in order, and
+  none if one voice cannot be made. The device is the one that was named, or the one that was spoken
+  to: the rest of the decision is the actions service's, as for any command (the capability is
+  checked, the device is the one it was aimed at, a command it did not declare is not given). The
+  feedback to the person is what a skill says. The `SKILL.md` that was a skill of instructions in
+  `skills/examples` is gone from there: the name is the platform's.
+- **The commands of one run are given in order, and the first that is not done stops the rest.** It
+  was not so (every command was given and the first failure was reported), which is harmless for a
+  volume and a card and wrong for the sentences of a message: a clip that a device refused would
+  have been followed by the one after it.
 - **Not decided here: calls between skills.** A core skill is meant to be called by others one day, so
   what it is given (`RunRequest`) and what it answers (`message`, `data`, commands) is the same
   whoever asks, and nothing in a core skill knows that it was a message that chose it. How a skill asks
@@ -139,3 +147,57 @@ directly, are a convenience worth having in numbers, so that other skills can la
   use, and a clip made once and sent to many devices is the same saving with the skill at the place
   where the devices are chosen.
 - **The device makes the voice.** A model in every device, against ADR 0008.
+
+## What was built, and what it found
+
+Built as decided. The vocabulary is version 2 with `PlayAudio`, and `SkillCommand` is what a script,
+a plan and a skill of a person may give (`SKILL_COMMAND_MODELS`); `Feature.PLAY_AUDIO` is declared by
+a client with a sink or a speaker of clips and `audio_out`. The client core takes a clip at once,
+says it when nothing else is, in order, from a task of its own, bounded by 12 MiB and cut by a person
+who speaks, and says a clip for a device that did not declare the feature as a violation. The edge
+makes a clip of each sentence of a `speak` (`factotum.common.sentences` is the cutting of sentences
+that the edge had, moved where the actions service can use it) and sends a `play_audio` for a device
+that did not declare the feature as the words it carries. In the actions service, `factotum.actions.core`
+has the registry (`CoreSkills`), the base of a skill (`CoreSkill`) and `announce`; the service runs
+them and the catalog provides them. `skills/examples/announce` is gone, the example home has the
+platform's. Everything is tried at the layers it is at (the registry, the skill, the service with the
+skill, the catalog, the edge, the client core, the hands of the two devices), and as a person meets it
+(`test_e2e_announce.py`, the series, the hub's house, the device application).
+
+What building it found, besides the mistakes that a test caught as they were written:
+
+- **The time limit of a skill is 10 seconds unless it says, and a voice may take longer.** The first
+  clip after a start loads the voice (4.9 s on a processor), and a message is more than one clip: the
+  skill declares 60, and a test says that it is not less than what one voice is waited for.
+- **What a person says is a phrase.** The values of a message are checked as text of at most 500
+  characters, and white space is made one space, so an announcement that a person asks for is one clip
+  or two. The limit of the skill itself (2000 characters, what a command may hold) is for what other
+  skills will ask for.
+- **A task group raises a group.** The voices are asked for at the same time with `asyncio.TaskGroup`,
+  and the first failure came out of it as an `ExceptionGroup`, which the service logged as *a runner
+  failed* and wrote in the trail as `ExceptionGroup`. A failure of the voice is now one error that says
+  what kind it was (`the voice could not be made (gateway_unavailable)`), never what the gateway said,
+  and what is not an error of ours is let through as it is.
+- **Enabling "when it was just installed" loses a skill.** The first rule of the registry enabled a
+  skill when the install had added a version, and a service that stopped between the install and the
+  enabling left it there for good, since the next start found nothing new. What decides it is whether
+  the version was ever enabled (a disable leaves that mark).
+- **A clip per sentence is too many clips for a message.** The first `announce` made a clip of each
+  sentence, which for a message of 500 characters is a dozen requests of the gateway at once and a
+  dozen commands to the edge; the sentences are put together in blocks of 400 characters, so it is
+  one clip or two, and the tests say where the edge of a block is (a sentence is never cut, and a block
+  that is full to the last character is a block).
+- **A device that was given a clip it did not ask for answered `ok`.** The hands of the terminal had no
+  case for `play_audio` and a `match` that falls through is a result that says it was done; they say
+  *unsupported* now, as the hands of the device application do, and the client core does not ask the
+  hands at all for a clip that its device did not say it plays.
+- **What was proved by an end-to-end test that was a limitation.** The test of the device application
+  that asserted that a text to say is what a device cannot do is now the test that says that it does it
+  (and says what the platform's own skill and a skill of a person each come to on it).
+- **A series that read a device before it had finished.** The series looks at what every device was
+  made to say after one was spoken to, and an announcement is said on another device while the answer
+  is given on this one: it waits for each to be done before it reads, which it did not and which only
+  worked because a fake plays at once.
+- **A catalog that is shown first.** A tenant's administrator who opened the list of skills before
+  anyone had said a word saw no `announce`: the catalog provides the skills of the platform too, not
+  only the first message.

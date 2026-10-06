@@ -113,13 +113,19 @@ played (the square of the share of the full volume, since a person hears loudnes
 amplitude), so it is the same on a PC and on a Raspberry Pi and the volume of the system is left
 alone. A device that the edge sends clips to (an edge that does not stream the voice) plays each clip.
 
-A device is its hands, and these are `audio_in` and `audio_out`: a volume to set, and a text to
-say. The first is done. **The second is not**: the `announce` skill answers with `speak` (a text),
-and this device has no voice of its own; the voice is made by the model gateway, which a device does
-not reach. It answers `unsupported`, says so on its console, and the skill is told that it did not
-work, which is the truth (a device that said `ok` would leave a trail that says an announcement was
-made which nobody heard). Making the edge turn such a command into a voice that it streams, as it
-does for an answer, is a decision of its own.
+**What a skill has it say is a clip too** ([ADR
+0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)).
+The device says in its `hello` that it takes `play_audio`, and the edge sends it the voice of an
+announcement (a `play_audio` command, which carries a clip made by the model gateway) and, for a skill
+that gives it a text to say (`speak`), the voice of each sentence of it, made by the edge. The
+application plays a clip when nothing else is being said, in the order they came, and tells the edge
+at once that it took it; a person who speaks (the key, or the wake word) cuts what is being said, and
+what waits is said after their answer. The console shows each as `announcement: <the words>`.
+
+A device is its hands, and what the hands of `audio_out` do is set the volume. Saying is not the
+hands' work: the client core plays a clip, and a text never reaches a device that takes clips, because
+the edge makes a clip of it. What these hands are asked for and have no hands for is answered
+`unsupported`, and the skill is told that it did not work, which is the truth.
 
 ## `doctor`
 
@@ -132,7 +138,7 @@ fail:
 | `settings` | what was read: the hardware id, the edge, what it has, how it listens |
 | `sound devices` | the devices that the system lists (a machine with no PortAudio is told what to install: on Linux, `libportaudio2`) and that there is a microphone and a speaker where the settings need them |
 | `microphone`, `speaker` | that the system accepts the device chosen at the rate it will be used at (16 kHz is what Whisper and the wake word hear, 22.05 kHz what the Italian voice is made at); nothing is opened or played. A microphone that Windows does not let a program hear is said with the setting that does it (Settings, Privacy, Microphone) |
-| `edge` | that the edge can be reached, accepts the device, knows what it declares (a capability that it is not registered for is said), what it will use (`voice_stream`, or a clip for each sentence), and nothing that the protocol does not allow |
+| `edge` | that the edge can be reached, accepts the device, knows what it declares (a capability that it is not registered for is said), what it will use (`voice_stream`, `play_audio`, or a clip for each sentence), and nothing that the protocol does not allow |
 | `listening` (with `--listen`) | two seconds of the microphone, and how loud it was: one that hears nothing at all is muted, or is not the one that was meant |
 | `playing` (with `--play`) | a quiet tone, and a person is asked whether they heard it |
 

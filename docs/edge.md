@@ -60,7 +60,7 @@ it.
 
 | Frame | Says |
 | --- | --- |
-| `hello` | `protocol_version`, `hardware_id`, `token` (the credential of the device), `capabilities`, optional `display` (`width`, `height`, `touch`), `client` (software and version, for the logs) and `features` (what it takes beyond version 1: `voice_stream`, which needs `audio_out`; left out when there is none). It is the first frame, and the only time the credential is sent |
+| `hello` | `protocol_version`, `hardware_id`, `token` (the credential of the device), `capabilities`, optional `display` (`width`, `height`, `touch`), `client` (software and version, for the logs) and `features` (what it takes beyond version 1: `voice_stream` and `play_audio`, which both need `audio_out`; left out when there is none). It is the first frame, and the only time the credential is sent |
 | `utterance` | `id`, `text`: what a person said, as text. Only a device with `audio_in` can start a conversation |
 | `audio_utterance` | `id`, `audio` (format, sample rate, the recording as bytes): what a person said, recorded after the device's own wake word. The edge transcribes it through the model gateway and runs the result through the same turn an `utterance` would; blank or untranscribable ends the turn, `failed` (`nothing_heard`), instead of asking the conversation service to answer silence. Needs `audio_in`, the same as `utterance` |
 | `audio_start` | `id`, `format` (`pcm_s16le`: 16-bit little-endian samples, one channel, no container), `sample_rate` (8000 to 48000; 16000 is what the models read): a person has begun to talk to the device. It stops the answer to the last utterance at once and opens a stream (below). Needs `audio_in`, and an edge that has speech |
@@ -82,7 +82,7 @@ it.
 | `voice_chunk` | `utterance_id`, `seq` (0, 1, 2... with no gap, in a track), `part_seq` (the `seq` of the `speech` part whose sound this is), `data` (whole samples, base64, at most 64 KiB; about a tenth of a second is what is sent) |
 | `voice_end` | `utterance_id`: the sound is all sent |
 | `turn_ended` | `utterance_id`, `status` (`finished`, `failed`, `cancelled`) and, for a failure, a stable `code` and a `message` |
-| `command` | `id`, `command`: something to do (the command vocabulary of the design: `speak`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `show_card`, `clear_display`, `set_led`). The device answers with an `ack` |
+| `command` | `id`, `command`: something to do (the command vocabulary of the design: `speak`, `play_audio`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `show_card`, `clear_display`, `set_led`). The device answers with an `ack`. A `play_audio` carries a clip, and is sent only to a device that declared `play_audio` (below) |
 | `pong` | Me too |
 | `error` | `code`, `message`, `fatal` (the connection is closed after it), `ref` (the utterance, stream or command it is about) |
 
@@ -241,6 +241,42 @@ sequenceDiagram
   the socket holds it back; the device buffers what it has not played yet (a minute of speech at
   22 kHz is 2.6 MB).
 
+### Audio out: a clip that a command carries
+
+What a skill has a device say is not an answer: it is content for the device, often another one than
+the person spoke to ([ADR
+0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)).
+It travels as a command, `play_audio` (`text`, the words; `audio`, a clip of them, a WAV file of at
+most 2 MiB), which a device takes when it declared the feature `play_audio` (it has a speaker and a
+way to play a clip or a track, and `audio_out`).
+
+- **`speak` is made a voice here.** A skill, a script or a plan can give a device `speak` (a text).
+  When the device declared `play_audio` the edge cuts the text into sentences as it does for an
+  answer, asks the gateway for the voice of each, one after the other (`tts` role), and sends each as
+  a `play_audio` as soon as it is made: the first sound is heard after the first sentence (and whoever
+  asked waits for all of them: the actions service waits for the edge `FACTOTUM_ACTIONS_EDGE_TIMEOUT_S`,
+  15 s, so a long text on a slow voice wants it raised). The result
+  is `ok` when every sentence was accepted, `failed` when one could not be made (no `tts` bound, the
+  gateway away: `the voice could not be made (code)`) or accepted, and `failed` for a text that has
+  nothing to say. A device that did not declare the feature is sent the text, as before, and a
+  `play_audio` for it is sent as a `speak` of the words it carries: a clip that a device cannot play
+  is a text that it may say, or show.
+- **A skill of the platform gives clips.** What a skill of the platform (`announce`) says is made into
+  clips by the actions service, once, with the same gateway, and given to the device that was named:
+  the platform's `play_audio` is not in what a script or a plan can give (`SkillCommand`).
+- **`ok` is *accepted*, not played.** A device answers at once and says the clip when nothing else is
+  being said (no answer is being given on it, nothing is playing), in the order the clips came, from
+  a task of its own, so that a ping, a command and a person speaking never wait for it. A person who
+  speaks cuts the clip that is being said; what waits is said after their answer. A device holds at
+  most 12 MiB of what it has been given and has not said (`failed`: *there is too much waiting to be
+  said*), and a clip that is not a 16-bit mono WAV is `failed` too. Whoever asked is not to wait for
+  the end of what it asked: the chain from a message to a speaker is a request and an answer, and a
+  trail that said *played* would mean a request that is open for as long as the sentence lasts.
+- **What a device is not sent.** A `play_audio` for a device that did not declare `audio_out` is
+  `unsupported`, and nothing is sent, as for any command. A device that has `audio_out` and did not
+  declare the feature is sent the words as a `speak`. A device that is sent a clip it did not say it
+  plays (an edge that is wrong) answers `unsupported` and says so (`Renderer.violation`).
+
 ### Sessions
 
 - A connection that does not say hello within `FACTOTUM_EDGE_HELLO_TIMEOUT_S` (10 s) is refused
@@ -274,7 +310,8 @@ curl -s localhost:8084/v1/devices/$ID/commands -H 'content-type: application/jso
 ```
 
 The edge sends the device a `command` frame and waits up to `FACTOTUM_EDGE_COMMAND_TIMEOUT_S` (10 s)
-for the `ack` with the same `id`. What became of it is always a result with an HTTP `200`, never an
+for the `ack` with the same `id` (for a `speak` made a voice, for each sentence). The body of the
+request may be a frame: a command may carry a clip. What became of it is always a result with an HTTP `200`, never an
 error, because a device that is not there is a normal state of a home:
 
 | `status` | Means |
@@ -332,7 +369,7 @@ it.
 | --- | --- |
 | `GET /v1/connect` | the WebSocket of the devices (the upgrade) |
 | `GET /v1/devices` | the caller's tenant's devices that are connected: id, name, hardware id, capabilities, display, session, since when |
-| `POST /v1/devices/{id}/commands` | have a device do something: `{"command": {...}}` gives a result |
+| `POST /v1/devices/{id}/commands` | have a device do something: `{"command": {...}}` gives a result (a body is at most one frame, 4 MiB) |
 | `GET /healthz`, `GET /readyz` | liveness; readiness (the conversation service answers) |
 
 Errors have the shape of the other services, `{"error": {"code", "message", "details"}}`.
@@ -394,11 +431,14 @@ lost = await VoiceLoop(microphone).serve(client)
 What the core does, so that a client does not:
 
 - **Says what the device has and nothing else**: `capabilities` from the identity, `voice_stream` if
-  there is a sink and a speaker. A device with no microphone cannot start a conversation
+  there is a sink and a speaker, `play_audio` if there is a sink or a speaker of clips and `audio_out`. A device with no microphone cannot start a conversation
   (`CannotConverse`).
 - **Plays the sound of an answer from a task of its own** (`VoicePlayer`), so that what reads from the
   edge never waits for a speaker: a ping, a command and a person speaking over the answer are served
   while the sound is played. A speaker that fails loses the track and is tried again at the next.
+- **Says what a command had it say** (`play_audio`): accepts the clip at once and says it when
+  nothing else is, in order, from a task of its own; a person who speaks cuts it, and what is queued
+  is dropped with the connection.
 - **Cuts the sound before the edge is told**: `say`, `say_audio`, `say_audio_stream` and `cancel`
   stop what plays (what is queued is dropped, the speaker told to stop) and leave the answer going on;
   what is still on its way for it is let go of in silence.

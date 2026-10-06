@@ -156,6 +156,15 @@ meanwhile; a lamp that is one person's own and that the shared speaker is never 
 that names something to do, which is answered and runs nothing and whose planner never reads a
 document; and the audit trail of it all, with the device each step came from.
 
+**An announcement** (`test_e2e_announce.py`, ADR 0026) is what the platform's own skill does with
+the whole assistant behind it: a message said on the display that was named while the kitchen speaker
+says *Done*; on the device that was spoken to; a long message in clips that say all of it in order;
+in Italian; the trail, which holds the words and never the sound; the skill there for a tenant that
+has not said a word; no voice bound (a skill that failed, and nothing said anywhere); a device that
+cannot play a clip (it is given the words); and a device that is not connected. The same is said in
+the hub's house, with signed tokens (`test_e2e_hub.py`), and as `play_audio` reaches a real client in
+`test_e2e_device_app.py`.
+
 **A series of commands** (`test_e2e_series.py`, `factotum.e2e.series`) says the corpus that a model
 that plans is measured against (`factotum.actions.plan_cases`: 82 messages in English and in
 Italian, about the example skills, said to the kitchen speaker, the living room display and a
@@ -166,8 +175,9 @@ of it: done, asked about first, refused, asked for what is missing, or left as a
 looked at, for every one, is what the whole assistant did: what the actions service made of it (it
 is recorded as it is said: `House.acts`), the skill that ran and what it was given (the values, the
 hosts it may reach, the secrets it was granted and no others), what Home Assistant was asked, what
-each device was told to do and has done (a volume, an announcement on the device that was named and
-no other), and, after all of it, the audit trail, which must say exactly what was done, refused and
+each device was told to do and has done (a volume), and said (an announcement on the device that
+was named, which the speaker of no other says; the answer to the person on the one they spoke to),
+and, after all of it, the audit trail, which must say exactly what was done, refused and
 asked about and nothing else, and every client, which must have seen no rule of the protocol broken
 and every voice that was streamed to its end. A question that asks first is answered with a yes at
 the display, which may start what cannot be undone, and with a no at the phone, which leaves the
@@ -192,9 +202,10 @@ given.
 plays and the edge on a real socket): a person presses the key and says a question (the blocks the
 microphone hands over carry the words of the stand-in speech), the answer comes back as the voice of
 the assistant and is given to the speaker as it arrives, a command that a skill answers with is run
-by the hands of the device (a volume that is turned down), a text to say is what the device cannot do
-and the skill is told so, a credential that the edge does not know is refused and not asked for
-again, and the doctor says which setting to look at. It runs in memory and in Postgres. What a sound
+by the hands of the device (a volume that is turned down), an announcement is played besides the
+answer (the platform's own skill, which asks the gateway for the voice) and so is a text that a skill
+of a person gives to say (the edge makes the voice of it), a credential that the edge does not know
+is refused and not asked for again, and the doctor says which setting to look at. It runs in memory and in Postgres. What a sound
 card does is the audio library's to test, and what a person hears is for a person who runs
 `factotum-device doctor --play`.
 
