@@ -259,6 +259,13 @@ async def forgotten(sessions: Sessions) -> bool:
     return False
 
 
+def vocabulary_of(speech: RealSpeech, given: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    """The words that the binding of speech-to-text lists for the real Whisper: what a test says,
+    or else what a person trying words on the models of this machine said
+    (``FACTOTUM_LIVE_VOCABULARY``), or nothing."""
+    return given if given is not None else (speech.vocabulary or None)
+
+
 @asynccontextmanager
 async def running(
     *,
@@ -270,6 +277,7 @@ async def running(
     timeout_s: float = TIMEOUT_S,
     stream_stall_s: float | None = None,
     offer_every_skill: bool = False,
+    vocabulary: tuple[str, ...] | None = None,
 ) -> AsyncIterator[House]:
     """The whole assistant, in the example home, with the models the tenant bound. ``auth`` is how
     the services trust each other: the headers of development, or the hub's signed tokens, with
@@ -280,13 +288,20 @@ async def running(
     before it gives up on it, where a test is about that. ``offer_every_skill`` has the planner
     shown every skill whatever the message is: the stand-in that gives words a direction cannot tell
     that "bump it up to eighty" is near the volume, and a series of commands is about what is done
-    with what the planner proposes, and not about which skills the words were near."""
+    with what the planner proposes, and not about which skills the words were near.
+    ``vocabulary`` is the words that the speech-to-text binding lists for the model to write as they
+    are."""
     model = HouseholdModel()
     whisper: WhisperDouble
     piper: PiperDouble
     if speech is None:
         whisper, piper = StandInWhisper(), StandInPiper()
-        models = bindings(TENANT, speech_to_text=speech_to_text, text_to_speech=text_to_speech)
+        models = bindings(
+            TENANT,
+            speech_to_text=speech_to_text,
+            text_to_speech=text_to_speech,
+            vocabulary=vocabulary,
+        )
     else:
         whisper = RecordedWhisper(real_whisper(speech))
         piper = RecordedPiper(real_piper(speech))
@@ -297,6 +312,7 @@ async def running(
             whisper_model=str(speech.whisper),
             voice=str(speech.voice),
             languages=speech.languages,
+            vocabulary=vocabulary_of(speech, vocabulary),
         )
     home = parse_home(
         HOME_FILE.read_text(encoding="utf-8"),

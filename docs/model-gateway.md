@@ -134,6 +134,47 @@ settle, the words of English in a command, are in
 [`development.md`](development.md#a-series-of-commands-said-in-italian)). The example binding keeps
 `small` because it is the one that fits everywhere; bind a bigger size where there is room for it.
 
+**A vocabulary is for the words that Whisper does not know how to write.** `options.vocabulary` lists
+them: the names of what is in the home, and the words of another language that are said in every one
+(`garage`, `router`). The adapter gives them to the model before it listens, as a list the way a
+person writes one (`Garage, router, wifi.`), which is faster-whisper's `initial_prompt`: Whisper takes
+what it is given as what was said just before, and writes those words as they are more often. **It
+is off unless the binding lists words**, so what is bound today is heard as it was, because what a
+model is given it may say when nobody said it, and so it is a list and not a sentence (a sentence was
+said back by `large-v3` for a lone "sì"). At most a hundred words, of at most 64 characters and 600
+in all (a model reads about the last 220 tokens of what it is given), each once.
+
+```yaml
+  - role: stt
+    provider: whisper_local
+    model: medium
+    options:
+      languages: [it]
+      vocabulary: [garage, router, wifi, lampada, salotto, camera da letto, cucina, volume, meteo,
+                   Home Assistant]
+```
+
+What it does, on the 26 Italian commands of the series (the voice of Piper's, heard on a processor;
+[`development.md`](development.md#a-series-of-commands-said-in-italian) has the table): `medium`
+heard 21 as they were said with the ten words above instead of 17, and `large-v3` 23 instead of 21.
+`router` stopped being `looter` and `Luther`, and "apri il garage", which every size mishears with
+this voice, went from "A pigara!" to "Apri gara." with `medium` and was still wrong with `large-v3`
+("A Pilgara", then "Appilgara"): a vocabulary helps a model that does not know a word, and does not
+make a voice that it cannot follow clearer. What it costs: on the engine itself (a quick
+measurement, not part of the series), `large-v3` heard a lone "sì" as "Sì, va bene." with the list,
+and as a sentence of the home with a prompt that was a sentence (`medium` heard "Sì." both times),
+which is the one thing here that a person would meet as something nobody said. So it is tried on
+the models and the voice of the machine it is for, with the same series:
+
+```bash
+FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_VOCABULARY="garage,router,wifi,lampada,salotto" \
+    uv run pytest e2e/tests/test_e2e_speech_series.py -s
+```
+
+Which words is the home's to say: the gateway knows no device and no skill, and a list that is
+derived from the registry and the skills of a home is not built (see the open questions of
+[`design.md`](design.md#13-open-questions)).
+
 ### A voice as a stream
 
 `POST /v1/synthesize` with `stream: true` answers in server-sent events, as `/v1/chat` does, while

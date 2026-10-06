@@ -249,7 +249,8 @@ The models are looked for where they already are, and the tests skip where they 
 the snapshots of `Systran/faster-whisper-large-v3`, `-medium` and `-small` in the Hugging Face cache)
 and `FACTOTUM_LIVE_PIPER_VOICE` the `.onnx` file of a voice, with its `.onnx.json` beside it (without
 it, `it_IT-paola-medium` in `~/.cache/factotum/piper`). A name is not a folder: it would be fetched,
-so it is not found. A processor takes seconds for each thing heard: the ten tests above take a
+so it is not found. `FACTOTUM_LIVE_VOCABULARY` lists words, separated by commas, that the binding of
+speech-to-text gives Whisper (none unless it does: [below](#with-a-vocabulary)). A processor takes seconds for each thing heard: the ten tests above take a
 minute and a half with `small`, two and a half with `medium` and four with `large-v3`; on the card,
 ctranslate2 needs cuBLAS 12 on the `PATH` (`FACTOTUM_CUDA_DLL_DIR`, or the folder Ollama keeps its
 own in, which the rig finds), and a card that something else is using is slower than the
@@ -295,10 +296,41 @@ cento" came back as "al 50%" from all three). And two commands are heard badly b
 il garage" and "riavvia il router", the two with a word of English that the voice says the Italian
 way. A person may say them in a way that Whisper knows better than this voice does, and nothing
 here shows whether they do; what is certain is that a command is not understood because it was
-heard well once. Nothing biases Whisper toward the words of the home yet (the names of its devices
-and skills, given to the model as a prompt or as hotwords, would), which is the first thing to try
-if a real microphone does the same, and the series is what would show that it helped. It is also
-why the rig takes the biggest model it finds.
+heard well once. The words of the home can be given to the model (below), which is what to try if a
+real microphone does the same. It is also why the rig takes the biggest model it finds.
+
+##### With a vocabulary
+
+`FACTOTUM_LIVE_VOCABULARY` (words, separated by commas) has the speech-to-text binding of the house
+list them for Whisper to write as they are (`options.vocabulary`,
+[`model-gateway.md`](model-gateway.md#speech)), so the same series says whether that helps with the
+models and the voice of a machine. Measured the same way (2026-10-06, the processor of this machine,
+the 26 commands that the series has now, one more than the table above had), with ten words of the
+example home (`garage, router, wifi, lampada, salotto, camera da letto, cucina, volume, meteo, Home
+Assistant`):
+
+```bash
+FACTOTUM_LIVE_TESTS=1 FACTOTUM_LIVE_WHISPER_MODEL=/path/to/a/model \
+    FACTOTUM_LIVE_VOCABULARY="garage,router,wifi,lampada,salotto,camera da letto,cucina,volume,meteo,Home Assistant" \
+    uv run pytest e2e/tests/test_e2e_speech_series.py -s
+```
+
+| Whisper | Vocabulary | Time | Heard as said (alike ≥ 0.95) | Mean | Heard worst |
+| --- | --- | --- | --- | --- | --- |
+| `medium` | none | 3 min 58 | 17 of 26 | 0.927 | "riavvia il router" as "Ja, via Lutte!", "apri il garage" as "A pigara!" |
+| `medium` | ten words | 4 min 00 | 21 of 26 | 0.951 | "riavvia il router" as "Vi avvi a l'ulte.", "apri il garage" as "Apri gara." |
+| `large-v3` | none | 6 min 20 | 21 of 26 | 0.958 | "riavvia il router" as "e a via lute", "apri il garage" as "A Pilgara" |
+| `large-v3` | ten words | 6 min 26 | 23 of 26 | 0.961 | "riavvia il router" as "E a via lute!", "apri il garage" as "Appilgara" |
+
+What it shows. Words that Whisper did not know how to write are written: "router" in a question was
+"looter" and "Luther" and is "router" with both sizes, and the loanword commands are nearer to what
+was said with `medium` (0.64 to 0.78 and 0.62 to 0.73) and are not right. With `large-v3`, which
+already wrote "router" and "garage" when it heard them, there is less to gain (two commands more) and
+no loanword command is better. The cost is not in the series: it compares the first word of a yes and
+a no, and a lone "sì" that `large-v3` heard back as "Sì, va bene." with the list of words, and as a
+sentence made of the words of the home when the prompt was a sentence, was found with the engine
+itself in a throwaway script (`medium` heard "Sì." both times), which is why nothing is listed unless
+a binding says so.
 
 ## Trying the model gateway
 

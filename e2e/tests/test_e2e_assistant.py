@@ -62,6 +62,7 @@ class TestAskingByVoice:
                 # allowed...
                 assert (house.whisper.models, house.whisper.heard) == ([STT_MODEL], [QUESTION])
                 assert house.whisper.languages == [LANGUAGES]
+                assert house.whisper.vocabularies == [()]  # and no words to write as they are
                 # ...the device was told what it was taken for, before the answer began...
                 assert speaker.understood() == [QUESTION]
                 kinds = speaker.shown.kinds()
@@ -78,6 +79,16 @@ class TestAskingByVoice:
                 assert speaker.shown.of("text") == []
                 assert speaker.shown.of("card") == []
                 assert speaker.shown.of("violation") == []
+
+    async def test_the_words_that_the_binding_lists_reach_the_engine_that_hears(self) -> None:
+        async with (
+            running(vocabulary=("garage", "router")) as house,
+            connected(house, "speaker") as speaker,
+        ):
+            ended = await speaker.says_aloud("Apri il garage.")
+
+            assert ended.status is TurnStatus.FINISHED, ended
+            assert house.whisper.vocabularies == [("garage", "router")]
 
     async def test_the_voice_comes_back_the_way_the_device_carries_it(self) -> None:
         async with running() as house:

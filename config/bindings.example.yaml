@@ -49,12 +49,17 @@ bindings:
   # "apri il garage"), so it is told which are spoken: Italian, unless the binding lists others
   # ([it, en] picks the likelier of those, and `null` would leave the guess to the model). `small`
   # is the size that fits everywhere; `medium` and `large-v3` hear a short command better, and take
-  # longer (docs/model-gateway.md#speech).
+  # longer (docs/model-gateway.md#speech). `vocabulary` lists the words that Whisper is to write as
+  # they are when it hears them (what is in the home, the words of another language that are said in
+  # every one): it is off unless it is listed, helps some sizes more than others and can make a model
+  # say a word that nobody said, so it is tried on the models and the voice that it is for
+  # (docs/model-gateway.md#speech).
   # - role: stt
   #   provider: whisper_local
   #   model: small
   #   options:
   #     languages: [it]
+  #     vocabulary: [garage, router, wifi]
   # - role: tts
   #   provider: piper_local
   #   model: it_IT-paola-medium

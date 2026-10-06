@@ -49,6 +49,16 @@ class TestADeviceThatTheHubPaired:
                 # The languages are in the binding the hub keeps, and reach the engine from there.
                 assert house.whisper.languages == [LANGUAGES]
 
+    async def test_the_words_of_the_home_are_in_the_binding_the_hub_keeps(self) -> None:
+        async with (
+            running(auth=Auth.HUB, vocabulary=("garage", "router")) as house,
+            connected(house, "speaker") as speaker,
+        ):
+            ended = await speaker.says_aloud("Apri il garage.")
+
+            assert ended.status is TurnStatus.FINISHED, ended
+            assert house.whisper.vocabularies == [("garage", "router")]
+
     async def test_a_lamp_is_switched_with_the_secret_the_hub_keeps(self) -> None:
         async with running(auth=Auth.HUB) as house, connected(house, "speaker") as speaker:
             ended = await speaker.says_aloud("Turn on the lamp.")

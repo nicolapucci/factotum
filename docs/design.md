@@ -387,6 +387,12 @@ answer and other things than actions, voice.
   knowledge service models it yet: the prefix is per model, so its natural home is an option of the
   embedding binding, applied by the gateway.
 - Reading scanned pages needs OCR, which is not done.
+- A vocabulary for speech-to-text that follows the home. The names of what is in it and of its skills
+  are what a command is about, and Whisper mishears the ones that are words of another language
+  (`garage`, `router`). The `stt` binding can list words (`options.vocabulary`, off unless it does,
+  [`model-gateway.md`](model-gateway.md#speech)); a list that is derived from the registry and the
+  skills of a home, so that nobody writes it by hand and it follows them, is not built. The gateway
+  knows no device and no skill, so what gives it would be the edge or the hub, with the recording.
 - Whether a message needs a model to tell that it refers to the past. The small model costs a call
   on every turn of somebody with a past, 0.3 to 1.4 s by model (measured in `conversation.md`);
   rules could skip it for messages that are plainly self-contained, at the price of a reference now

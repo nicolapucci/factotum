@@ -40,9 +40,15 @@ class WhisperEngine(Protocol):
     """What the adapter needs of faster-whisper: built once per model size, asked for text many
     times."""
 
-    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
+    def transcribe_wav(
+        self,
+        wav_bytes: bytes,
+        languages: tuple[str, ...] | None,
+        vocabulary: tuple[str, ...] = (),
+    ) -> str:
         """What was said in a WAV file. ``languages`` are the ones it may be in: one is that
-        language, several limit the guess to them, and none leaves the guess to the model."""
+        language, several limit the guess to them, and none leaves the guess to the model.
+        ``vocabulary`` is words that it is to write as they are when it hears them."""
         ...
 
 
@@ -57,6 +63,16 @@ def choose_language(languages: tuple[str, ...], likelihoods: Sequence[tuple[str,
     is of no use, it is the guess that put Arabic where an Italian said "apri il garage"."""
     scores = dict(likelihoods)
     return max(languages, key=lambda code: scores.get(code, 0.0))
+
+
+def prompt_of(vocabulary: tuple[str, ...]) -> str | None:
+    """What a model is given before it listens, to write the words of a home as they are: a list,
+    the way a person writes one (Whisper takes a prompt as what was said just before). Nothing when
+    there are no words."""
+    if not vocabulary:
+        return None
+    text = ", ".join(vocabulary)
+    return f"{text[0].upper()}{text[1:]}."
 
 
 class FasterWhisperEngine:
@@ -78,7 +94,12 @@ class FasterWhisperEngine:
         self._load_model = load_model or self._load_faster_whisper
         self._model: Any | None = None
 
-    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None = None) -> str:
+    def transcribe_wav(
+        self,
+        wav_bytes: bytes,
+        languages: tuple[str, ...] | None = None,
+        vocabulary: tuple[str, ...] = (),
+    ) -> str:
         """Runs on the calling thread: callers run it with ``asyncio.to_thread``."""
         from faster_whisper.audio import decode_audio  # heavy: deferred with the model
 
@@ -87,8 +108,12 @@ class FasterWhisperEngine:
         # Whatever is not speech is left out before the model listens (the Silero model of
         # faster-whisper, inside its package): told to hear Italian, Whisper writes the credits of
         # a subtitle for a second of silence, and the assistant would answer that as a question.
+        prompt = prompt_of(vocabulary)
         segments, _ = model.transcribe(
-            audio, language=self._language_of(model, audio, languages), vad_filter=True
+            audio,
+            language=self._language_of(model, audio, languages),
+            vad_filter=True,
+            **({"initial_prompt": prompt} if prompt else {}),
         )
         return " ".join(segment.text.strip() for segment in segments).strip()
 
@@ -174,7 +199,10 @@ class WhisperLocalAdapter:
         engine = self._engine_for(resolved.model)
         try:
             return await asyncio.to_thread(
-                engine.transcribe_wav, audio.data, resolved.options.languages
+                engine.transcribe_wav,
+                audio.data,
+                resolved.options.languages,
+                resolved.options.vocabulary or (),
             )
         except Exception as error:
             raise ProviderUnavailableError(

@@ -287,6 +287,7 @@ def bindings(
     whisper_model: str = STT_MODEL,
     voice: str = VOICE,
     languages: tuple[str, ...] = LANGUAGES,
+    vocabulary: tuple[str, ...] | None = None,
 ) -> list[ModelBinding]:
     """What the tenant bound, the way a person writes it: the speech roles have no address. The
     model of Whisper, the voice of Piper and the languages are the ones of the stand-ins unless a
@@ -318,7 +319,7 @@ def bindings(
                 ModelRole.STT,
                 ProviderKind.WHISPER_LOCAL,
                 whisper_model,
-                options=BindingOptions(languages=languages),
+                options=BindingOptions(languages=languages, vocabulary=vocabulary),
             )
         )
     if text_to_speech:

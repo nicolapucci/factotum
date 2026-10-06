@@ -69,10 +69,17 @@ class FakeWhisperEngine:
         self._outcome = outcome
         self.asked: list[bytes] = []
         self.languages: list[tuple[str, ...] | None] = []
+        self.vocabularies: list[tuple[str, ...]] = []
 
-    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
+    def transcribe_wav(
+        self,
+        wav_bytes: bytes,
+        languages: tuple[str, ...] | None,
+        vocabulary: tuple[str, ...] = (),
+    ) -> str:
         self.asked.append(wav_bytes)
         self.languages.append(languages)
+        self.vocabularies.append(vocabulary)
         if isinstance(self._outcome, Exception):
             raise self._outcome
         return self._outcome
@@ -124,6 +131,16 @@ def sentence(n: int, rate: int = 22050) -> SpeechPiece:
 
 
 class TestWhisperLocalAdapter:
+    async def test_the_words_of_the_binding_reach_the_engine_and_none_is_none(self) -> None:
+        engine = FakeWhisperEngine()
+        adapter = WhisperLocalAdapter(engine_factory=lambda model: engine)
+        listed = whisper_binding(options=BindingOptions(vocabulary=("garage", "router")))
+
+        await adapter.transcribe(None, listed, audio())  # type: ignore[arg-type]
+        await adapter.transcribe(None, whisper_binding(), audio())  # type: ignore[arg-type]
+
+        assert engine.vocabularies == [("garage", "router"), ()]
+
     async def test_it_transcribes_with_the_engine_of_the_bindings_model(self) -> None:
         engine = FakeWhisperEngine("hold the button for ten seconds")
         adapter = WhisperLocalAdapter(engine_factory=lambda model: engine)

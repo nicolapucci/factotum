@@ -17,6 +17,7 @@ from factotum.model_gateway.providers.whisper_local import (
     SAMPLE_RATE,
     FasterWhisperEngine,
     choose_language,
+    prompt_of,
 )
 from factotum.model_gateway.testing import a_tone_wav
 
@@ -64,6 +65,36 @@ def engine_of(model: FakeWhisperModel) -> tuple[FasterWhisperEngine, list[int]]:
         return model
 
     return FasterWhisperEngine("base", device="cpu", cache_dir=None, load_model=load), loads
+
+
+class TestTheWordsOfTheHome:
+    def test_a_list_of_words_is_a_list_the_way_a_person_writes_one(self) -> None:
+        assert (
+            prompt_of(("garage", "router", "Home Assistant")) == "Garage, router, Home Assistant."
+        )
+
+    def test_one_word_is_a_sentence_of_one(self) -> None:
+        assert prompt_of(("router",)) == "Router."
+
+    def test_no_words_are_no_prompt(self) -> None:
+        assert prompt_of(()) is None
+
+    def test_the_model_is_given_them_before_it_listens(self) -> None:
+        model = FakeWhisperModel()
+        engine, _ = engine_of(model)
+
+        engine.transcribe_wav(a_tone_wav(16000), ("it",), ("garage", "router"))
+
+        assert model.options == [{"vad_filter": True, "initial_prompt": "Garage, router."}]
+
+    def test_without_words_it_is_given_nothing_it_was_not_given_before(self) -> None:
+        model = FakeWhisperModel()
+        engine, _ = engine_of(model)
+
+        engine.transcribe_wav(a_tone_wav(16000), ("it",))
+        engine.transcribe_wav(a_tone_wav(16000), ("it",), ())
+
+        assert model.options == [{"vad_filter": True}, {"vad_filter": True}]
 
 
 class TestTheEngineOfWhisper:

@@ -108,6 +108,35 @@ class TestBindingOptions:
         with pytest.raises(ValidationError, match=reason):
             BindingOptions.model_validate({"languages": languages})
 
+    def test_no_words_are_given_to_a_model_of_speech_unless_the_binding_says_so(self) -> None:
+        assert BindingOptions().vocabulary is None
+        assert BindingOptions.model_validate_json('{"max_input_tokens": 4096}').vocabulary is None
+
+    def test_the_words_of_a_home_are_kept_in_the_order_they_were_written(self) -> None:
+        options = BindingOptions.model_validate(
+            {"vocabulary": ["garage", "router", "Home Assistant"]}
+        )
+
+        assert options.vocabulary == ("garage", "router", "Home Assistant")
+        assert BindingOptions.model_validate_json(options.model_dump_json()) == options
+
+    @pytest.mark.parametrize(
+        ("vocabulary", "reason"),
+        [
+            ([""], "1 to 64 characters"),
+            (["x" * 65], "1 to 64 characters"),
+            (["garage", "Garage"], "listed twice"),
+            (["two\nlines"], "no line break"),
+            ([f"{index:02d}" + "w" * 58 for index in range(11)], "600 characters in all"),
+            (["word"] * 101, "at most 100 items"),
+        ],
+    )
+    def test_a_vocabulary_that_is_not_words_that_people_say_is_rejected(
+        self, vocabulary: list[str], reason: str
+    ) -> None:
+        with pytest.raises(ValidationError, match=reason):
+            BindingOptions.model_validate({"vocabulary": vocabulary})
+
     def test_languages_survive_json_as_they_do_in_the_hubs_store(self) -> None:
         options = BindingOptions(languages=("it", "en"))
 

@@ -26,11 +26,17 @@ class WhisperDouble(Protocol):
     models: list[str]
     heard: list[str]
     languages: list[tuple[str, ...] | None]
+    vocabularies: list[tuple[str, ...]]
     broken: bool
 
     def build(self, model: str) -> "WhisperDouble": ...
 
-    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str: ...
+    def transcribe_wav(
+        self,
+        wav_bytes: bytes,
+        languages: tuple[str, ...] | None,
+        vocabulary: tuple[str, ...] = (),
+    ) -> str: ...
 
 
 class PiperDouble(Protocol):
@@ -89,16 +95,25 @@ class StandInWhisper:
         """The languages the binding allowed, for each recording: what a binding said reaches the
         engine, through the hub as well when the hub holds the binding."""
 
+        self.vocabularies: list[tuple[str, ...]] = []
+        """The words that the binding gave the engine to write as they are, for each recording."""
+
         self.broken = False
 
     def build(self, model: str) -> "StandInWhisper":
         self.models.append(model)
         return self
 
-    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
+    def transcribe_wav(
+        self,
+        wav_bytes: bytes,
+        languages: tuple[str, ...] | None,
+        vocabulary: tuple[str, ...] = (),
+    ) -> str:
         if self.broken:
             raise RuntimeError("the model fell over")
         self.languages.append(languages)
+        self.vocabularies.append(vocabulary)
         self.heard.append(words_in(wav_bytes))
         return self.heard[-1]
 

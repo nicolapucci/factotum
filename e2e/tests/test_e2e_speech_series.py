@@ -14,6 +14,9 @@ apart: each command must be nearer to what was said than to any other of the ser
 They are live tests, run by a person with the models of this machine, never in CI and never with a
 download (``factotum.e2e.speech`` says where the models are looked for, and how to run Whisper on
 the graphics card): ``FACTOTUM_LIVE_TESTS=1 uv run pytest e2e/tests/test_e2e_speech_series.py -s``.
+With ``FACTOTUM_LIVE_VOCABULARY`` (words, separated by commas) the speech-to-text binding lists them
+for Whisper to write as they are, and the same series says whether that helped on these models and
+this voice.
 """
 
 import os
@@ -79,6 +82,7 @@ class TestACommandThatIsSaid:
             played = await series.run(ITALIAN)
 
             print(f"\n  Whisper model: {speech.whisper}")
+            print(f"  Vocabulary: {', '.join(speech.vocabulary) or 'none'}")
             print("\n".join(f"  {line}" for line in table_of(played)))
             # What each came to, from what was heard of it...
             wrong = problems_of(played)

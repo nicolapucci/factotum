@@ -213,8 +213,12 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   (measured with Piper's `it_IT-paola-medium` and the 25 Italian commands of the series: "apri il
   garage" came back as "A pigara!" and "riavvia il router" as "Ja, via Lutte!"; `small` heard "a 70" as
   "a 60", and `large-v3` heard every number). The names of what is in the home are what a command is
-  about, and nothing biases the model toward them yet (an `initial_prompt` or hotwords of the home's
-  devices and skills would): do not take a command that was heard well once for one that is.
+  about, and the `stt` binding can list them for the model (`options.vocabulary`, off unless it
+  does): on the 26 commands `medium` heard 21 as said instead of 17 and `large-v3` 23 instead of 21,
+  and the loanword commands stay wrong with `large-v3`. It is a prompt, so it is a list of words and
+  never a sentence, and what a model is given it may say when nobody said it (`large-v3` heard a
+  lone "sì" as "Sì, va bene."): try it with the series (`FACTOTUM_LIVE_VOCABULARY`) on the models and
+  the voice it is for. Do not take a command that was heard well once for one that is.
 - Tests import `--import-mode=importlib`: one test module cannot import another, so what tests share
   lives in a `testing.py` in the package (`factotum.edge.testing`, `factotum.terminal.testing`,
   `factotum.client_core.testing`: the fakes of every port of a client, and `ClientRig`;

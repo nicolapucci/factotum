@@ -24,6 +24,11 @@ DEFAULT_SPEECH_LANGUAGES: tuple[str, ...] = ("it",)
 """What a speech-to-text binding hears when it does not say: Italian, the language the assistant is
 spoken to in first. A household that speaks others lists them."""
 
+MAX_VOCABULARY_WORD_CHARS = 64
+MAX_VOCABULARY_CHARS = 600
+"""What a model of speech reads of what it is given before it listens is about 220 tokens: more is
+cut from the start, so a vocabulary that is longer is one whose first words are never read."""
+
 
 class ModelRole(StrEnum):
     """What a service needs a model for."""
@@ -123,6 +128,40 @@ class BindingOptions(Contract):
         if len(set(languages)) != len(languages):
             raise ValueError("a language is listed twice")
         return languages
+
+    vocabulary: tuple[str, ...] | None = Field(default=None, max_length=100)
+    """Speech-to-text only: words that people say to the device and that a model of speech does
+    not know how to write, the names of what is in the home and the words of another language that
+    are said in every one (``garage``, ``router``). They are given to the model before it listens,
+    and it writes them more often as they are: in the series of Italian commands of
+    ``docs/development.md``, Whisper ``medium`` heard 21 of 26 as they were said instead of 17
+    (``router`` where it had written ``looter``), and ``large-v3`` 23 instead of 21. Nothing is
+    given unless this says so, because what a model is given it may say when nobody said it: with
+    a list of words ``large-v3`` made "Sì, va bene." of a lone "sì", and with a sentence, the
+    sentence of the home. The option is tried on the models and the voices of the person who sets
+    it, with that series (``FACTOTUM_LIVE_VOCABULARY``)."""
+
+    @field_validator("vocabulary")
+    @classmethod
+    def _vocabulary_is_words_that_people_say(
+        cls, vocabulary: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        if vocabulary is None:
+            return None
+        seen: set[str] = set()
+        for word in vocabulary:
+            if not word or len(word) > MAX_VOCABULARY_WORD_CHARS:
+                raise ValueError(
+                    f"a word of the vocabulary is 1 to {MAX_VOCABULARY_WORD_CHARS} characters"
+                )
+            if any(ord(character) < 32 for character in word):
+                raise ValueError("a word of the vocabulary has no line break or control character")
+            if word.casefold() in seen:
+                raise ValueError(f"{word!r} is listed twice")
+            seen.add(word.casefold())
+        if sum(len(word) for word in vocabulary) > MAX_VOCABULARY_CHARS:
+            raise ValueError(f"the vocabulary is at most {MAX_VOCABULARY_CHARS} characters in all")
+        return vocabulary
 
 
 class ModelBinding(Contract):

@@ -4,13 +4,16 @@ is downloaded (a model that is not found is a skip, never a fetch)."""
 
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from factotum.e2e.house import vocabulary_of
 from factotum.e2e.speech import (
     CUDA_VARIABLE,
     DEVICE_VARIABLE,
+    VOCABULARY_VARIABLE,
     VOICE_VARIABLE,
     WHISPER_VARIABLE,
     RealSpeech,
@@ -172,6 +175,40 @@ class TestFindingTheModels:
         assert found is not None
         assert found.languages == ("it",)
 
+    def test_no_word_is_listed_for_whisper_unless_the_variable_lists_some(
+        self, tmp_path: Path
+    ) -> None:
+        a_whisper_model(tmp_path / SNAPSHOTS / "abc")
+        a_voice(tmp_path / PIPER)
+
+        found = find_speech({}, tmp_path)
+
+        assert found is not None
+        assert found.vocabulary == ()
+
+    def test_the_words_of_the_variable_are_what_the_binding_lists(self, tmp_path: Path) -> None:
+        a_whisper_model(tmp_path / SNAPSHOTS / "abc")
+        a_voice(tmp_path / PIPER)
+
+        found = find_speech({VOCABULARY_VARIABLE: " garage, router ,, Home Assistant,"}, tmp_path)
+
+        assert found is not None
+        assert found.vocabulary == ("garage", "router", "Home Assistant")
+
+
+class TestTheWordsListedForWhisper:
+    def test_what_a_test_lists_is_what_the_binding_lists_whatever_the_variable_said(self) -> None:
+        speech = replace(a_speech("cpu"), vocabulary=("garage", "router"))
+
+        assert vocabulary_of(speech, ("lampada",)) == ("lampada",)
+        assert vocabulary_of(speech, ()) == ()  # a test that lists none is not given the variable's
+
+    def test_otherwise_it_is_what_the_variable_said_and_nothing_if_it_said_nothing(self) -> None:
+        speech = replace(a_speech("cpu"), vocabulary=("garage", "router"))
+
+        assert vocabulary_of(speech, None) == ("garage", "router")
+        assert vocabulary_of(a_speech("cpu"), None) is None
+
 
 def a_speech(device: str) -> RealSpeech:
     return RealSpeech(whisper=Path("whisper"), voice=Path("voice.onnx"), device=device)
@@ -229,10 +266,15 @@ class TestTheCudaLibraries:
 
 class FakeWhisper:
     def __init__(self) -> None:
-        self.asked: list[tuple[bytes, tuple[str, ...] | None]] = []
+        self.asked: list[tuple[bytes, tuple[str, ...] | None, tuple[str, ...]]] = []
 
-    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
-        self.asked.append((wav_bytes, languages))
+    def transcribe_wav(
+        self,
+        wav_bytes: bytes,
+        languages: tuple[str, ...] | None,
+        vocabulary: tuple[str, ...] = (),
+    ) -> str:
+        self.asked.append((wav_bytes, languages, vocabulary))
         return "ciao"
 
 
@@ -257,7 +299,16 @@ class TestTheRecordersUnderTheRealEngines:
             ["ciao"],
             [("it",)],
         )
-        assert engine.asked == [(b"a recording", ("it",))]
+        assert engine.asked == [(b"a recording", ("it",), ())]
+
+    def test_the_words_that_a_binding_gave_are_passed_on_and_remembered(self) -> None:
+        engine = FakeWhisper()
+        recorded = RecordedWhisper(engine)
+
+        recorded.build("small").transcribe_wav(b"a recording", ("it",), ("garage",))
+
+        assert recorded.vocabularies == [("garage",)]
+        assert engine.asked == [(b"a recording", ("it",), ("garage",))]
 
     def test_a_whisper_that_is_broken_falls_over_and_remembers_nothing(self) -> None:
         engine = FakeWhisper()

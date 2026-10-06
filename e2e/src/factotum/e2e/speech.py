@@ -9,7 +9,9 @@ of the adapter). The engines are the ones the adapters build, and are built once
 that use them: loading a model costs seconds.
 
 ``FACTOTUM_LIVE_SPEECH_DEVICE`` says where Whisper runs (``cpu``, which is slower and is everywhere,
-or ``cuda``).
+or ``cuda``), and ``FACTOTUM_LIVE_VOCABULARY`` (words, separated by commas) is what the binding of
+speech-to-text lists for Whisper to write as they are (``options.vocabulary``): none unless it says
+so, which is how a person finds out whether it helps with the models and the voice of this machine.
 """
 
 import io
@@ -28,6 +30,7 @@ from factotum.model_gateway.providers.whisper_local import FasterWhisperEngine, 
 WHISPER_VARIABLE = "FACTOTUM_LIVE_WHISPER_MODEL"
 VOICE_VARIABLE = "FACTOTUM_LIVE_PIPER_VOICE"
 DEVICE_VARIABLE = "FACTOTUM_LIVE_SPEECH_DEVICE"
+VOCABULARY_VARIABLE = "FACTOTUM_LIVE_VOCABULARY"
 CUDA_VARIABLE = "FACTOTUM_CUDA_DLL_DIR"
 
 DEFAULT_VOICE = "it_IT-paola-medium.onnx"
@@ -55,6 +58,9 @@ class RealSpeech:
     device: str = "cpu"
     languages: tuple[str, ...] = ("it",)
     """What the house is spoken to in, as the speech-to-text binding says it."""
+
+    vocabulary: tuple[str, ...] = ()
+    """The words that the binding lists for Whisper to write as they are, as it says them."""
 
 
 def _is_whisper_model(folder: Path) -> bool:
@@ -94,7 +100,13 @@ def find_speech(
     )
     if whisper is None or not has_voice:
         return None
-    return RealSpeech(whisper=whisper, voice=voice, device=environ.get(DEVICE_VARIABLE, "cpu"))
+    words = (word.strip() for word in environ.get(VOCABULARY_VARIABLE, "").split(","))
+    return RealSpeech(
+        whisper=whisper,
+        voice=voice,
+        device=environ.get(DEVICE_VARIABLE, "cpu"),
+        vocabulary=tuple(word for word in words if word),
+    )
 
 
 def ensure_cuda_libraries(
@@ -169,17 +181,24 @@ class RecordedWhisper:
         self.models: list[str] = []
         self.heard: list[str] = []
         self.languages: list[tuple[str, ...] | None] = []
+        self.vocabularies: list[tuple[str, ...]] = []
         self.broken = False
 
     def build(self, model: str) -> "RecordedWhisper":
         self.models.append(model)
         return self
 
-    def transcribe_wav(self, wav_bytes: bytes, languages: tuple[str, ...] | None) -> str:
+    def transcribe_wav(
+        self,
+        wav_bytes: bytes,
+        languages: tuple[str, ...] | None,
+        vocabulary: tuple[str, ...] = (),
+    ) -> str:
         if self.broken:
             raise RuntimeError("the model fell over")
-        heard = self._engine.transcribe_wav(wav_bytes, languages)
+        heard = self._engine.transcribe_wav(wav_bytes, languages, vocabulary)
         self.languages.append(languages)
+        self.vocabularies.append(vocabulary)
         self.heard.append(heard)
         return heard
 
