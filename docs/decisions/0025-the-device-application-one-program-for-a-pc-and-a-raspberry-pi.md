@@ -1,6 +1,9 @@
 # 0025. The device application: one program for a PC and a Raspberry Pi, over a library of the sound hardware
 
-Status: accepted, 2026-10-06.
+Status: accepted, 2026-10-06. The wake word that waits for a key, here, is
+[ADR 0027](0027-the-wake-word-without-a-key-openwakeword-behind-the-same-port.md)'s: Picovoice has no
+key for a person, and the word is watched for by openWakeWord, with no key (the key stays for
+Porcupine, as an extra).
 
 ## Context
 

@@ -343,6 +343,27 @@ sentence made of the words of the home when the prompt was a sentence, was found
 itself in a throwaway script (`medium` heard "Sì." both times), which is why nothing is listed unless
 a binding says so.
 
+### With the real wake word
+
+The wake word is tried with the real models of openWakeWord ([ADR
+0027](decisions/0027-the-wake-word-without-a-key-openwakeword-behind-the-same-port.md)): the Italian
+voice of Piper says "Alexa" and sentences that are none of the four words, the three models answer on
+`onnxruntime`, and a device that is woken by it (the real input and the real engine, on a sound card
+that a test plays) sends what follows the word, which the real Whisper hears as the question and not
+as the word, twice in a row. They are `live` tests, and nothing is downloaded: the models are not in
+the repository (they are their author's, CC BY-NC-SA 4.0, for use that is not commercial) and a
+person has them once with `factotum-device wake-word download` (for each of the four words, 5.6 MB
+in all, in `~/.cache/factotum/openwakeword`, or the folder that `FACTOTUM_LIVE_WAKEWORD_MODELS`
+names). Without them the tests skip and say which command brings them.
+
+```bash
+for word in alexa hey_jarvis hey_mycroft hey_rhasspy; do uv run factotum-device wake-word download $word; done
+FACTOTUM_LIVE_TESTS=1 uv run pytest e2e/tests/test_e2e_wakeword.py -m live -s
+```
+
+They take a minute on a processor. What a synthetic voice scores is not what a person's does:
+`factotum-device doctor --word` is how a person finds that out, with their own.
+
 ## Trying the model gateway
 
 See [`model-gateway.md`](model-gateway.md#running-it). To run its tests against a real Ollama (opt-in,
@@ -398,7 +419,7 @@ uv run factotum-terminal --profile speaker --wav-in question.wav --wav-out answe
 The tests of the terminal run against a real edge served by uvicorn on a loopback port, so they need
 no Docker.
 
-The program of a real device, with a push to talk (Enter) and no key for a wake word, is described in
+The program of a real device, with a push to talk (Enter) or a wake word, is described in
 [`device.md`](device.md#trying-it): `uv run factotum-device init`, `doctor`, then run it.
 
 ## Trying the actions

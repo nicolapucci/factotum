@@ -43,6 +43,10 @@ uv run factotum-terminal --profile smart-display
 uv run factotum-terminal --profile speaker --wav-in question.wav --wav-out answer.wav
 # the program of a real device on this machine, with a push to talk (docs/device.md): settings, check, run
 uv run factotum-device init && uv run factotum-device doctor && uv run factotum-device
+# the wake word of a device (no key): the models, fetched once, and your own voice against them
+uv run factotum-device wake-word download && uv run factotum-device doctor --word
+# the wake word with the real models, a synthetic voice and the real Whisper (docs/development.md):
+FACTOTUM_LIVE_TESTS=1 uv run pytest -m live e2e/tests/test_e2e_wakeword.py -s
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose up -d --wait                       # the database
 FACTOTUM_POSTGRES_PASSWORD=dev docker compose --profile services up -d --build   # and the services
 ```
@@ -167,13 +171,23 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   hands for (`audio_in`, `audio_out`), and what it has no hands for (what is said is not the hands'
   work: the core plays a clip, and a text never reaches a device that takes clips) is *unsupported*
   and the skill is told, never `ok`. The volume is the speaker's own, in software, and the system's
-  is left alone. The two
-  secrets of a device (its credential, the key of the wake word) are in the environment, which wins
-  over the file, and in no line it says and no error. A push to talk needs a keyboard, so a service
-  listens for a word. A supervisor restarts a device for what failed (exit code 1) and never for what
-  the edge decided (3 to 6: asking again is the two connections of one device taking it from each
-  other for ever). `doctor` connects *as the device*, and the edge keeps the last connection:
-  `--no-edge` when one is running.
+  is left alone. The secrets of a device (its credential, and the key of Porcupine when that is the
+  engine) are in the environment, which wins over the file, and in no line it says and no error. A
+  push to talk needs a keyboard, so a service listens for a word. A supervisor restarts a device for
+  what failed (exit code 1) and never for what the edge decided (3 to 6: asking again is the two
+  connections of one device taking it from each other for ever). `doctor` connects *as the device*,
+  and the edge keeps the last connection: `--no-edge` when one is running.
+- **The wake word is an engine behind a port, and the models of the default are not ours** (ADR 0027).
+  `WakeWordEngine` is what `WakeWord` asks, a frame at a time, and `wake_word_engine` is the one place
+  that says which engine takes what (the device and the terminal both ask it, and a client never
+  chooses): openWakeWord, which needs no account and no key, is the default; Porcupine needs a key
+  that Picovoice gives to companies (it has no free plan) and is an extra (`--extra porcupine`). The
+  models of openWakeWord are their author's (CC BY-NC-SA 4.0, for use that is not commercial): they
+  are never in the repository or an image, and are fetched only by `factotum-device wake-word
+  download` (one address in the code, a size and a SHA-256 pinned in `WAKE_WORDS`, a body that is not
+  the file is never kept). A device or a test that has none says what to run and does not fetch.
+  Do not fetch them from anywhere else, do not build an engine but through the factory, and do not
+  leave an engine remembering what a person said: it is made to forget (`reset`) after each utterance.
 - Every outbound URL the user controls goes through `factotum.common.urlguard`.
 - Interfaces between services are pydantic models in `factotum.contracts`, immutable and strict
   about unknown fields (`Contract`). The command vocabulary is defined once and everything else
@@ -305,3 +319,20 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   meant to change. And a subprocess that is killed must be killed with its tree (`taskkill /F /T`):
   `uv run pytest` is `uv`, which starts `pytest`, which starts `python`, and the last one holds the
   pipe.
+- openWakeWord scores zero for the first five frames after an engine is made or told to forget (its
+  buffers hold noise until then): a probe or a test that listens for fewer than six frames sees
+  nothing, and the word is said to nothing if it comes first. What a synthetic voice scores is not
+  what a person's does (Piper's Italian voice says `hey_jarvis` at 0.21 and `alexa` at 1.00): the
+  threshold is chosen with `factotum-device doctor --word` and a real voice, and never from a test.
+- A default that changes is a test that waits: a device given `mode: wake_word` and a key was, with the
+  new default engine, a device that needs no key and waits for models that were not there, and the test
+  did not fail, it waited for an edge that never answered. A test of a device says which engine.
+- The home of whoever runs the tests is not theirs to have: `libs/client_audio`, `clients/device` and
+  `clients/terminal` run every test with an empty `HOME` and `USERPROFILE` (their `conftest.py`:
+  `Path.home()` and `~` both read them), because a machine that had fetched the models of the wake
+  word passed a test of the device that a clean one fails (found by a mutation: the device was not
+  given its engine, and the real one on the maintainer's machine heard no word either). A test that
+  wants a folder says it (`models_dir`).
+- The `e2e` conftest has an autouse fixture, `_how_the_house_is_run`, that runs a whole house three
+  ways for every test of the folder: a module that is not about the house (the wake word is a device's)
+  replaces it by defining a fixture of that name, or each of its tests is run three times.

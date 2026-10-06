@@ -480,14 +480,16 @@ uv run factotum-terminal --wav-in question.wav --wav-out answer.wav   # files, n
 ```
 
 With `--voice` (only on a profile with `audio_in`) a real microphone and speaker replace the
-keyboard and the screen: say the wake word (`--wake-word`, default `jarvis`), then what you would
-say, and wait for the answer before saying it again. What is said is sent **as it is said**, a
+keyboard and the screen: say the wake word (`--wake-word`, default `hey_jarvis`), then what you
+would say, and wait for the answer before saying it again. What is said is sent **as it is said**, a
 chunk at a time, from the wake word until 1.2 s of quiet or twelve seconds; the answer is
 interrupted by the edge when you begin (see the known limits for what the terminal does not yet
-do). It needs a free Picovoice AccessKey for the wake-word engine
-(`$PICOVOICE_ACCESS_KEY`, from <https://console.picovoice.ai/>) and the model gateway configured
-with `stt` and `tts` bindings ([`model-gateway.md`](model-gateway.md#speech)) to hear or say
-anything; without the gateway, `--voice` still connects but every recording is refused.
+do). The word is watched for by openWakeWord, which needs no account and no key but its models:
+`factotum-device wake-word download` fetches them once ([ADR
+0027](decisions/0027-the-wake-word-without-a-key-openwakeword-behind-the-same-port.md); `--engine
+porcupine` needs an AccessKey that Picovoice gives to companies). It needs the model gateway
+configured with `stt` and `tts` bindings ([`model-gateway.md`](model-gateway.md#speech)) to hear or
+say anything; without the gateway, `--voice` still connects but every recording is refused.
 
 **The client that tests the whole stack with no hardware** is `--wav-in`: each file (16-bit mono
 WAV, any rate from 8 to 48 kHz; give the option again for each utterance) is said in the order
@@ -566,10 +568,11 @@ Put a document in first (`docs/knowledge.md` shows how) for there to be somethin
 Without the conversation service the edge is up and every answer is an apology.
 
 To try it with a real voice instead, bind `stt` and `tts` to `whisper_local` and `piper_local`
-([`model-gateway.md`](model-gateway.md#speech)), set `FACTOTUM_EDGE_GATEWAY_URL` and
-`$PICOVOICE_ACCESS_KEY`, and say the wake word:
+([`model-gateway.md`](model-gateway.md#speech)), set `FACTOTUM_EDGE_GATEWAY_URL`, fetch the models
+of the wake word, and say it:
 
 ```bash
+uv run factotum-device wake-word download            # once: the models of "hey jarvis"
 uv run factotum-terminal --profile speaker --voice
 ```
 

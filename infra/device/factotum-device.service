@@ -4,8 +4,10 @@
 #   sudo useradd --system --create-home --groups audio factotum
 #   (the repository goes in /home/factotum/factotum, and: uv sync --package factotum-device)
 #   /etc/factotum/device.yaml    the settings: config/device.example.yaml, with listening.mode wake_word
-#   /etc/factotum/device.env     FACTOTUM_DEVICE_TOKEN=... and PICOVOICE_ACCESS_KEY=... (mode 0640, group
-#                                factotum): the two secrets of a device are not in the file of settings
+#   /etc/factotum/device.env     FACTOTUM_DEVICE_TOKEN=... (mode 0640, group factotum), and
+#                                PICOVOICE_ACCESS_KEY=... only for listening.engine porcupine: the
+#                                secrets of a device are not in the file of settings
+#   (as that user, once)         uv run factotum-device wake-word download   (the models of the word)
 #   sudo cp infra/device/factotum-device.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now factotum-device
 #   journalctl -u factotum-device -f
