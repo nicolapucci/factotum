@@ -91,7 +91,7 @@ class TestAnnouncing:
         message = a_message(9)  # what a person says is at most 500 characters
         rig.plans(announce_plan(message, device=DISPLAY))
 
-        outcome = await rig.hear(KITCHEN, TELL)
+        outcome = await rig.hear(KITCHEN, f"tell the living room that {message}")
 
         assert outcome.status is ActStatus.DONE
         said = [FakeSpeech.words_in(command.audio) for _, _, command in played(rig)]
@@ -213,7 +213,7 @@ class TestWhoseVoice:
         two.plans(announce_plan("Lunch is ready", device=DISPLAY))
 
         await one.hear(KITCHEN, TELL)
-        await two.hear(KITCHEN, TELL)
+        await two.hear(KITCHEN, "tell the living room that lunch is ready")
 
         assert speech.asked == [
             (one.shared_owner, "Dinner is ready"),
@@ -255,7 +255,7 @@ class TestWhatTheTrailSays:
         rig, _ = a_rig()
         rig.plans(announce_plan(a_message(9), device=DISPLAY))
 
-        await rig.hear(KITCHEN, TELL)
+        await rig.hear(KITCHEN, f"tell the living room that {a_message(9)}")
 
         [record] = await rig.audit()
         assert record.detail is not None
@@ -372,7 +372,7 @@ class TestWhenItCannotBeDone:
         ]
         rig.plans(announce_plan(a_message(9), device=DISPLAY))
 
-        outcome = await rig.hear(KITCHEN, TELL)
+        outcome = await rig.hear(KITCHEN, f"tell the living room that {a_message(9)}")
 
         assert outcome.code is ActCode.COMMAND_FAILED
         assert len(played(rig)) == 2
@@ -382,7 +382,7 @@ class TestWhenItCannotBeDone:
         rig.dispatcher.answers = [CommandResult(status=CommandStatus.FAILED, detail="too much")]
         rig.plans(announce_plan(a_message(9), device=DISPLAY))
 
-        outcome = await rig.hear(KITCHEN, TELL)
+        outcome = await rig.hear(KITCHEN, f"tell the living room that {a_message(9)}")
 
         assert outcome.code is ActCode.COMMAND_FAILED
         assert len(played(rig)) == 1  # the second half of a message is not said without the first

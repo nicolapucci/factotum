@@ -77,6 +77,10 @@ AIR_SAID = "The air quality index in ${value.place} is ${step.air.json.current.e
 PLACE_LATITUDE, PLACE_LONGITUDE, AIR_INDEX = 45.07, 7.69, 21
 """What the stand-in of Open-Meteo answers (``house.OPEN_METEO``)."""
 
+VOLUME_STEP = 10
+"""How far "turn it up" goes when nobody says: the usual step of the ``volume-change`` skill (the
+skill decides it, ADR 0028; a device does what it is told)."""
+
 YES = {"en": "Yes.", "it": "Sì."}
 NO = {"en": "No.", "it": "No."}
 
@@ -237,6 +241,10 @@ class Window:
     volumes: dict[str, int]
     """By device: the volume its hardware has when it is over."""
 
+    volumes_before: dict[str, int]
+    """By device: the volume its hardware had when it began (a volume turned up or down goes from
+    where it was)."""
+
     spoken: dict[str, tuple[str, ...]] | None
     """By device: what its speaker was made to say, where that can be read back out of the sound
     (the clips of the stand-in of Piper carry their words)."""
@@ -273,6 +281,7 @@ class _Mark:
     web: int
     prompts: int
     devices: dict[str, _DeviceMark] = field(default_factory=dict)
+    volumes: dict[str, int] = field(default_factory=dict)
 
 
 Say = Callable[[Device, str], Awaitable[TurnEnded]]
@@ -339,6 +348,7 @@ class Series:
                 )
                 for name, device in self._devices.items()
             },
+            volumes={name: device.hardware.state.volume for name, device in self._devices.items()},
         )
 
     async def _window(self, speaker: str, words: str) -> Window:
@@ -367,6 +377,7 @@ class Series:
                 for name, device in self._devices.items()
             },
             volumes={name: device.hardware.state.volume for name, device in self._devices.items()},
+            volumes_before=before.volumes,
             sentences={
                 name: len(device.sentences()) - before.devices[name].sentences
                 for name, device in self._devices.items()
@@ -505,6 +516,8 @@ def _done(case: PlanCase, window: Window) -> list[str]:
                 problems.append(f"{case.speaker} has its volume at {window.volumes[case.speaker]}")
             problems += _job(window, "volume", (), {})
             problems += _nothing_else_was_reached(window)
+        case "volume-change":
+            problems += _volume_turned(case, window)
         case "announce":
             problems += _announced(case, window)
         case "movie-scene":
@@ -534,6 +547,28 @@ def _done(case: PlanCase, window: Window) -> list[str]:
         case _:
             problems.append(f"the series does not know what {case.skill} is to do")
     return problems
+
+
+def _volume_turned(case: PlanCase, window: Window) -> list[str]:
+    """A volume turned up or down goes by what was said, or by the step of the skill when nothing
+    was, from where the device had it and never past either end. Only the device that was spoken to
+    is touched, and the skill is run once with nothing to reach."""
+    step = int(case.params.get("amount", VOLUME_STEP))
+    delta = step if case.params["direction"] == "up" else -step
+    before = window.volumes_before[case.speaker]
+    wanted = max(0, min(before + delta, 100))
+    problems: list[str] = []
+    if window.events[case.speaker] != (f"volume {wanted}",):
+        problems.append(
+            f"{case.speaker} was told {window.events[case.speaker]} instead of {wanted}"
+        )
+    if window.volumes[case.speaker] != wanted:
+        problems.append(f"{case.speaker} has its volume at {window.volumes[case.speaker]}")
+    for name, level in window.volumes.items():
+        if name != case.speaker and level != window.volumes_before[name]:
+            problems.append(f"{name} had its volume moved to {level}")
+    problems += _job(window, "volume-change", (), {})
+    return problems + _nothing_else_was_reached(window)
 
 
 def _announced(case: PlanCase, window: Window) -> list[str]:

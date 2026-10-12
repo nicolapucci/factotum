@@ -6,6 +6,12 @@ key nobody declared. What is safe to run is decided here, in code: a value is ac
 the type the skill declares, inside its bounds, one of its choices; a small slip that leaves no
 doubt is corrected, anything else is *invalid*, and a required value that is not there is *missing*.
 Either way the person is asked again, and nothing runs on a guess.
+
+A value that has the right type and is inside its bounds may still be one that nobody said, and that
+is the mistake of a small model (a level of 100 for "turn it up"). Given the words of the person,
+the checks also ask that a number and a text can be found in them (``grounding``, ADR 0028): one
+that cannot is *unsaid*, which is not a value at all, so an optional one is left out and a required
+one is missing and the person is asked.
 """
 
 import math
@@ -13,6 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from factotum.actions.grounding import says
 from factotum.contracts.skills import ParameterSpec, ParamType, ParamValue, SkillManifest
 
 MAX_TEXT_CHARS = 500
@@ -33,6 +40,10 @@ class Checked:
     invalid: tuple[str, ...] = ()
     """Given, and not acceptable."""
 
+    unsaid: tuple[str, ...] = ()
+    """Given, and acceptable, but not something that the person said: left out. If it was required
+    it is also in ``missing``."""
+
     @property
     def ok(self) -> bool:
         return not self.missing and not self.invalid
@@ -43,18 +54,25 @@ class Checked:
         return (*self.missing, *self.invalid)
 
 
-def check_values(manifest: SkillManifest, given: Mapping[str, Any]) -> Checked:
-    """Check what a model found against the parameters of the skill. Names the skill did not
-    declare are dropped: they are not the person's."""
-    return check_specs(manifest.parameters, manifest.required, given)
+def check_values(manifest: SkillManifest, given: Mapping[str, Any], *, said: str) -> Checked:
+    """Check what a model found against the parameters of the skill, and against the words of the
+    person (``said``): a number or a text that they did not say is not a value. Names the skill
+    did not declare are dropped: they are not the person's."""
+    return check_specs(manifest.parameters, manifest.required, given, said=said)
 
 
 def check_specs(
-    specs: Mapping[str, ParameterSpec], required: Sequence[str], given: Mapping[str, Any]
+    specs: Mapping[str, ParameterSpec],
+    required: Sequence[str],
+    given: Mapping[str, Any],
+    *,
+    said: str | None = None,
 ) -> Checked:
-    """The same for any set of declared parameters (the ones of a device, for instance)."""
+    """The same for any set of declared parameters (the ones of a device, for instance, which no
+    person says: they are not looked for in any words, and so ``said`` is not given)."""
     values: dict[str, ParamValue] = {}
     invalid: list[str] = []
+    unsaid: list[str] = []
     for name, spec in specs.items():
         raw = given.get(name)
         if raw is None:
@@ -62,10 +80,17 @@ def check_specs(
         accepted = _accept(spec, raw)
         if accepted is None:
             invalid.append(name)
+        elif said is not None and not says(said, spec, accepted):
+            unsaid.append(name)
         else:
             values[name] = accepted
     missing = [name for name in required if name not in values and name not in invalid]
-    return Checked(values=values, missing=tuple(missing), invalid=tuple(invalid))
+    return Checked(
+        values=values,
+        missing=tuple(missing),
+        invalid=tuple(invalid),
+        unsaid=tuple(unsaid),
+    )
 
 
 def _accept(spec: ParameterSpec, raw: Any) -> ParamValue | None:

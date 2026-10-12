@@ -123,3 +123,23 @@ class TestPlanningWhatWasHeard:
     def test_a_number_is_the_level_of_a_volume(self) -> None:
         assert planned("Imposta il volume a 30.")["parameters"] == {"level": 30}
         assert planned("Set the volume to 20.")["parameters"] == {"level": 20}
+        assert planned("Alza il volume a 70.")["parameters"] == {"level": 70}
+
+    def test_a_volume_that_is_turned_up_or_down_is_a_change_and_not_a_level(self) -> None:
+        up = planned("Alza il volume.")
+        down = planned("Turn the volume down by 20.")
+
+        assert (up["skill"], up["parameters"]) == ("volume-change", {"direction": "up"})
+        assert (down["skill"], down["parameters"]) == (
+            "volume-change",
+            {"direction": "down", "amount": 20},
+        )
+        assert planned("Abbassa il volume di 15.")["parameters"] == {
+            "direction": "down",
+            "amount": 15,
+        }
+
+    def test_a_volume_with_no_level_and_no_direction_is_a_level_that_nobody_said(self) -> None:
+        plan = planned("Set the volume.")
+
+        assert (plan["skill"], plan["parameters"]) == ("volume", {})

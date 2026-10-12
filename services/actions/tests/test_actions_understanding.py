@@ -90,6 +90,7 @@ async def understood(
     here: str | None = "Kitchen speaker",
     text: str = HOME,
     candidates: list[Candidate] | None = None,
+    message: str = "",
 ) -> Any:
     home = parse_home(text, tenant_id=TENANT, user_id=USER, source="home")
     directory = FileDeviceDirectory(TEST, home)
@@ -102,6 +103,7 @@ async def understood(
     return understand(
         the_plan,
         CANDIDATES if candidates is None else candidates,
+        message=message,
         here=found_here,
         systems=systems,
         bound=bound,
@@ -132,14 +134,17 @@ class TestWhatIsNotAnAction:
 
 class TestASkillThatActsOnNothing:
     async def test_a_skill_with_no_device_is_understood_with_its_values(self) -> None:
-        found = await understood(plan("weather", parameters={"place": "Rome"}))
+        found = await understood(
+            plan("weather", parameters={"place": "Rome"}), message="what is the weather in Rome"
+        )
 
         assert isinstance(found, Understood)
         assert (found.values, found.device_params, found.target) == ({"place": "Rome"}, {}, None)
 
     async def test_a_device_the_model_named_is_ignored_when_the_skill_acts_on_none(self) -> None:
         found = await understood(
-            plan("weather", device="Garage door", parameters={"place": "Rome"})
+            plan("weather", device="Garage door", parameters={"place": "Rome"}),
+            message="what is the weather in Rome",
         )
 
         assert isinstance(found, Understood)
@@ -230,21 +235,29 @@ class TestAnExternalDevice:
 
 class TestASystemDevice:
     async def test_the_device_that_was_spoken_to_is_the_one_meant(self) -> None:
-        found = await understood(plan("volume", parameters={"level": 30}))
+        found = await understood(
+            plan("volume", parameters={"level": 30}), message="set the volume to 30"
+        )
 
         assert isinstance(found, Understood)
         assert found.target is not None
         assert found.target.name == "Kitchen speaker"
 
     async def test_another_device_can_be_named(self) -> None:
-        found = await understood(plan("volume", device="study player", parameters={"level": 30}))
+        found = await understood(
+            plan("volume", device="study player", parameters={"level": 30}),
+            message="set the volume of the study player to 30",
+        )
 
         assert isinstance(found, Understood)
         assert found.target is not None
         assert found.target.name == "Study player"
 
     async def test_a_device_can_be_named_by_an_alias(self) -> None:
-        found = await understood(plan("volume", device="The Kitchen", parameters={"level": 5}))
+        found = await understood(
+            plan("volume", device="The Kitchen", parameters={"level": 5}),
+            message="set the volume of the kitchen to 5",
+        )
 
         assert isinstance(found, Understood)
         assert found.target is not None
@@ -272,10 +285,14 @@ class TestASystemDevice:
 
 class TestTheValues:
     async def test_the_values_are_what_the_skill_declares(self) -> None:
-        found = await understood(plan(parameters={"state": "On", "brightness": "40%", "x": 1}))
+        found = await understood(
+            plan(parameters={"state": "On", "brightness": "40%", "x": 1}),
+            message="turn the lamp on at 40%",
+        )
 
         assert isinstance(found, Understood)
         assert found.values == {"state": "on", "brightness": 40}
+        assert found.left_out == ()
 
     async def test_a_value_that_is_missing_is_asked_for_in_the_words_of_the_model(self) -> None:
         found = await understood(plan("weather", ask="Which city do you want the weather for?"))
@@ -324,6 +341,144 @@ class TestTheValues:
 
         assert isinstance(found, NeedsMore)
         assert found.code is ActCode.AMBIGUOUS_DEVICE
+
+
+class TestWhatThePersonSaid:
+    """A value that a model wrote and that nobody said is not a value (ADR 0028)."""
+
+    async def test_an_optional_value_that_was_not_said_is_left_out_and_the_rest_is_done(
+        self,
+    ) -> None:
+        found = await understood(
+            plan(parameters={"state": "on", "brightness": 100}), message="turn the lamp on"
+        )
+
+        assert isinstance(found, Understood)
+        assert found.values == {"state": "on"}
+        assert found.left_out == ("brightness",)
+
+    async def test_a_required_value_that_was_not_said_is_asked_for_whatever_the_model_wrote(
+        self,
+    ) -> None:
+        found = await understood(
+            plan("volume", parameters={"level": 100}, ask="What level do you want?"),
+            message="turn it up",
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert (found.code, found.skill) == (ActCode.MISSING_VALUES, "volume")
+        assert found.reply == "What level do you want?"
+        assert found.left_out == ("level",)
+
+    async def test_the_same_value_said_is_a_value(self) -> None:
+        found = await understood(
+            plan("volume", parameters={"level": 100}), message="set the volume to 100"
+        )
+
+        assert isinstance(found, Understood)
+        assert found.values == {"level": 100}
+        assert found.left_out == ()
+
+    async def test_a_number_in_words_is_said(self) -> None:
+        found = await understood(
+            plan("volume", parameters={"level": 50}), message="metti il volume a cinquanta"
+        )
+
+        assert isinstance(found, Understood)
+        assert found.values == {"level": 50}
+
+    async def test_the_city_is_what_was_said_and_not_one_that_the_model_thought_of(self) -> None:
+        said = await understood(
+            plan("weather", parameters={"place": "Torino"}), message="che tempo fa a Torino"
+        )
+        thought_of = await understood(
+            plan("weather", parameters={"place": "Roma"}), message="che tempo fa"
+        )
+
+        assert isinstance(said, Understood)
+        assert said.values == {"place": "Torino"}
+        assert isinstance(thought_of, NeedsMore)
+        assert thought_of.left_out == ("place",)
+        assert thought_of.reply == "Mi serve ancora: place."
+
+    async def test_a_choice_is_not_looked_for_in_the_words(self) -> None:
+        found = await understood(plan(parameters={"state": "on"}), message="accendi la luce")
+
+        assert isinstance(found, Understood)
+        assert found.values == {"state": "on"}
+        assert found.left_out == ()
+
+    async def test_a_value_that_is_wrong_is_asked_for_and_not_called_unsaid(self) -> None:
+        found = await understood(
+            plan(parameters={"state": "on", "brightness": 500}), message="turn it on at 500"
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert found.reply == "I still need: brightness."
+        assert found.left_out == ()
+
+
+class TestTheQuestionForAMissingValue:
+    """The model asks, in its own words, for what is missing: in the language of the message."""
+
+    async def test_a_question_in_the_language_of_the_message_is_kept(self) -> None:
+        found = await understood(
+            plan("weather", language="it", ask="Di quale città vuoi sapere il tempo?"),
+            message="che tempo fa",
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert found.reply == "Di quale città vuoi sapere il tempo?"
+
+    async def test_a_question_in_another_language_is_not_asked_and_the_codes_words_are(
+        self,
+    ) -> None:
+        found = await understood(
+            plan("weather", language="it", ask="Which city do you want the weather for?"),
+            message="che tempo fa",
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert found.reply == "Mi serve ancora: place."
+
+    async def test_and_the_other_way_round(self) -> None:
+        found = await understood(
+            plan("weather", language="en", ask="Di quale città vuoi sapere il tempo?"),
+            message="what is the weather like",
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert found.reply == "I still need: place."
+
+    async def test_the_language_of_the_message_is_the_one_read_by_the_code_not_the_models(
+        self,
+    ) -> None:
+        found = await understood(
+            plan("weather", language="en", ask="Which city?"), message="che tempo fa"
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert found.reply == "Mi serve ancora: place."
+
+    @pytest.mark.parametrize("message", ["", "ok", "meteo Carrara"])
+    async def test_a_message_that_cannot_be_told_leaves_the_question_to_the_model(
+        self, message: str
+    ) -> None:
+        found = await understood(
+            plan("weather", language="en", ask="Di quale città vuoi sapere il tempo?"),
+            message=message,
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert found.reply == "Di quale città vuoi sapere il tempo?"
+
+    async def test_a_question_that_cannot_be_told_either_is_the_models_to_ask(self) -> None:
+        found = await understood(
+            plan("weather", language="en", ask="Torino?"), message="che tempo fa"
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert found.reply == "Torino?"
 
 
 class TestTheQuestion:

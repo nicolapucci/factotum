@@ -1,6 +1,7 @@
 """The action path from a message to an outcome, with everything around it made of doubles."""
 
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -12,7 +13,7 @@ from factotum.actions.execution import DryRunRunner
 from factotum.actions.rig import ActionsRig, plan_of
 from factotum.actions.service import MAX_FAILURE_DETAIL_CHARS, ActionSettings
 from factotum.actions.store import InMemoryStore
-from factotum.actions.testing import GARAGE, LAMP, ROUTER, VOLUME, WEATHER
+from factotum.actions.testing import GARAGE, LAMP, ROUTER, VOLUME, VOLUME_CHANGE, WEATHER
 from factotum.contracts.actions import MAX_REPLY_CHARS, ActCode, ActOutcome, ActRequest, ActStatus
 from factotum.contracts.approval import ApprovalOutcome, ApprovalResult, ApproverKind
 from factotum.contracts.audit import ActionResult, AuditRecord
@@ -259,7 +260,7 @@ class TestDoingIt:
             )
         )
 
-        await rig.hear(KITCHEN, "turn on the living room lamp")
+        await rig.hear(KITCHEN, "turn on the living room lamp at 40%")
 
         assert rig.runner.requests[0].params == {"state": "on", "brightness": 40}
 
@@ -880,7 +881,7 @@ class TestApproval:
         await rig.install(careful)
         rig.plans(plan_of("restart-router", parameters={"api_token": "sk-a-very-secret-value"}))
 
-        await rig.hear(KITCHEN, "restart the router")
+        await rig.hear(KITCHEN, "restart the router with sk-a-very-secret-value")
 
         assert rig.approver.requests[0].action.params == {"api_token": "[REDACTED]"}
         [record] = await rig.audit()
@@ -1008,6 +1009,99 @@ class TestWhenSomethingIsMissing:
             )
             is None
         )
+
+
+class TestWhatThePersonDidNotSay:
+    """A value that a model wrote and the person did not say is never believed (ADR 0028)."""
+
+    LEFT_OUT = "values that the message does not say were left out"
+
+    async def test_a_level_that_nobody_said_is_asked_for_and_nothing_runs(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME)
+        rig.plans(plan_of("volume", parameters={"level": 100}, ask="What level do you want?"))
+
+        with caplog.at_level(logging.INFO, logger="factotum.actions"):
+            outcome = await rig.hear(KITCHEN, "set the volume")
+
+        assert (outcome.status, outcome.code) == (ActStatus.NEEDS_MORE, ActCode.MISSING_VALUES)
+        assert outcome.reply == "What level do you want?"
+        assert rig.runner.requests == []
+        assert rig.dispatcher.given == []
+        assert await rig.audit() == []
+        [noted] = [r for r in caplog.records if r.getMessage() == self.LEFT_OUT]
+        assert (noted.__dict__["skill"], noted.__dict__["values"]) == ("volume", ["level"])
+
+    async def test_a_number_that_was_said_in_words_is_a_level(self) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME)
+        rig.plans(plan_of("volume", parameters={"level": 30}))
+
+        outcome = await rig.hear(KITCHEN, "set the volume to thirty")
+
+        assert outcome.status is ActStatus.DONE
+        assert rig.runner.requests[0].params == {"level": 30}
+
+    async def test_an_optional_value_that_nobody_said_is_left_out_and_the_skill_is_run_without_it(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(LAMP)
+        rig.plans(plan_of("lamp", device="the lamp", parameters={"state": "on", "brightness": 100}))
+
+        with caplog.at_level(logging.INFO, logger="factotum.actions"):
+            outcome = await rig.hear(KITCHEN, "turn on the lamp")
+
+        assert outcome.status is ActStatus.DONE
+        assert rig.runner.requests[0].params == {"state": "on"}
+        [noted] = [r for r in caplog.records if r.getMessage() == self.LEFT_OUT]
+        assert (noted.__dict__["skill"], noted.__dict__["values"]) == ("lamp", ["brightness"])
+
+    async def test_a_step_that_a_model_made_up_is_not_passed_on_and_the_skills_is_used(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME_CHANGE)
+        rig.plans(plan_of("volume-change", parameters={"direction": "up", "amount": 10}))
+
+        outcome = await rig.hear(KITCHEN, "turn the volume up")
+
+        assert outcome.status is ActStatus.DONE
+        assert rig.runner.requests[0].params == {"direction": "up"}
+
+    async def test_an_amount_that_was_said_is_passed_on(self) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME_CHANGE)
+        rig.plans(plan_of("volume-change", parameters={"direction": "down", "amount": 20}))
+
+        outcome = await rig.hear(KITCHEN, "turn the volume down by twenty")
+
+        assert outcome.status is ActStatus.DONE
+        assert rig.runner.requests[0].params == {"direction": "down", "amount": 20}
+
+    async def test_the_direction_is_the_models_reading_and_is_not_looked_for_in_the_words(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME_CHANGE)
+        rig.plans(plan_of("volume-change", parameters={"direction": "up"}))
+
+        outcome = await rig.hear(KITCHEN, "alza il volume")
+
+        assert outcome.status is ActStatus.DONE
+        assert rig.runner.requests[0].params == {"direction": "up"}
+
+    async def test_the_question_is_asked_in_the_language_of_the_message(self) -> None:
+        rig = ActionsRig()
+        await rig.install(VOLUME_CHANGE)
+        rig.plans(plan_of("volume-change", ask="Do you want it up or down?"))
+
+        outcome = await rig.hear(KITCHEN, "alza il volume")
+
+        assert (outcome.status, outcome.code) == (ActStatus.NEEDS_MORE, ActCode.MISSING_VALUES)
+        assert outcome.reply == "Mi serve ancora: direction."
 
 
 class TestWhenARunGoesWrong:

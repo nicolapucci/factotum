@@ -217,6 +217,19 @@ VOLUME = SkillManifest(
     effect=Effect.REVERSIBLE,
     entrypoint="scripts/run.py",
 )
+VOLUME_CHANGE = SkillManifest(
+    name="volume-change",
+    description="Turn the volume of the device that is being spoken to up or down.",
+    examples=("turn the volume up", "turn the volume down by 20", "alza il volume"),
+    target=SkillTarget.SYSTEM,
+    parameters={
+        "direction": ParameterSpec(type=ParamType.STRING, enum=("up", "down")),
+        "amount": ParameterSpec(type=ParamType.INTEGER, minimum=1, maximum=100),
+    },
+    required=("direction",),
+    effect=Effect.REVERSIBLE,
+    entrypoint="scripts/run.py",
+)
 WEATHER = SkillManifest(
     name="weather",
     description="Say what the weather is like now in a city.",

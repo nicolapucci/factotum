@@ -5,7 +5,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from factotum.actions.values import MAX_TEXT_CHARS, check_values
+from factotum.actions.grounding import says
+from factotum.actions.values import MAX_TEXT_CHARS, check_specs, check_values
 from factotum.contracts.effects import Effect
 from factotum.contracts.skills import ParameterSpec, ParamType, SkillManifest
 
@@ -25,8 +26,18 @@ MANIFEST = SkillManifest(
 )
 
 
+NEEDS_A_LEVEL = SkillManifest(
+    name="volume",
+    description="Sets the volume.",
+    effect=Effect.REVERSIBLE,
+    parameters={"level": ParameterSpec(type=ParamType.INTEGER, minimum=0, maximum=100)},
+    required=("level",),
+)
+
+
 def check(**given: Any) -> Any:
-    return check_values(MANIFEST, given)
+    """What is accepted of a value, whatever was said: the type, the bounds and the choices."""
+    return check_specs(MANIFEST.parameters, MANIFEST.required, given)
 
 
 class TestWhatIsAccepted:
@@ -120,7 +131,7 @@ class TestWhatIsNotAccepted:
         ],
     )
     def test_it_is_invalid_and_the_person_is_asked_again(self, name: str, written: Any) -> None:
-        checked = check_values(MANIFEST, {"state": "on", name: written})
+        checked = check(**{"state": "on", name: written})
 
         assert not checked.ok
         assert checked.invalid == (name,)
@@ -162,7 +173,7 @@ class TestWhatIsNotAccepted:
 def test_whatever_a_model_says_what_is_accepted_is_what_the_skill_declares(
     given_values: dict[str, Any],
 ) -> None:
-    checked = check_values(MANIFEST, given_values)
+    checked = check_specs(MANIFEST.parameters, MANIFEST.required, given_values)
 
     for name, value in checked.values.items():
         spec = MANIFEST.parameters[name]
@@ -191,3 +202,105 @@ def test_whatever_a_model_says_what_is_accepted_is_what_the_skill_declares(
     assert set(MANIFEST.required) <= set(checked.values) | set(checked.missing) | set(
         checked.invalid
     )
+
+
+class TestWhatThePersonSaid:
+    """A value of the right type that nobody said is not a value (ADR 0028)."""
+
+    def test_a_number_that_the_message_gives_is_a_value(self) -> None:
+        checked = check_values(
+            MANIFEST, {"state": "on", "brightness": 40}, said="the lamp to 40 percent"
+        )
+
+        assert checked.ok
+        assert checked.values == {"state": "on", "brightness": 40}
+        assert checked.unsaid == ()
+
+    def test_a_number_that_it_does_not_give_is_left_out_and_the_rest_is_kept(self) -> None:
+        checked = check_values(
+            MANIFEST, {"state": "on", "brightness": 100}, said="turn the lamp on"
+        )
+
+        assert checked.ok
+        assert checked.values == {"state": "on"}
+        assert checked.unsaid == ("brightness",)
+        assert checked.asked_for == ()
+
+    def test_a_required_value_that_it_does_not_give_is_missing_and_the_person_is_asked(
+        self,
+    ) -> None:
+        checked = check_values(NEEDS_A_LEVEL, {"level": 100}, said="turn it up")
+
+        assert not checked.ok
+        assert checked.values == {}
+        assert checked.missing == ("level",)
+        assert checked.unsaid == ("level",)
+        assert checked.asked_for == ("level",)
+
+    def test_a_text_is_what_the_message_has_words_for(self) -> None:
+        said = check_values(
+            MANIFEST, {"state": "on", "label": "the lamp"}, said="switch the lamp on"
+        )
+        thought_of = check_values(
+            MANIFEST, {"state": "on", "label": "the vase"}, said="switch the lamp on"
+        )
+
+        assert said.values["label"] == "the lamp"
+        assert thought_of.unsaid == ("label",)
+        assert "label" not in thought_of.values
+
+    def test_a_choice_and_a_yes_or_no_are_not_looked_for_in_the_words(self) -> None:
+        checked = check_values(
+            MANIFEST, {"state": "on", "smooth": True, "steps": 5}, said="accendi la luce"
+        )
+
+        assert checked.values == {"state": "on", "smooth": True, "steps": 5}
+        assert checked.unsaid == ()
+
+    def test_a_value_that_is_wrong_is_invalid_and_not_unsaid(self) -> None:
+        checked = check_values(MANIFEST, {"state": "on", "brightness": 500}, said="at 500")
+
+        assert checked.invalid == ("brightness",)
+        assert checked.unsaid == ()
+
+    def test_an_empty_message_says_nothing_and_is_not_a_reason_to_believe_everything(self) -> None:
+        checked = check_values(MANIFEST, {"state": "on", "brightness": 0}, said="")
+
+        assert checked.values == {"state": "on"}
+        assert checked.unsaid == ("brightness",)
+
+    def test_the_values_of_a_device_are_not_looked_for_in_any_words(self) -> None:
+        """No person says the entity of a lamp: they come from the file of the home."""
+        checked = check_specs(
+            MANIFEST.parameters, MANIFEST.required, {"state": "on", "brightness": 100}
+        )
+
+        assert checked.values == {"state": "on", "brightness": 100}
+        assert checked.unsaid == ()
+
+
+@given(
+    st.dictionaries(
+        st.sampled_from([*MANIFEST.parameters, "extra"]),
+        st.one_of(
+            st.none(),
+            st.booleans(),
+            st.integers(-5, 120),
+            st.floats(allow_nan=True, allow_infinity=True),
+            st.text(max_size=12),
+        ),
+    ),
+    st.text(max_size=40),
+)
+def test_whatever_a_model_writes_what_is_kept_is_what_the_message_says(
+    given_values: dict[str, Any], message: str
+) -> None:
+    checked = check_values(MANIFEST, given_values, said=message)
+
+    for name, value in checked.values.items():
+        assert says(message, MANIFEST.parameters[name], value)
+    assert not set(checked.values) & set(checked.unsaid)
+    assert not set(checked.invalid) & set(checked.unsaid)
+    for name in checked.unsaid:
+        if name in MANIFEST.required:
+            assert name in checked.missing

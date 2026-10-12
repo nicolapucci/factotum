@@ -529,6 +529,7 @@ class TestReadingAFolder:
             "lamp@1",
             "movie-scene@1",
             "restart-router@1",
+            "volume-change@1",
             "volume@1",
             "weather@1",
         ]

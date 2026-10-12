@@ -165,7 +165,7 @@ async def home_of(opened: Gateway) -> ActionsRig:
     )
     read = await catalog.reload(rig.principal(None))
     assert read.problems == ()
-    assert len(read.enabled) == 7  # the folder: the platform's skills are not in it
+    assert len(read.enabled) == 8  # the folder: the platform's skills are not in it
     return rig
 
 
@@ -221,6 +221,12 @@ def judge(
         for name, value in case.params.items():
             if not same(ran.params.get(name), value):
                 problems.append(f"{name}={ran.params.get(name)!r} instead of {value!r}")
+        if outcome.skill == case.skill:  # a value that was run and that nobody said (ADR 0028)
+            problems.extend(
+                f"{name}={value!r} was run and nobody said it"
+                for name, value in ran.params.items()
+                if name not in case.params
+            )
         if case.device in ENTITIES and ran.device_params.get("entity_id") != ENTITIES[case.device]:
             problems.append(f"device {ran.device_params.get('entity_id')} instead of {case.device}")
     elif case.status is ActStatus.DONE:

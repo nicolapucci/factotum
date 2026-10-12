@@ -82,14 +82,17 @@ class TestTheCorpus:
         assert {case.speaker for case in PLAN_CASES} <= known
         assert {KITCHEN, DISPLAY, PHONE} <= known
 
-    def test_the_values_of_a_command_are_ones_its_skill_declares_and_accepts(self) -> None:
+    def test_the_values_of_a_command_are_ones_its_skill_declares_accepts_and_the_message_says(
+        self,
+    ) -> None:
         skills = manifests()
 
         for case in PLAN_CASES:
             if case.skill is None:
                 continue
-            checked = check_values(skills[case.skill], case.params)
+            checked = check_values(skills[case.skill], case.params, said=case.message)
             assert checked.invalid == (), case.message
+            assert checked.unsaid == (), case.message
             assert checked.values == case.params, case.message
 
     def test_a_device_is_one_that_the_skill_acts_on(self) -> None:

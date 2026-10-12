@@ -103,13 +103,15 @@ If no skill fits, or none is shown for it, it is null.
 message does not name one (for a skill that acts on the device that is spoken to, that is null).
 
 "parameters" has the values the message gives, by the names the skill declares, with the types it \
-declares. Leave out the ones the message does not give. Never make one up.
+declares. A number or a text is only what the message says (a number in digits or in words): \
+leave out the ones it does not say, even when it would be easy to guess, and never make one up. \
+A choice from a list is the one the message means, as the skill's description says.
 
 "language" is the language of the message as a two-letter code.
 
 "question" is a short yes or no question that says exactly what will be done, in the language of \
-the message, to ask before doing it. "ask" is a short question to get a value that is missing, \
-in the language of the message; null when nothing is missing.\
+the message, to ask before doing it. "ask" is a short question to get a required value that the \
+message does not give, in the language of the message; null when nothing is missing.\
 """
 
 
@@ -237,9 +239,33 @@ _WEATHER = SkillView(
 )
 _VOLUME = SkillView(
     name="volume",
-    description="Set the volume of the device that is being spoken to.",
+    description="Set the volume of the device that is being spoken to, to a level the person says.",
     target=SkillTarget.SYSTEM,
     values=("level (whole number 0 to 100, required): the volume, in percent",),
+)
+_VOLUME_CHANGE = SkillView(
+    name="volume-change",
+    description=(
+        "Turn the volume of the device that is being spoken to up or down, by an amount if the "
+        "person says one."
+    ),
+    target=SkillTarget.SYSTEM,
+    values=(
+        "direction (up or down, required): whether the volume is to go up or to go down",
+        "amount (whole number 1 to 100): by how much, in percent, when the person says it (leave "
+        "it out when they do not)",
+    ),
+)
+_ANNOUNCE = SkillView(
+    name="announce",
+    description="Say something out loud on a device, such as that dinner is ready.",
+    target=SkillTarget.SYSTEM,
+    values=("message (text, required): what to say, as the person said it",),
+)
+_SCENE = SkillView(
+    name="movie-scene",
+    description="Dim the lights of the living room for watching a movie.",
+    target=SkillTarget.NONE,
 )
 _GARAGE = SkillView(
     name="garage-door",
@@ -294,7 +320,7 @@ EXAMPLES: tuple[Example, ...] = (
     ),
     Example(
         "Set the volume to 30 percent",
-        (_VOLUME, _WEATHER),
+        (_VOLUME, _VOLUME_CHANGE),
         _plan(
             "asks to set the volume",
             skill="volume",
@@ -361,6 +387,73 @@ EXAMPLES: tuple[Example, ...] = (
             parameters={"action": "close"},
             question="Do you want me to close the garage door?",
         ),
+    ),
+    Example(
+        "Alza il volume",
+        (_VOLUME_CHANGE, _VOLUME),
+        _plan(
+            "asks to turn the volume up, and not by how much",
+            skill="volume-change",
+            parameters={"direction": "up"},
+            language="it",
+            question="Vuoi che alzi il volume?",
+        ),
+    ),
+    Example(
+        "Turn the volume down by 20",
+        (_VOLUME, _VOLUME_CHANGE),
+        _plan(
+            "asks to turn the volume down by 20",
+            skill="volume-change",
+            parameters={"direction": "down", "amount": 20},
+            question="Do you want me to turn the volume down by 20?",
+        ),
+    ),
+    Example(
+        "Cambia il volume",
+        (_VOLUME_CHANGE, _VOLUME),
+        _plan(
+            "asks to change the volume, and not whether up or down",
+            skill="volume-change",
+            language="it",
+            ask="Vuoi alzarlo o abbassarlo?",
+        ),
+    ),
+    Example(
+        "Che tempo fa?",
+        (_WEATHER,),
+        _plan(
+            "asks for the weather but not where",
+            skill="weather",
+            language="it",
+            ask="Di quale città vuoi sapere il tempo?",
+        ),
+    ),
+    Example(
+        "Let everybody know that the pizza has arrived",
+        (_ANNOUNCE, _LAMP),
+        _plan(
+            "asks to say that the pizza has arrived, in the words that were said",
+            skill="announce",
+            parameters={"message": "the pizza has arrived"},
+            question="Do you want me to say that the pizza has arrived?",
+        ),
+    ),
+    Example(
+        "Avvisa tutti che la pizza è arrivata",
+        (_ANNOUNCE, _WEATHER),
+        _plan(
+            "asks to say that the pizza has arrived, in the words that were said",
+            skill="announce",
+            parameters={"message": "la pizza è arrivata"},
+            language="it",
+            question="Vuoi che dica che la pizza è arrivata?",
+        ),
+    ),
+    Example(
+        "Perché a Milano c'è sempre la nebbia?",
+        (_WEATHER,),
+        _plan("asks why, which is a question and not a request for the weather", language="it"),
     ),
 )
 

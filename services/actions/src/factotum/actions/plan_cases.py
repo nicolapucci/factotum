@@ -130,17 +130,35 @@ PLAN_CASES: tuple[PlanCase, ...] = (
         "Garage door",
         action="open",
     ),
-    # ---- the volume of the device that is spoken to
+    # ---- the volume of the device that is spoken to, set to a level that is said
     _action("set the volume to 30", KITCHEN, "volume", _DONE, level=30),
     _action("volume at fifty percent", KITCHEN, "volume", _DONE, level=50),
     _action("alza il volume a 70", KITCHEN, "volume", _DONE, level=70),
     _action("abbassa il volume a 20", DISPLAY, "volume", _DONE, level=20),
     _action("bump the volume up to 80", KITCHEN, "volume", _DONE, level=80),
     _action("metti il volume a 40", DISPLAY, "volume", _DONE, level=40),
+    # ---- the volume turned up or down: by what is said, and by the skill's step when it is not
+    _action("turn the volume up", KITCHEN, "volume-change", _DONE, direction="up"),
+    _action("turn it up", KITCHEN, "volume-change", _DONE, direction="up"),
+    _action("make the volume a bit lower", KITCHEN, "volume-change", _DONE, direction="down"),
+    _action(
+        "turn the volume down by 20", DISPLAY, "volume-change", _DONE, direction="down", amount=20
+    ),
+    _action("alza il volume", KITCHEN, "volume-change", _DONE, direction="up"),
+    _action(
+        "abbassa il volume di quindici",
+        DISPLAY,
+        "volume-change",
+        _DONE,
+        direction="down",
+        amount=15,
+    ),
     # ---- what is missing is asked for, never made up
-    _action("turn it up", KITCHEN, "volume", _MORE),
-    _action("make the volume a bit lower", KITCHEN, "volume", _MORE),
+    _action("change the volume", KITCHEN, "volume-change", _MORE),
+    _action("cambia il volume", DISPLAY, "volume-change", _MORE),
+    _action("set the volume", KITCHEN, "volume", _MORE),
     _action("what is the weather like", KITCHEN, "weather", _MORE),
+    _action("che tempo fa", DISPLAY, "weather", _MORE),
     # ---- the weather: it only reads, so nothing is asked
     _action("what is the weather like in Rome", KITCHEN, "weather", _DONE, place="Rome"),
     _action("is it raining in Milan right now", KITCHEN, "weather", _DONE, place="Milan"),

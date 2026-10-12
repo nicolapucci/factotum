@@ -17,6 +17,7 @@ from factotum.actions.matching import Candidate
 from factotum.actions.phrases import Say, language_of, say
 from factotum.actions.planner import Plan
 from factotum.actions.values import check_specs, check_values
+from factotum.common.language import detect_language
 from factotum.contracts.actions import ActCode
 from factotum.contracts.devices import ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.skills import ParamValue, SkillTarget
@@ -36,6 +37,10 @@ class Understood:
     question: str | None
     """What to ask before doing it, in the language of the message, if the model wrote one."""
 
+    left_out: tuple[str, ...] = ()
+    """The values the model wrote and the person did not say (ADR 0028): they are not values, and
+    the skill is called without them."""
+
 
 @dataclass(frozen=True, slots=True)
 class NeedsMore:
@@ -44,6 +49,9 @@ class NeedsMore:
     code: ActCode
     skill: str
     reply: str
+    left_out: tuple[str, ...] = ()
+    """The values the model wrote and the person did not say: asked for again when they are
+    required."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +77,13 @@ def understand(
     plan: Plan,
     candidates: Sequence[Candidate],
     *,
+    message: str,
     here: SystemDeviceRecord | None,
     systems: Sequence[SystemDeviceRecord],
     bound: Mapping[str, Sequence[BoundDevice]],
 ) -> Understanding:
-    """What ``plan`` asks for, checked against what was offered and what the caller may use.
+    """What ``plan`` asks for, checked against what was offered, what the caller may use and what
+    ``message`` says (a value that the person did not say is not one: ``grounding``).
 
     ``here`` is the device that was spoken to, ``systems`` the system devices the caller may use,
     ``bound`` the external devices each skill is set up for that the caller may use."""
@@ -108,13 +118,13 @@ def understand(
             return NeedsMore(ActCode.NO_DEVICE, manifest.name, say(language, Say.NO_DEVICE))
         device_params = checked.values
 
-    values = check_values(manifest, plan.parameters)
+    values = check_values(manifest, plan.parameters, said=message)
     if not values.ok:
         return NeedsMore(
             ActCode.MISSING_VALUES,
             manifest.name,
-            clean_sentence(plan.ask)
-            or say(language, Say.NEEDS_VALUES, names=", ".join(values.asked_for)),
+            _what_is_asked(plan, message, language, values.asked_for),
+            left_out=values.unsaid,
         )
     return Understood(
         candidate=chosen,
@@ -123,7 +133,22 @@ def understand(
         target=target,
         language=language,
         question=clean_sentence(plan.question),
+        left_out=values.unsaid,
     )
+
+
+def _what_is_asked(plan: Plan, message: str, language: str, names: Sequence[str]) -> str:
+    """What the person is asked for a value that is missing: the question that the model wrote, if
+    it is a sentence and it is in the language of the message, and the code's own words otherwise
+    (a model that was shown a question in English asks in English whatever it is spoken to in)."""
+    spoken = detect_language(message)
+    ask = clean_sentence(plan.ask)
+    if ask is not None:
+        asked_in = detect_language(ask)
+        # The same language, or one of the two cannot be told (a name, a word): the model's own.
+        if spoken is None or asked_in is None or asked_in == spoken:
+            return ask
+    return say(spoken or language, Say.NEEDS_VALUES, names=", ".join(names))
 
 
 @dataclass(frozen=True, slots=True)

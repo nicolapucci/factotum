@@ -194,7 +194,7 @@ class TestAPlanIsRun:
             ),
         )
 
-        outcome = await rig.hear(KITCHEN, "tell the kitchen that dinner is ready")
+        outcome = await rig.hear(KITCHEN, f"tell the kitchen that {message}")
 
         assert (outcome.status, outcome.reply) == (ActStatus.DONE, f"Fatto: {message}")
         assert rig.dispatcher.given == [(rig.tenant, rig.device(KITCHEN).id, Speak(text=message))]

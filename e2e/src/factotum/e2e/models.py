@@ -119,6 +119,7 @@ def _plain(text: str) -> str:
 
 
 _NUMBER = re.compile(r"\d+")
+_BY = re.compile(r"\b(?:by|di)\s+(\d+)")
 
 
 def plan_for(shown: str) -> dict[str, Any]:
@@ -140,8 +141,19 @@ def plan_for(shown: str) -> dict[str, Any]:
     plan["reason"] = "it asks for something to be done"
     if "volume" in text:
         level = _NUMBER.search(text)
-        plan["skill"] = "volume"
-        plan["parameters"] = {"level": int(level.group())} if level else {}
+        by = _BY.search(text)
+        up = re.search(r"\b(up|louder|raise|alza|aumenta)\b", text)
+        down = re.search(r"\b(down|lower|quieter|abbassa|diminuisci)\b", text)
+        if level and not by:  # "to 20", "a 30": a level
+            plan["skill"] = "volume"
+            plan["parameters"] = {"level": int(level.group())}
+        elif up or down:  # "up", "down by 20": more or less than it is
+            plan["skill"] = "volume-change"
+            plan["parameters"] = {"direction": "up" if up else "down"}
+            if by:  # and by how much, if it is said
+                plan["parameters"]["amount"] = int(by.group(1))
+        else:  # "set the volume": a level that nobody said
+            plan["skill"] = "volume"
     elif re.search(r"\b(lamp|light|luce|lampada)\b", text):
         state = "off" if re.search(r"\b(off|spegni)\b", text) else "on"
         own = re.search(r"\b(my|bedroom|mia|camera)\b", text)

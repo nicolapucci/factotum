@@ -118,7 +118,8 @@ class TestAnAnnouncement:
         ):
             house.model.proposal = proposal(LONG, DISPLAY)
 
-            await speaker.says_aloud("Announce on the living room display what I am about to say.")
+            # What is announced is what the person said (ADR 0028): all of it is in the message.
+            await speaker.says_aloud(f"Announce on the living room display that {LONG}")
             await played(display)
 
             assert len(display.spoken()) == 2

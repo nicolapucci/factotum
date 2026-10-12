@@ -98,6 +98,17 @@ GARAGE_AT_THE_KITCHEN = PlanCase(
 )
 A_QUESTION = PlanCase("tell me a joke", KITCHEN, None, ActStatus.NO_SKILL)
 TOO_LITTLE = PlanCase("turn it up", KITCHEN, "volume", ActStatus.NEEDS_MORE)
+TURNED_UP = PlanCase(
+    "turn the volume up", KITCHEN, "volume-change", ActStatus.DONE, None, {"direction": "up"}
+)
+TURNED_DOWN_BY_TWENTY = PlanCase(
+    "turn the volume down by 20",
+    KITCHEN,
+    "volume-change",
+    ActStatus.DONE,
+    None,
+    {"direction": "down", "amount": 20},
+)
 
 NAMES = tuple(PROFILES)
 LAMP_CALL = "http://homeassistant.local:8123/api/services/light/turn_on"
@@ -139,6 +150,7 @@ def window(**changes: Any) -> Window:
         "announced": dict.fromkeys(NAMES, ()),
         "sentences": dict.fromkeys(NAMES, 0),
         "volumes": dict.fromkeys(NAMES, 50),
+        "volumes_before": dict.fromkeys(NAMES, 50),
         "spoken": None,
         "chat": 0,
     }
@@ -362,6 +374,59 @@ class TestJudgingWhatCameOfAMessage:
         found = judge(Played(VOLUME, done("volume", jobs=(job("volume"),), events=events)))
 
         assert found[0].startswith(f"{KITCHEN} was told")
+
+    @staticmethod
+    def turned(case: PlanCase, *, before: int, now: int, told: str | None = None) -> Window:
+        """A volume that went from ``before`` to ``now`` on the kitchen speaker."""
+        events = dict.fromkeys(NAMES, ()) | {KITCHEN: (told or f"volume {now}",)}
+        return done(
+            "volume-change",
+            jobs=(job("volume-change"),),
+            events=events,
+            volumes=dict.fromkeys(NAMES, 50) | {KITCHEN: now},
+            volumes_before=dict.fromkeys(NAMES, 50) | {KITCHEN: before},
+        )
+
+    def test_a_volume_turned_up_goes_by_the_step_of_the_skill_when_nothing_was_said(self) -> None:
+        assert judge(Played(TURNED_UP, self.turned(TURNED_UP, before=50, now=60))) == []
+
+    def test_a_volume_turned_down_goes_by_what_was_said(self) -> None:
+        turned = self.turned(TURNED_DOWN_BY_TWENTY, before=50, now=30)
+
+        assert judge(Played(TURNED_DOWN_BY_TWENTY, turned)) == []
+
+    def test_it_goes_from_where_the_device_had_it_and_never_past_either_end(self) -> None:
+        assert judge(Played(TURNED_UP, self.turned(TURNED_UP, before=95, now=100))) == []
+        low = self.turned(TURNED_DOWN_BY_TWENTY, before=15, now=0)
+        assert judge(Played(TURNED_DOWN_BY_TWENTY, low)) == []
+
+    def test_a_volume_that_went_by_another_step_is_said(self) -> None:
+        found = judge(Played(TURNED_UP, self.turned(TURNED_UP, before=50, now=70)))
+
+        assert found == [
+            f"{KITCHEN} was told ('volume 70',) instead of 60",
+            f"{KITCHEN} has its volume at 70",
+        ]
+
+    def test_a_device_that_was_told_and_did_not_take_it_is_said(self) -> None:
+        stuck = self.turned(TURNED_UP, before=50, now=50, told="volume 60")
+
+        assert judge(Played(TURNED_UP, stuck)) == [f"{KITCHEN} has its volume at 50"]
+
+    def test_another_device_whose_volume_moved_is_said(self) -> None:
+        moved = changed(
+            self.turned(TURNED_UP, before=50, now=60),
+            volumes=dict.fromkeys(NAMES, 50) | {KITCHEN: 60, DISPLAY: 60},
+        )
+
+        assert judge(Played(TURNED_UP, moved)) == [f"{DISPLAY} had its volume moved to 60"]
+
+    def test_it_is_the_skill_that_turns_a_volume_and_not_the_one_that_sets_it(self) -> None:
+        set_instead = changed(self.turned(TURNED_UP, before=50, now=60), jobs=(job("volume"),))
+
+        assert judge(Played(TURNED_UP, set_instead)) == [
+            "it ran ['volume'] instead of ['volume-change']"
+        ]
 
     def test_what_no_skill_fits_is_right_when_nothing_ran_and_no_model_was_asked(self) -> None:
         assert judge(Played(A_QUESTION, window())) == []

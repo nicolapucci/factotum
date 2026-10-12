@@ -117,6 +117,22 @@ def _redacted(values: dict[str, ParamValue]) -> dict[str, ParamValue]:
     return masked
 
 
+def _note_what_was_left_out(understanding: NeedsMore | Understood) -> None:
+    """What the model wrote and the person did not say was not believed (ADR 0028): the log says
+    which values, and never what they were."""
+    if not understanding.left_out:
+        return
+    skill = (
+        understanding.skill
+        if isinstance(understanding, NeedsMore)
+        else understanding.candidate.skill.name
+    )
+    logger.info(
+        "values that the message does not say were left out",
+        extra={"skill": skill, "values": list(understanding.left_out)},
+    )
+
+
 def _with_plan(detail: str | None, plan: InstructionPlan | None) -> str | None:
     """What the trail says, and what the plan comes to when there is one: the method and host of
     each request and the name of each command, as they were written."""
@@ -341,9 +357,17 @@ class ActionService:
             logger.warning("a message could not be planned", extra={"code": error.code})
             return ActOutcome.not_read()
 
-        understanding = understand(plan, candidates.found, here=here, systems=systems, bound=bound)
+        understanding = understand(
+            plan,
+            candidates.found,
+            message=request.message,
+            here=here,
+            systems=systems,
+            bound=bound,
+        )
         if isinstance(understanding, NothingToDo):
             return ActOutcome.no_skill()
+        _note_what_was_left_out(understanding)
         if isinstance(understanding, NeedsMore):
             return ActOutcome(
                 status=ActStatus.NEEDS_MORE,
