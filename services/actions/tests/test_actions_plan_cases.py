@@ -73,7 +73,7 @@ class TestTheCorpus:
         skills = manifests()
 
         for case in PLAN_CASES:
-            assert (case.skill is None) == (case.status is ActStatus.NO_ACTION), case.message
+            assert (case.skill is None) == (case.status is ActStatus.NO_SKILL), case.message
             assert case.skill is None or case.skill in skills, case.message
 
     def test_a_speaker_is_a_device_of_the_example_home(self) -> None:

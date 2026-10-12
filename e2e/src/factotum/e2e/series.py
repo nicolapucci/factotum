@@ -399,7 +399,7 @@ def judge(played: Played) -> list[str]:
         problems.append(f"skill {outcome.skill} instead of {case.skill}")
     if problems:
         return problems  # what follows is about what was meant, and that is not what happened
-    if (first.chat > 0) is not (case.status is ActStatus.NO_ACTION):
+    if (first.chat > 0) is not (case.status is ActStatus.NO_SKILL):
         problems.append(f"the chat model wrote {first.chat} answers")
     match case.status:
         case ActStatus.DONE:

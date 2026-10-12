@@ -135,7 +135,7 @@ class TestActing:
 
         assert response.status_code == 200
         assert response.json() == {
-            "status": "no_action",
+            "status": "no_skill",
             "reply": None,
             "code": None,
             "skill": None,

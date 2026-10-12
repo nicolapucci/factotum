@@ -41,9 +41,7 @@ class TestAsking:
     async def test_a_message_that_is_a_question_comes_back_as_one(
         self, actions: ActionsClient
     ) -> None:
-        respx.post(f"{URL}/v1/act").respond(
-            200, json=ActOutcome.no_action().model_dump(mode="json")
-        )
+        respx.post(f"{URL}/v1/act").respond(200, json=ActOutcome.no_skill().model_dump(mode="json"))
 
         result = await actions.act(make_user_principal(tenant_id=TENANT), "what is a router?")
 
@@ -73,7 +71,7 @@ class TestAsking:
         self, actions: ActionsClient
     ) -> None:
         route = respx.post(f"{URL}/v1/act").respond(
-            200, json=ActOutcome.no_action().model_dump(mode="json")
+            200, json=ActOutcome.no_skill().model_dump(mode="json")
         )
 
         await actions.act(make_user_principal(tenant_id=TENANT), "turn on the lamp")
@@ -88,7 +86,7 @@ class TestAsking:
         self, actions: ActionsClient
     ) -> None:
         route = respx.post(f"{URL}/v1/act").respond(
-            200, json=ActOutcome.no_action().model_dump(mode="json")
+            200, json=ActOutcome.no_skill().model_dump(mode="json")
         )
 
         await actions.act(make_user_principal(tenant_id=TENANT, device_id=KITCHEN), "hello")
@@ -139,7 +137,7 @@ class TestWhenItCannotBeAsked:
             b"not json at all",
             b'{"status": "done"}',
             b'{"status": "levitating", "reply": "x"}',
-            b'{"status": "no_action", "reply": "a question has no reply"}',
+            b'{"status": "no_skill", "reply": "a question has no reply"}',
             b"[]",
         ],
         ids=["text", "no-reply", "unknown-status", "incoherent", "list"],

@@ -4,8 +4,9 @@ A message that asks for something to be done ("turn on the living room lamp") is
 for the documents. The ``actions`` service matches it with a skill, authorizes it (``authorize``),
 asks for a confirmation or an approval when the decision says so, runs it and audits it. The
 conversation service asks it, before it searches the documents, whether a message is one of those:
-``ActOutcome.status`` says whether it was (``NO_ACTION``: it was not, answer it as a question) and,
-if it was, how it went, with the words to say.
+``ActOutcome.status`` says whether a skill fits it (``NO_SKILL``: none does, and what else may
+answer it, the documents, is the conversation service's business: ADR 0028) and, if one does, how
+it went, with the words to say.
 
 This module also has the catalog of skills as an administrator sees it: what is installed, in which
 versions, and which version was reviewed and enabled.
@@ -35,8 +36,10 @@ MAX_SKILL_SOURCE_CHARS = 100_000
 class ActStatus(StrEnum):
     """What became of a message that may have been a request to do something."""
 
-    NO_ACTION = "no_action"
-    """It asks for none of the skills: answer it as a question."""
+    NO_SKILL = "no_skill"
+    """No skill fits the message (ADR 0028): the assistant says so, unless the documents have
+    something relevant to answer it from. It is not "answer it as a question": a model answers
+    nothing by itself."""
 
     DONE = "done"
     """A skill was run (or, while there is no runner, pretended to be)."""
@@ -103,7 +106,7 @@ class ActRequest(Contract):
 class ActOutcome(Contract):
     status: ActStatus
     reply: str | None = Field(default=None, min_length=1, max_length=MAX_REPLY_CHARS)
-    """What to say, in the language of the message. Only ``NO_ACTION`` has none."""
+    """What to say, in the language of the message. Only ``NO_SKILL`` has none."""
 
     code: ActCode | None = None
     skill: str | None = Field(default=None, max_length=64)
@@ -114,33 +117,33 @@ class ActOutcome(Contract):
     """The record this left in the audit trail, if it left one."""
 
     degraded: bool = False
-    """Only for ``NO_ACTION``: the message could not be read (a model was away, or too slow), so it
-    is a question only because nothing could say that it was not a request. The turn says so."""
+    """Only for ``NO_SKILL``: the message could not be read (a model was away, or too slow), so no
+    skill fits it only because nothing could say that one did. The turn says so."""
 
     @model_validator(mode="after")
     def _says_something_unless_there_was_nothing_to_do(self) -> Self:
-        if self.status is ActStatus.NO_ACTION:
+        if self.status is ActStatus.NO_SKILL:
             if self.reply is not None or self.code is not None or self.skill is not None:
-                raise ValueError("a message that is no action has no reply, code or skill")
+                raise ValueError("a message that no skill fits has no reply, code or skill")
         elif self.reply is None:
             raise ValueError("an action has something to say")
         elif self.degraded:
-            raise ValueError("only a message that is no action can be one that was not read")
+            raise ValueError("only a message that no skill fits can be one that was not read")
         return self
 
     @classmethod
-    def no_action(cls) -> Self:
-        return cls(status=ActStatus.NO_ACTION)
+    def no_skill(cls) -> Self:
+        return cls(status=ActStatus.NO_SKILL)
 
     @classmethod
     def not_read(cls) -> Self:
-        """No action, because the message could not be read."""
-        return cls(status=ActStatus.NO_ACTION, degraded=True)
+        """No skill fits, because the message could not be read."""
+        return cls(status=ActStatus.NO_SKILL, degraded=True)
 
     @property
     def handled(self) -> bool:
-        """Whether the message was an action: the reply is the answer to the turn."""
-        return self.status is not ActStatus.NO_ACTION
+        """Whether a skill fitted the message: the reply is the answer to the turn."""
+        return self.status is not ActStatus.NO_SKILL
 
 
 # ---- the catalog of skills ---------------------------------------------------------------------

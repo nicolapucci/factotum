@@ -144,7 +144,7 @@ class TestAnnouncing:
 
         outcome = await rig.hear(KITCHEN, TELL)
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.dispatcher.given == []
 
 
@@ -160,7 +160,7 @@ class TestFoundByMeaning:
 
         outcome = await rig.hear(KITCHEN, "explain photosynthesis to me slowly")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.chat.requests == []
         assert speech.asked == []
 
@@ -313,7 +313,7 @@ class TestAuthorizedAsAnySkillIs:
 
         outcome = await rig.hear(KITCHEN, TELL)
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert speech.asked == []
 
 

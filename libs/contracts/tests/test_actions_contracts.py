@@ -56,35 +56,35 @@ def info(**changes: object) -> SkillInfo:
 
 class TestWhatAMessageCameTo:
     def test_a_message_that_asks_for_nothing_says_nothing(self) -> None:
-        outcome = ActOutcome.no_action()
+        outcome = ActOutcome.no_skill()
 
         assert (outcome.status, outcome.reply, outcome.handled) == (
-            ActStatus.NO_ACTION,
+            ActStatus.NO_SKILL,
             None,
             False,
         )
 
-    def test_a_message_that_could_not_be_read_is_no_action_and_says_so(self) -> None:
+    def test_a_message_that_could_not_be_read_is_no_skill_and_says_so(self) -> None:
         outcome = ActOutcome.not_read()
 
         assert (outcome.status, outcome.handled, outcome.degraded) == (
-            ActStatus.NO_ACTION,
+            ActStatus.NO_SKILL,
             False,
             True,
         )
-        assert ActOutcome.no_action().degraded is False
+        assert ActOutcome.no_skill().degraded is False
 
     @pytest.mark.parametrize(
-        "status", [status for status in ActStatus if status is not ActStatus.NO_ACTION]
+        "status", [status for status in ActStatus if status is not ActStatus.NO_SKILL]
     )
-    def test_only_a_message_that_is_no_action_can_be_one_that_was_not_read(
+    def test_only_a_message_that_is_no_skill_can_be_one_that_was_not_read(
         self, status: ActStatus
     ) -> None:
-        with pytest.raises(ValidationError, match="only a message that is no action"):
+        with pytest.raises(ValidationError, match="only a message that no skill fits"):
             ActOutcome(status=status, reply="Okay.", degraded=True)
 
     @pytest.mark.parametrize(
-        "status", [status for status in ActStatus if status is not ActStatus.NO_ACTION]
+        "status", [status for status in ActStatus if status is not ActStatus.NO_SKILL]
     )
     def test_every_other_outcome_has_something_to_say(self, status: ActStatus) -> None:
         assert ActOutcome(status=status, reply="Okay.").handled is True
@@ -95,11 +95,11 @@ class TestWhatAMessageCameTo:
         "extra",
         [{"reply": "Okay."}, {"code": ActCode.DENIED}, {"skill": "lamp"}],
     )
-    def test_a_message_that_is_no_action_cannot_be_given_anything_else(
+    def test_a_message_that_is_no_skill_cannot_be_given_anything_else(
         self, extra: dict[str, object]
     ) -> None:
-        with pytest.raises(ValidationError, match="no action has no reply"):
-            ActOutcome(status=ActStatus.NO_ACTION, **extra)  # type: ignore[arg-type]
+        with pytest.raises(ValidationError, match="no skill fits has no reply"):
+            ActOutcome(status=ActStatus.NO_SKILL, **extra)  # type: ignore[arg-type]
 
     def test_an_outcome_says_why_and_what_it_left_behind(self) -> None:
         audit = AuditId(uuid4())

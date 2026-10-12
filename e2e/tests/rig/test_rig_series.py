@@ -96,7 +96,7 @@ GARAGE_AT_THE_KITCHEN = PlanCase(
     "Garage door",
     {"action": "open"},
 )
-A_QUESTION = PlanCase("tell me a joke", KITCHEN, None, ActStatus.NO_ACTION)
+A_QUESTION = PlanCase("tell me a joke", KITCHEN, None, ActStatus.NO_SKILL)
 TOO_LITTLE = PlanCase("turn it up", KITCHEN, "volume", ActStatus.NEEDS_MORE)
 
 NAMES = tuple(PROFILES)
@@ -132,7 +132,7 @@ def window(**changes: Any) -> Window:
         "heard": "words",
         "ended": ENDED,
         "asked": 1,
-        "outcome": ActOutcome.no_action(),
+        "outcome": ActOutcome.no_skill(),
         "jobs": (),
         "web": (),
         "events": dict.fromkeys(NAMES, ()),

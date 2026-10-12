@@ -52,25 +52,25 @@ OPEN_THE_GARAGE = plan_of(
 
 
 class TestWhatIsNotAnAction:
-    async def test_with_no_skills_a_message_is_no_action_and_no_model_is_asked(self) -> None:
+    async def test_with_no_skills_a_message_is_no_skill_and_no_model_is_asked(self) -> None:
         rig = ActionsRig()
 
         outcome = await rig.hear(KITCHEN, "what does the warranty say about water")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.chat.requests == []
         assert await rig.audit() == []
 
-    async def test_a_message_far_from_every_skill_is_no_action_and_no_model_is_asked(self) -> None:
+    async def test_a_message_far_from_every_skill_is_no_skill_and_no_model_is_asked(self) -> None:
         rig = ActionsRig()
         await rig.install(LAMP, WEATHER)
 
         outcome = await rig.hear(KITCHEN, "explain photosynthesis to me slowly")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.chat.requests == []
 
-    async def test_a_message_near_a_skill_that_the_model_says_is_not_an_action_is_no_action(
+    async def test_a_message_near_a_skill_that_the_model_says_is_not_an_action_is_no_skill(
         self,
     ) -> None:
         rig = ActionsRig()
@@ -79,7 +79,7 @@ class TestWhatIsNotAnAction:
 
         outcome = await rig.hear(KITCHEN, "turn on the living room lamp")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert len(rig.chat.requests) == 1
         assert rig.runner.requests == []
         assert await rig.audit() == []
@@ -130,14 +130,14 @@ class TestWhatIsNotAnAction:
         await rig.install(LAMP)
         rig.plans(plan_of("format-the-disk", parameters={"disk": "c"}))
 
-        assert await rig.hear(KITCHEN, "turn on the living room lamp") == ActOutcome.no_action()
+        assert await rig.hear(KITCHEN, "turn on the living room lamp") == ActOutcome.no_skill()
         assert rig.runner.requests == []
 
     async def test_a_skill_that_is_installed_but_not_enabled_is_not_offered(self) -> None:
         rig = ActionsRig()
         await rig.install(LAMP, enable=False)
 
-        assert await rig.hear(KITCHEN, "turn on the living room lamp") == ActOutcome.no_action()
+        assert await rig.hear(KITCHEN, "turn on the living room lamp") == ActOutcome.no_skill()
         assert rig.chat.requests == []
 
     async def test_the_skills_of_another_tenant_are_not_offered(self) -> None:
@@ -152,7 +152,7 @@ class TestWhatIsNotAnAction:
             stranger, ActRequest(message="turn on the living room lamp")
         )
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.chat.requests == []
 
 
@@ -460,7 +460,7 @@ class TestWhatThePolicySays:
         [record] = await rig.audit()
         assert (record.decision, record.result) == (DecisionOutcome.DENY, ActionResult.NOT_EXECUTED)
 
-    async def test_but_a_message_from_it_that_is_no_action_is_answered_like_any_other(self) -> None:
+    async def test_but_a_message_from_it_that_is_no_skill_is_answered_like_any_other(self) -> None:
         rig = ActionsRig()
         unknown = Principal(
             tenant_id=rig.tenant, device_id=DeviceId(uuid4()), acts_as=Subject.tenant(rig.tenant)
@@ -468,7 +468,7 @@ class TestWhatThePolicySays:
 
         outcome = await rig.service.act(unknown, ActRequest(message="what is the capital of Peru"))
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
 
     async def test_a_device_that_wants_every_action_approved_gets_the_approval_path(self) -> None:
         home = """
@@ -558,7 +558,7 @@ class TestAskingForAYes:
 
         again = await rig.hear(DISPLAY, "yes")
 
-        assert again == ActOutcome.no_action()
+        assert again == ActOutcome.no_skill()
         assert len(rig.runner.requests) == 1
 
     async def test_two_yeses_at_once_run_it_once(self) -> None:
@@ -570,7 +570,7 @@ class TestAskingForAYes:
         assert len(rig.runner.requests) == 1
         assert sorted([first.status, second.status], key=str) == [
             ActStatus.DONE,
-            ActStatus.NO_ACTION,
+            ActStatus.NO_SKILL,
         ]
 
     @pytest.mark.parametrize("said", ["no", "Don't!", "annulla"])
@@ -631,14 +631,14 @@ class TestAskingForAYes:
         assert done.skill_name == "weather"
         assert asked.detail == "asked for confirmation"
 
-    async def test_a_message_that_is_no_action_after_a_dropped_question_is_no_action(self) -> None:
+    async def test_a_message_that_is_no_skill_after_a_dropped_question_is_no_skill(self) -> None:
         rig = ActionsRig()
         await self.asked(rig)
         rig.plans({"reason": "asks something else", "answer": "other"})
 
         outcome = await rig.hear(DISPLAY, "explain photosynthesis to me slowly")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.runner.requests == []
 
     async def test_a_model_that_cannot_read_the_answer_is_no_yes(self) -> None:
@@ -648,7 +648,7 @@ class TestAskingForAYes:
 
         outcome = await rig.hear(DISPLAY, "hmm, alright then")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.runner.requests == []
 
     async def test_a_yes_that_comes_too_late_is_no_yes(self) -> None:
@@ -658,7 +658,7 @@ class TestAskingForAYes:
 
         outcome = await rig.hear(DISPLAY, "yes")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.runner.requests == []
         _, lapsed = await rig.audit()
         assert lapsed.detail == "the confirmation expired"
@@ -677,7 +677,7 @@ class TestAskingForAYes:
 
         outcome = await rig.hear(KITCHEN, "yes")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.runner.requests == []
         assert (await rig.hear(DISPLAY, "yes")).status is ActStatus.DONE
 
@@ -691,7 +691,7 @@ class TestAskingForAYes:
 
         outcome = await rig.service.act(stranger, ActRequest(message="yes"))
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.runner.requests == []
 
     async def test_a_skill_that_was_switched_off_since_is_not_run_on_a_yes(self) -> None:
@@ -769,7 +769,7 @@ class TestAskingForAYes:
 
         outcome = await rig.hear(DISPLAY, "yes")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.runner.requests == []
 
 
@@ -963,7 +963,7 @@ class TestApproval:
 
         outcome = await rig.hear(KITCHEN, "yes")
 
-        assert outcome == ActOutcome.no_action()
+        assert outcome == ActOutcome.no_skill()
         assert rig.runner.requests == []
 
 

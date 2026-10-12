@@ -259,7 +259,7 @@ class TestAgainstARealDatabase:
         acts = respx.post(f"{ACTIONS}/v1/act").mock(
             side_effect=[
                 httpx.Response(200, json=done.model_dump(mode="json")),
-                httpx.Response(200, json=ActOutcome.no_action().model_dump(mode="json")),
+                httpx.Response(200, json=ActOutcome.no_skill().model_dump(mode="json")),
                 httpx.ConnectError("refused"),
             ]
         )

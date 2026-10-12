@@ -277,7 +277,7 @@ async def test_a_small_model_tells_commands_from_questions_and_reads_them(model:
         right, total = by_skill.get(name, (0, 0))
         by_skill[name] = (right + int(j.right), total + 1)
     print("  by skill: " + ", ".join(f"{n} {r}/{t}" for n, (r, t) in sorted(by_skill.items())))
-    asked_the_model = [j.seconds for j in judged if j.outcome.status is not ActStatus.NO_ACTION]
+    asked_the_model = [j.seconds for j in judged if j.outcome.status is not ActStatus.NO_SKILL]
     passed_over = [j.seconds for j in questions if j.right]
     print(
         f"  a message that is acted on takes {statistics.median(asked_the_model) * 1000:.0f} ms "

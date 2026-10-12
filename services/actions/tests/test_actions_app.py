@@ -334,7 +334,7 @@ class TestAgainstARealDatabase:
             garage = (await http.post("/v1/skills", json={"source": GARAGE})).json()
             asked = "what is the weather in Rome"
             before = await http.post("/v1/act", json={"message": asked}, headers=speaker_headers)
-            assert before.json()["status"] == "no_action"
+            assert before.json()["status"] == "no_skill"
             assert model.asked == []  # nothing that runs is near it, so no model was asked
 
             for skill in (weather, garage):
@@ -370,7 +370,7 @@ class TestAgainstARealDatabase:
 
             # And it is not asked twice: a yes that comes again answers nothing.
             again = await http.post("/v1/act", json={"message": "yes"}, headers=display_headers)
-            assert again.json()["status"] == "no_action"
+            assert again.json()["status"] == "no_skill"
 
             # Everything that was decided is in the trail, the latest first.
             trail = (await http.get("/v1/audit")).json()["records"]

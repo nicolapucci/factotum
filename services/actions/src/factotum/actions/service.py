@@ -170,8 +170,8 @@ class ActionService:
         self._new_id = new_id
 
     async def act(self, principal: Principal, request: ActRequest) -> ActOutcome:
-        """What a message asks for, and what became of it. A message that asks for none of the
-        skills is ``NO_ACTION``: it is to be answered as a question."""
+        """What a message asks for, and what became of it. A message that no skill fits is
+        ``NO_SKILL``: what else may answer it is not decided here (ADR 0028)."""
         now = self._now()
         if self._core is not None:
             # A skill of the platform is found by meaning from the first message: it is indexed as
@@ -316,7 +316,7 @@ class ActionService:
     async def _new(self, principal: Principal, request: ActRequest, now: datetime) -> ActOutcome:
         candidates = await self._matcher.candidates(principal, request.message)
         if not candidates.found:
-            return ActOutcome.no_action()
+            return ActOutcome.no_skill()
         here, systems, bound = await self._context(principal, candidates)
         views = [
             view_of(c.skill.enabled.manifest, [b.device for b in bound.get(c.skill.name, [])])
@@ -331,14 +331,14 @@ class ActionService:
                 self._shown(here, systems),
             )
         except FactotumError as error:
-            # A message that cannot be read as an action is answered as anything else is: nothing
-            # runs on a guess, and a question is never held up by a model that is away.
+            # Nothing runs on a guess and nothing waits for a model that is away: the outcome says
+            # that no skill was found because the message could not be read, and the turn says so.
             logger.warning("a message could not be planned", extra={"code": error.code})
             return ActOutcome.not_read()
 
         understanding = understand(plan, candidates.found, here=here, systems=systems, bound=bound)
         if isinstance(understanding, NothingToDo):
-            return ActOutcome.no_action()
+            return ActOutcome.no_skill()
         if isinstance(understanding, NeedsMore):
             return ActOutcome(
                 status=ActStatus.NEEDS_MORE,

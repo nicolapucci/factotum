@@ -264,7 +264,7 @@ class TestAnActionByVoice:
             assert answered.status is TurnStatus.FINISHED, answered
             assert [act.status for act in house.acts] == [
                 ActStatus.NEEDS_CONFIRMATION,  # it was asked about...
-                ActStatus.NO_ACTION,  # ...and what was said next was not an answer to it
+                ActStatus.NO_SKILL,  # ...and what was said next was not an answer to it
             ]
             assert reached(house) == []
 

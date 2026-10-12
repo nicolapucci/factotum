@@ -175,7 +175,7 @@ class FakeActions:
         if self.delay_s:
             await asyncio.sleep(self.delay_s)
         if not self.outcomes:
-            return ActOutcome.no_action()
+            return ActOutcome.no_skill()
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome

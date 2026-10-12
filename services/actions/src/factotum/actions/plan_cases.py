@@ -31,10 +31,10 @@ class PlanCase:
     """The device it is said to."""
 
     skill: str | None
-    """The skill it asks for, or nothing when it asks for none (a question, chit-chat)."""
+    """The skill it asks for, or nothing when no skill fits it (a question, chit-chat)."""
 
     status: ActStatus
-    """What becomes of it. ``NO_ACTION`` for what asks for no skill."""
+    """What becomes of it. ``NO_SKILL`` for what no skill fits."""
 
     device: str | None = None
     """The device it is for, when it is for one that is not the one it is said to."""
@@ -58,7 +58,7 @@ def _action(
 
 
 def _question(message: str, speaker: str = KITCHEN) -> PlanCase:
-    return PlanCase(message, speaker, None, ActStatus.NO_ACTION)
+    return PlanCase(message, speaker, None, ActStatus.NO_SKILL)
 
 
 _DONE = ActStatus.DONE
