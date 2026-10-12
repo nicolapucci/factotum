@@ -238,6 +238,61 @@ class TestAgainstARealDatabase:
             assert (await http.get("/v1/conversations")).json() == {"conversations": []}
 
     @respx.mock
+    async def test_a_message_with_nothing_to_answer_from_is_answered_by_the_code_and_kept(
+        self, database_settings: DatabaseSettings
+    ) -> None:
+        model = Model()
+        respx.get(f"{GATEWAY}/v1/profiles/chat.main").respond(
+            200,
+            json={
+                "role": "chat.main",
+                "max_input_tokens": 8192,
+                "max_output_tokens": 512,
+                "streaming": True,
+                "structured_output": "native",
+            },
+        )
+        chat = respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
+        respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
+        searched = respx.post(f"{KNOWLEDGE}/v1/search").respond(200, json={"passages": []})
+        respx.post(f"{ACTIONS}/v1/act").respond(
+            200, json=ActOutcome.no_skill().model_dump(mode="json")
+        )
+        app = build_app(
+            settings_for(database_settings, conversation_actions_url=AnyHttpUrl(ACTIONS))
+        )
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://conversation"
+            ) as http,
+        ):
+            turn = await http.post("/v1/turns", json={"message": "che ore sono?"})
+
+            # No skill fits and nothing in the documents is relevant: the code says so, in the
+            # language of the message, and no model is asked anything (ADR 0028).
+            events = frames(turn)
+            assert [e["type"] for e in events][-1] == "finished"
+            assert "".join(e["text"] for e in events if e["type"] == "delta") == (
+                "Non ho trovato una skill adatta, né documenti pertinenti."
+            )
+            assert not chat.called
+            assert model.streams == []
+            assert json.loads(searched.calls[0].request.content)["min_similarity"] == 0.5
+
+            # It is kept like anything said.
+            [conversation] = (await http.get("/v1/conversations")).json()["conversations"]
+            assert conversation["exchanges"] == 1
+            found = (await http.post("/v1/history/search", json={"query": "ore"})).json()
+            assert [h["exchange"]["answer"] for h in found["hits"]] == [
+                "Non ho trovato una skill adatta, né documenti pertinenti."
+            ]
+
+            # The tests of this class share a database: what was said is forgotten.
+            assert (await http.delete("/v1/history")).json() == {"conversations": 1}
+
+    @respx.mock
     async def test_a_message_that_asks_for_something_is_answered_by_the_actions_service_and_kept(
         self, database_settings: DatabaseSettings
     ) -> None:
@@ -254,7 +309,10 @@ class TestAgainstARealDatabase:
         )
         respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
         respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
-        respx.post(f"{KNOWLEDGE}/v1/search").respond(200, json={"passages": []})
+        # The documents have something relevant, so a message that no skill fits is answered from
+        # them (with nothing, the code would answer and no model be asked: ADR 0028).
+        found = SearchResult(passages=(passage("A router is a device that routes traffic."),))
+        respx.post(f"{KNOWLEDGE}/v1/search").respond(200, json=found.model_dump(mode="json"))
         done = ActOutcome(status=ActStatus.DONE, reply="The lamp is on.", skill="lamp")
         acts = respx.post(f"{ACTIONS}/v1/act").mock(
             side_effect=[
