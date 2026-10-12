@@ -361,7 +361,10 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   A setup turn that must be answered by the fake chat needs a passage too, then the passages are
   cleared for the turn that is about the past. The house of `e2e` uses the floor of its stand-in model
   (`STAND_IN_FLOOR`, 0.25: it measures the words two texts share), not the 0.5 of `bge-m3`, and a
-  question of a test must share enough words with the document to be relevant to it.
+  question of a test must share enough words with the document to be relevant to it. The tests of
+  `test_conversation_app.py` that run against a real database are turns too, and a run without the
+  database skips them: one of them still had a search that found nothing and expected a model's
+  answer, and only the full gate with Postgres up showed it.
 - The score of a passage is not its relevance: it is a fusion of ranks scaled by the best a rank can
   score (a question about nothing has a first passage at 1.0). Ask for `min_similarity` and read
   `similarity`. The floor is measured with the real model and the numbers are in `docs/knowledge.md`
