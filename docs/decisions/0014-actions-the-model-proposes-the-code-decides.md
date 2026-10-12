@@ -1,6 +1,10 @@
 # 0014. Actions: the model proposes, the code decides
 
-Status: accepted, 2026-09-21.
+Status: accepted, 2026-09-21. What it says of a message that no skill is near (it is a question, and a
+model answers it) is superseded in part by
+[ADR 0028](0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md):
+such a message is declined, unless the documents have something relevant to answer it from, and a
+value that a model wrote is believed only when it traces back to the message.
 
 ## Context
 

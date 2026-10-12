@@ -1,6 +1,9 @@
 # 0015. The runner: a container for each run, and a proxy that checks a grant
 
-Status: accepted, 2026-09-21. Refines [ADR 0006](0006-skills-and-sandboxed-execution.md).
+Status: accepted, 2026-09-21. What it says a failure may say ("never what the script said") is refined
+by [ADR 0028](0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md): a script
+may report a failure in words of its own, as it reports a message; what it printed without meaning to say
+it still never reaches a person. Refines [ADR 0006](0006-skills-and-sandboxed-execution.md).
 
 ## Context
 
