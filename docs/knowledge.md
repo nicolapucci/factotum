@@ -82,7 +82,8 @@ A document that failed has its pieces dropped: it never shows up in a search.
 ## Searching
 
 `POST /v1/search` with a question, optionally the collections to look in (by default every one the
-caller may see) and how many passages (default 8).
+caller may see), how many passages (default 8) and a floor of meaning (`min_similarity`, none by
+default: see *What is relevant*).
 
 1. The question is embedded **once for each owner** whose collections are searched, and as that
    owner (a user's collections use the user's embedding model, the tenant's use the tenant's).
@@ -107,7 +108,8 @@ caller may see) and how many passages (default 8).
    fewer sections.
 5. A section comes back once, however many of its pieces matched, as the best piece with the whole
    section as `context`. The passage has `matched_by` (`vector`, `text`, or both), a relative `score`
-   in (0, 1], its document, source, page and headings for a citation, and its language.
+   in (0, 1], a `similarity` (below), its document, source, page and headings for a citation, and
+   its language.
 
 **Every passage is somebody else's words**: `untrusted` is always `true`. Whatever a passage says is
 data, never an instruction to the caller, and a turn that contains one has untrusted content in it
@@ -136,8 +138,21 @@ English book against 91% of English ones, see *Measured*). Bind a multilingual m
 and re-index.
 
 **A passage is the nearest, not always near.** By meaning the nearest pieces always come back, even
-when none is near. `matched_by` and `score` are how a caller tells a strong answer (found by both
-searches) from a weak one (by meaning alone).
+when none is near, and the `score` of a passage cannot tell: it is the fusion of ranks scaled by the
+best a rank can score, so it says how high the passage came and never how well it answers (a question
+about nothing has a first passage, at 1.0).
+
+**What is relevant** (ADR 0028). The measure is `similarity`: the cosine of the question and of the
+closest piece of the passage's section, as the embedding model says it, raw (none when only the words
+found it). A caller that needs to know whether a passage answers asks for a floor with
+`min_similarity` (0 to 1), and a section whose similarity is under it is left out, counted in
+`left_out`, and does not take the place of one that is kept. Words alone are not evidence of
+relevance, because the words of a question are mostly common ones (*che ore sono* finds every page
+with *ore* in it): the one exception is a query that names a **code as written** (`E-4021`,
+`file.txt`), which the words find and a vector blurs, and which is relevant when the words found it.
+The floor depends on the embedding model (the cosines of `bge-m3` are not those of `nomic-embed-text`),
+and the right one is measured and not guessed (*Measured*, below). It is the caller's to ask for: the
+conversation service asks for it, so that a model is never shown a passage that does not answer.
 
 ## Collections, owners and who may do what
 
@@ -185,7 +200,7 @@ outside production.
 | `GET /v1/collections/{id}/documents?limit&offset` | the documents, newest first |
 | `GET`, `DELETE /v1/documents/{id}` | one document and how far it is; delete it |
 | `POST /v1/documents/{id}/retry` | try again a document that failed (`202`) |
-| `POST /v1/search` | `{"query", "collection_ids", "limit"}` → `{"passages", "warnings"}` |
+| `POST /v1/search` | `{"query", "collection_ids", "limit", "min_similarity"}` → `{"passages", "warnings", "left_out"}` |
 | `GET /healthz`, `GET /readyz` | liveness; readiness (the database answers) |
 
 Errors always have one shape, `{"error": {"code", "message", "details"}}`, with the stable code of the

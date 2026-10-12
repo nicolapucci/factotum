@@ -568,8 +568,37 @@ class TestSearching:
         bob = await rig.call("bob", "POST", "/v1/search", json={"query": "router"})
         stranger = await rig.call("stranger", "POST", "/v1/search", json={"query": "router"})
 
-        assert bob.json() == {"passages": [], "warnings": []}
-        assert stranger.json() == {"passages": [], "warnings": []}
+        assert bob.json() == {"passages": [], "warnings": [], "left_out": 0}
+        assert stranger.json() == {"passages": [], "warnings": [], "left_out": 0}
+
+    async def test_a_search_can_leave_out_what_is_not_alike_enough_in_meaning(
+        self, rig: Rig
+    ) -> None:
+        mine = await rig.make_collection()
+        await rig.add_text(mine)
+        await rig.harness.process()
+
+        about = await rig.call(
+            "alice",
+            "POST",
+            "/v1/search",
+            json={"query": "reset the router", "min_similarity": 0.4},
+        )
+        about_nothing = await rig.call(
+            "alice", "POST", "/v1/search", json={"query": "submarine", "min_similarity": 0.4}
+        )
+
+        [passage] = about.json()["passages"]
+        assert passage["similarity"] > 0.4
+        assert about.json()["left_out"] == 0
+        assert (about_nothing.json()["passages"], about_nothing.json()["left_out"]) == ([], 1)
+
+    async def test_a_floor_that_is_not_one_is_not_accepted(self, rig: Rig) -> None:
+        response = await rig.call(
+            "alice", "POST", "/v1/search", json={"query": "router", "min_similarity": 2}
+        )
+
+        assert response.status_code == 422
 
     async def test_asking_for_a_collection_that_may_not_be_seen_is_asking_for_one_that_is_not_there(
         self, rig: Rig

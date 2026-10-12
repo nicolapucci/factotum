@@ -19,7 +19,7 @@ from factotum.contracts.knowledge import (
     SearchWarningCode,
 )
 from factotum.contracts.testing import make_tenant_principal, make_user_principal
-from factotum.knowledge.retrieval import Retriever, _ByMeaning, words_weight
+from factotum.knowledge.retrieval import Retriever, _ByMeaning, names_a_code, words_weight
 from factotum.knowledge.store import Hit
 from factotum.knowledge.testing import Harness
 
@@ -165,7 +165,7 @@ class TestFinding:
         assert "firmware" in result.passages[0].context
 
 
-def hit(name: str, parent: UUID | None = None) -> Hit:
+def hit(name: str, parent: UUID | None = None, score: float = 1.0) -> Hit:
     return Hit(
         chunk_id=ChunkId(uuid4()),
         collection_id=CollectionId(uuid4()),
@@ -178,7 +178,7 @@ def hit(name: str, parent: UUID | None = None) -> Hit:
         headings=(),
         page=None,
         language=None,
-        score=1.0,
+        score=score,
     )
 
 
@@ -226,8 +226,8 @@ class TestHowTheWordsCount:
         meaning = [hit(f"found by meaning {n}") for n in range(8)]
         found = _ByMeaning(space_id="emb", hits=meaning)
 
-        as_a_name = Retriever._passages([only_words], [found], limit=8, words=1.0)
-        as_a_question = Retriever._passages([only_words], [found], limit=8, words=0.5)
+        as_a_name = Retriever._passages([only_words], [found], limit=8, words=1.0).passages
+        as_a_question = Retriever._passages([only_words], [found], limit=8, words=0.5).passages
 
         assert only_words.chunk_id in [p.chunk_id for p in as_a_name]
         assert as_a_name[0].chunk_id == only_words.chunk_id
@@ -241,7 +241,7 @@ class TestHowTheWordsCount:
         for weight in (1.0, 0.5):
             passages = Retriever._passages(
                 [both, hit("only words")], [found], limit=3, words=weight
-            )
+            ).passages
             assert passages[0].chunk_id == both.chunk_id
             assert passages[0].matched_by == ("vector", "text")
 
@@ -249,13 +249,228 @@ class TestHowTheWordsCount:
         only = hit("alone")
 
         for weight in (1.0, 0.5):
-            [passage] = Retriever._passages([only], [], limit=1, words=weight)
+            [passage] = Retriever._passages([only], [], limit=1, words=weight).passages
             assert passage.score == pytest.approx(1.0)
 
         both = hit("both")
         found = _ByMeaning(space_id="emb", hits=[both])
-        [passage] = Retriever._passages([both], [found], limit=1, words=0.5)
+        [passage] = Retriever._passages([both], [found], limit=1, words=0.5).passages
         assert passage.score == pytest.approx(1.0)
+
+
+class TestWhatIsRelevant:
+    """A passage is relevant by how alike its meaning is to the query, and not by how high it came
+    (ADR 0028): the score of a passage says the second, and a question about nothing still has a
+    first passage."""
+
+    def test_nothing_is_left_out_unless_a_floor_is_asked_for(self) -> None:
+        close, far = hit("close", score=0.9), hit("far", score=0.1)
+
+        ranked = Retriever._passages([], [_ByMeaning(space_id="emb", hits=[close, far])], limit=8)
+
+        assert {p.chunk_id for p in ranked.passages} == {close.chunk_id, far.chunk_id}
+        assert ranked.left_out == 0
+        assert {p.similarity for p in ranked.passages} == {0.9, 0.1}
+
+    def test_a_section_that_is_not_alike_enough_is_left_out_and_counted(self) -> None:
+        close, far = hit("close", score=0.9), hit("far", score=0.1)
+
+        ranked = Retriever._passages(
+            [], [_ByMeaning(space_id="emb", hits=[close, far])], limit=8, floor=0.5
+        )
+
+        assert [p.chunk_id for p in ranked.passages] == [close.chunk_id]
+        assert ranked.left_out == 1
+
+    def test_a_section_exactly_as_alike_as_the_floor_stays(self) -> None:
+        edge, under = hit("edge", score=0.5), hit("under", score=0.4999)
+
+        ranked = Retriever._passages(
+            [], [_ByMeaning(space_id="emb", hits=[edge, under])], limit=8, floor=0.5
+        )
+
+        assert [p.chunk_id for p in ranked.passages] == [edge.chunk_id]
+
+    def test_a_section_is_as_alike_as_its_closest_piece(self) -> None:
+        section = uuid4()
+        near = hit("near", parent=section, score=0.2)
+        close = hit("close", parent=section, score=0.7)
+        # The words find the piece that is not so close: it is the one that stands for the section.
+        found = _ByMeaning(space_id="emb", hits=[close, near])
+
+        ranked = Retriever._passages([near], [found], limit=8, floor=0.5)
+
+        [passage] = ranked.passages
+        assert passage.chunk_id == near.chunk_id
+        assert passage.similarity == pytest.approx(0.7)
+        assert ranked.left_out == 0
+
+    def test_what_only_the_words_found_is_not_relevant(self) -> None:
+        by_words = hit("a section that has the words in it")
+
+        ranked = Retriever._passages([by_words], [], limit=8, floor=0.1)
+
+        assert (ranked.passages, ranked.left_out) == ((), 1)
+
+    def test_unless_the_query_names_a_code_as_written_which_the_words_find_and_a_vector_blurs(
+        self,
+    ) -> None:
+        by_words = hit("E-4021 means that the door is open")
+
+        ranked = Retriever._passages([by_words], [], limit=8, floor=0.9, code=True)
+
+        [passage] = ranked.passages
+        assert (passage.chunk_id, passage.similarity, passage.matched_by) == (
+            by_words.chunk_id,
+            None,
+            ("text",),
+        )
+
+    def test_a_code_does_not_make_relevant_what_only_the_meaning_found(self) -> None:
+        far = hit("far", score=0.1)
+
+        ranked = Retriever._passages(
+            [], [_ByMeaning(space_id="emb", hits=[far])], limit=8, floor=0.5, code=True
+        )
+
+        assert (ranked.passages, ranked.left_out) == ((), 1)
+
+    def test_a_section_that_is_left_out_does_not_take_the_place_of_one_that_is_kept(self) -> None:
+        far, close = hit("far", score=0.1), hit("close", score=0.9)
+        # The words put the far one first, and there is a place for one.
+        found = _ByMeaning(space_id="emb", hits=[close, far])
+
+        ranked = Retriever._passages([far], [found], limit=1, floor=0.5)
+
+        assert [p.chunk_id for p in ranked.passages] == [close.chunk_id]
+        assert ranked.left_out == 1
+
+    def test_what_is_left_out_is_counted_whatever_the_places(self) -> None:
+        close = [hit(f"close {n}", score=0.9) for n in range(3)]
+        far = [hit(f"far {n}", score=0.1) for n in range(2)]
+
+        ranked = Retriever._passages(
+            [], [_ByMeaning(space_id="emb", hits=[*close, *far])], limit=1, floor=0.5
+        )
+
+        assert len(ranked.passages) == 1
+        assert ranked.left_out == 2
+
+    def test_a_similarity_a_hair_over_one_is_still_a_cosine(self) -> None:
+        exact = hit("exact", score=1.0000000002)
+
+        [passage] = Retriever._passages(
+            [], [_ByMeaning(space_id="emb", hits=[exact])], limit=1
+        ).passages
+
+        assert passage.similarity == 1.0
+
+    def test_a_passage_that_only_the_words_found_says_it_has_no_similarity(self) -> None:
+        [passage] = Retriever._passages([hit("words")], [], limit=1).passages
+
+        assert passage.similarity is None
+
+    @pytest.mark.parametrize(("query", "is_a_code"), [("E-4021", True), ("file.txt", True)])
+    def test_a_code_is_one_as_the_words_weigh_it(self, query: str, is_a_code: bool) -> None:
+        assert names_a_code(query) is is_a_code
+        assert words_weight(query) == 1.0
+
+    @pytest.mark.parametrize("query", ["router", "reset the router.", "what does it cover"])
+    def test_a_name_or_a_question_is_not_a_code(self, query: str) -> None:
+        assert names_a_code(query) is False
+
+    async def test_a_question_about_nothing_that_is_there_finds_nothing_relevant(
+        self, alice: Principal, shop: tuple[Harness, Collection]
+    ) -> None:
+        harness, _ = shop
+
+        result = await harness.service.search(alice, search("submarine", min_similarity=0.4))
+
+        assert result.passages == ()
+        assert result.left_out == 3
+
+    async def test_a_question_about_what_is_there_finds_it_and_leaves_out_the_rest(
+        self, alice: Principal, shop: tuple[Harness, Collection]
+    ) -> None:
+        harness, _ = shop
+
+        result = await harness.service.search(alice, search("reset the router", min_similarity=0.4))
+
+        [only] = result.passages
+        assert only.text == ROUTER
+        assert only.similarity == pytest.approx(0.631, abs=0.01)
+        assert result.left_out == 2
+
+    async def test_without_a_floor_the_question_about_nothing_still_has_a_first_passage(
+        self, alice: Principal, shop: tuple[Harness, Collection]
+    ) -> None:
+        harness, _ = shop
+
+        result = await harness.service.search(alice, search("submarine"))
+
+        assert result.passages[0].score == pytest.approx(0.5)  # it only came by meaning
+        assert result.passages[0].similarity is not None
+        assert result.passages[0].similarity < 0.2
+        assert result.left_out == 0
+
+    async def test_a_floor_does_not_show_a_tenant_what_is_in_another(
+        self, alice: Principal
+    ) -> None:
+        harness = Harness()
+        collection = await harness.collection(alice, "Manuals")
+        await harness.add_text(alice, collection, "Router", ROUTER, language="en")
+        await harness.process()
+        stranger = make_user_principal(roles=ADMIN)  # another tenant
+
+        mine = await harness.service.search(alice, search("reset the router", min_similarity=0.4))
+        theirs = await harness.service.search(
+            stranger, search("reset the router", min_similarity=0.0)
+        )
+
+        assert [p.text for p in mine.passages] == [ROUTER]
+        assert (theirs.passages, theirs.left_out) == ((), 0)
+
+    async def test_a_floor_over_what_the_words_alone_found_leaves_it_out(
+        self, alice: Principal
+    ) -> None:
+        harness = Harness()
+        collection = await harness.collection(alice, "Manuals")
+        # Every word of the query is in it, lost among a hundred others: the words find it, and its
+        # meaning (as this embedder sees it) is far from the query's.
+        filler = " ".join(f"w{n}" for n in range(100))
+        await harness.add_text(alice, collection, "Hours", f"che ore sono adesso {filler}")
+        await harness.process()
+        query = "che ore sono adesso"
+
+        found = await harness.service.search(alice, search(query))
+        kept = await harness.service.search(alice, search(query, min_similarity=0.5))
+
+        assert found.passages[0].matched_by == ("vector", "text")
+        assert found.passages[0].similarity == pytest.approx(0.32, abs=0.1)
+        assert (kept.passages, kept.left_out) == ((), 1)
+
+    async def test_a_code_as_written_is_found_by_its_words_whatever_the_floor(
+        self, alice: Principal
+    ) -> None:
+        harness = Harness()
+        collection = await harness.collection(alice, "Manuals")
+        await harness.add_text(alice, collection, "Codes", "Error E-4021 means the door is open.")
+        await harness.add_text(alice, collection, "Cats", CATS)
+        await harness.process()
+
+        coded = await harness.service.search(alice, search("E-4021", min_similarity=0.95))
+        a_question = await harness.service.search(
+            alice, search("what does the door error mean", min_similarity=0.95)
+        )
+
+        assert [p.document_title for p in coded.passages] == ["Codes"]
+        assert coded.passages[0].matched_by == ("vector", "text")
+        assert a_question.passages == ()
+
+    def test_the_floor_is_between_nothing_and_everything(self) -> None:
+        for bad in (-0.1, 1.1):
+            with pytest.raises(ValueError, match="min_similarity"):
+                search("router", min_similarity=bad)
 
 
 class TestWhereItLooks:

@@ -59,6 +59,12 @@ _NAME_WORDS = 2
 _QUESTION_WORDS_WEIGHT = 0.5
 
 
+def names_a_code(query: str) -> bool:
+    """Whether a query has a code in it as written (``E-4021``, ``file.txt``): what the words find
+    and a vector blurs."""
+    return any(_CODE_LIKE.search(token) for token in query.split())
+
+
 def words_weight(query: str) -> float:
     """How much the words count against the meaning, for this query.
 
@@ -75,10 +81,22 @@ def words_weight(query: str) -> float:
     other (while one that both found is lifted past the meaning's first), and a name found only by
     the words would never be seen.
     """
-    tokens = query.split()
-    if len(tokens) <= _NAME_WORDS or any(_CODE_LIKE.search(token) for token in tokens):
+    if len(query.split()) <= _NAME_WORDS or names_a_code(query):
         return 1.0
     return _QUESTION_WORDS_WEIGHT
+
+
+def _cosine_of(value: float | None) -> float | None:
+    """A similarity as a cosine is: arithmetic in a store can leave it a hair outside of [-1, 1]."""
+    return None if value is None else max(-1.0, min(1.0, value))
+
+
+@dataclass(frozen=True, slots=True)
+class _Ranked:
+    """The passages a search comes to, and how many sections were left out as not relevant."""
+
+    passages: tuple[Passage, ...]
+    left_out: int = 0
 
 
 @dataclass(slots=True)
@@ -121,11 +139,16 @@ class Retriever:
             ),
         )
         warnings = [warning for found in by_meaning for warning in found.warnings]
+        ranked = self._passages(
+            by_words,
+            list(by_meaning),
+            request.limit,
+            words_weight(request.query),
+            floor=request.min_similarity,
+            code=names_a_code(request.query),
+        )
         return SearchResult(
-            passages=self._passages(
-                by_words, list(by_meaning), request.limit, words_weight(request.query)
-            ),
-            warnings=tuple(warnings),
+            passages=ranked.passages, warnings=tuple(warnings), left_out=ranked.left_out
         )
 
     async def _visible(
@@ -218,8 +241,19 @@ class Retriever:
 
     @staticmethod
     def _passages(
-        by_words: list[Hit], by_meaning: list[_ByMeaning], limit: int, words: float = 1.0
-    ) -> tuple[Passage, ...]:
+        by_words: list[Hit],
+        by_meaning: list[_ByMeaning],
+        limit: int,
+        words: float = 1.0,
+        *,
+        floor: float | None = None,
+        code: bool = False,
+    ) -> _Ranked:
+        """The best passages of what the two searches found, one for each section. With a ``floor``
+        a section is kept only if the meaning of its best piece is at least that alike to the query
+        (the raw similarity: the score of a passage only says how high it came), or if the query
+        names a ``code`` as written and the words found the section. A section that is not kept does
+        not take the place of one that is."""
         # One ranking by words, and one by meaning for each space that was searched.
         spaces: dict[str, list[Hit]] = {}
         for found in by_meaning:
@@ -237,13 +271,33 @@ class Retriever:
         found_by_meaning = {hit.chunk_id for ranking in meaning for hit in ranking}
         best = sum(weights) / (DEFAULT_K + 1)
 
+        # How alike, at best, a section is to the query: the cosine of its closest piece.
+        alike: dict[UUID, float] = {}
+        for ranking in meaning:
+            for hit in ranking:
+                alike[hit.parent_id] = max(alike.get(hit.parent_id, hit.score), hit.score)
+        sections_by_words = {hits[identity].parent_id for identity in found_by_words}
+
+        def relevant(section: UUID) -> bool:
+            if floor is None:
+                return True
+            if section in alike and alike[section] >= floor:
+                return True
+            return code and section in sections_by_words
+
         passages: list[Passage] = []
         parents: set[UUID] = set()
+        left_out = 0
         for identity, score in fused:
             hit = hits[identity]
             if hit.parent_id in parents:
                 continue  # its section is already there, in the context of a better piece
             parents.add(hit.parent_id)
+            if not relevant(hit.parent_id):
+                left_out += 1
+                continue
+            if len(passages) == limit:
+                continue  # the places are taken; what is left is only counted
             matched: list[Literal["vector", "text"]] = []
             if identity in found_by_meaning:
                 matched.append("vector")
@@ -260,10 +314,9 @@ class Retriever:
                     context=hit.context,
                     location=Location(page=hit.page, headings=hit.headings),
                     score=min(1.0, score / best),
+                    similarity=_cosine_of(alike.get(hit.parent_id)),
                     matched_by=tuple(matched),
                     language=hit.language,
                 )
             )
-            if len(passages) == limit:
-                break
-        return tuple(passages)
+        return _Ranked(tuple(passages), left_out)

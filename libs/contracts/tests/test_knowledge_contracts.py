@@ -213,9 +213,19 @@ class TestPassage:
             Location(page=0)
 
     def test_it_round_trips_through_json(self) -> None:
-        original = passage(language="en")
+        original = passage(language="en", similarity=0.61)
 
         assert Passage.model_validate_json(original.model_dump_json()) == original
+
+    def test_how_alike_it_is_to_the_query_is_a_cosine_or_nothing_when_only_the_words_found_it(
+        self,
+    ) -> None:
+        assert passage().similarity is None
+        assert passage(similarity=-1).similarity == -1
+        assert passage(similarity=1).similarity == 1
+        for bad in (-1.01, 1.01):
+            with pytest.raises(ValidationError):
+                passage(similarity=bad)
 
 
 class TestSearch:
@@ -238,6 +248,22 @@ class TestSearch:
     def test_an_explicit_list_of_collections_cannot_be_empty(self) -> None:
         with pytest.raises(ValidationError):
             SearchRequest(query="q", collection_ids=())
+
+    def test_nothing_is_left_out_by_default(self) -> None:
+        assert SearchRequest(query="q").min_similarity is None
+        assert SearchResult().left_out == 0
+
+    def test_the_floor_of_meaning_is_between_nothing_and_everything(self) -> None:
+        assert SearchRequest(query="q", min_similarity=0).min_similarity == 0
+        assert SearchRequest(query="q", min_similarity=1).min_similarity == 1
+        for bad in (-0.01, 1.01):
+            with pytest.raises(ValidationError, match="min_similarity"):
+                SearchRequest(query="q", min_similarity=bad)
+
+    def test_what_was_left_out_is_a_count(self) -> None:
+        assert SearchResult(left_out=3).left_out == 3
+        with pytest.raises(ValidationError):
+            SearchResult(left_out=-1)
 
     def test_a_result_may_be_empty_and_may_carry_warnings(self) -> None:
         warning = SearchWarning(

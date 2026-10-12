@@ -155,6 +155,15 @@ class Passage(Contract):
 
     location: Location = Field(default_factory=Location)
     score: float
+    """How high this passage came among the ones found: a fusion of ranks (ADR 0011), scaled by the
+    best a rank can score. It says nothing of how well the passage answers: a question about nothing
+    still has a first passage, at 1.0."""
+
+    similarity: float | None = Field(default=None, ge=-1, le=1)
+    """How alike the meaning of the query and of this passage are, as the embedding model measures
+    it (the cosine, raw), for the best piece of its section. This is what says whether a passage is
+    relevant (ADR 0028). None: only the words found it."""
+
     matched_by: tuple[Literal["vector", "text"], ...] = Field(min_length=1)
     language: LanguageCode | None = None
     untrusted: Literal[True] = True
@@ -170,6 +179,12 @@ class SearchRequest(Contract):
     """Search only these collections. By default, every collection the caller may see."""
 
     limit: int = Field(default=8, ge=1, le=50)
+
+    min_similarity: float | None = Field(default=None, ge=0, le=1)
+    """Leave out what is not at least this alike in meaning to the query (``Passage.similarity``).
+    Nothing is left out by default. What the words find alone is not relevant by this measure, with
+    one exception: a query that names a code as written (``E-4021``, ``file.txt``), which the words
+    find and a vector blurs (ADR 0028)."""
 
 
 class SearchWarningCode(StrEnum):
@@ -189,3 +204,5 @@ class SearchWarning(Contract):
 class SearchResult(Contract):
     passages: tuple[Passage, ...] = ()
     warnings: tuple[SearchWarning, ...] = ()
+    left_out: int = Field(default=0, ge=0)
+    """How many sections that were found ``min_similarity`` left out for not being relevant."""
