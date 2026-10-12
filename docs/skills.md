@@ -42,13 +42,25 @@ The lights are managed by Home Assistant, at `homeassistant.local` on port 8123.
 | `description` | one sentence: what it does. It is embedded, and it is what the model that reads a message is shown. |
 | `examples` | things a person would say, in every language you expect. They are embedded too: the more they sound like the messages, the surer the skill is found. |
 | `target` | `none` (no device: a service), `system` (a Factotum device: the one that was spoken to, or the one that was named) or `external` (a lamp, a door, a TV: bound to the skill in the devices file with what is its own). |
-| `parameters`, `required` | what the message may say: a name, a `type` (`string`, `integer`, `number`, `boolean`), and optionally `description`, `enum`, `minimum`, `maximum`. The `description` is shown, after the type, to the model that reads a message: it is where to say what a value is for (*as the person said it*, *on, when only a brightness is asked for*). A required value that is not in the message is asked for; one is never invented. |
+| `parameters`, `required` | what the message may say: a name, a `type` (`string`, `integer`, `number`, `boolean`), and optionally `description`, `enum`, `minimum`, `maximum`. The `description` is shown, after the type, to the model that reads a message: it is where to say what a value is for (*as the person said it*, *on, when only a brightness is asked for*). `required` is what the skill cannot do without: a required value that is not in the message is asked for, and one is never invented (below). |
 | `device_parameters` | what is fixed for an external device (its `host`, its `entity_id`): set in the devices file, never said in a message. |
 | `permissions` | `network`: the hosts the skill may reach (`${device.host}` is the host of the device it is bound to; `*.example.com` is every subdomain), `secrets`: the names of the secrets it may be given. Nothing that is not declared is available, and enabling a version grants exactly what it declares. |
 | `effect` | `read_only`, `reversible` or `irreversible`: how severe the worst thing it does is. It decides what a device may start (a shared speaker may not start what cannot be undone) and, for a skill in instructions mode, what a plan may do: **a plan of a `read_only` skill has `GET`s and nothing else**, whatever it says. Declare it honestly. |
 | `confirm`, `approval` | when a plain yes is asked first (`never`, `ask`, `always`), and whether an out-of-band approval is needed (which is refused until one exists: ADR 0007). |
 | `entrypoint` | the Python file that a script runs. Leave it out for instructions. |
 | `timeout_s` | how long a run may take, 1 to 120 seconds (10). |
+
+**What is required, and what is left to the skill** (ADR 0028). A model reads the values out of the
+message, and the code keeps only the ones the person said: a number has to be in the message (in
+digits or in words, or the end or the middle of the range the skill declares, said as *al massimo*
+or *a metà*), and a text has to be made of words that the message has. A choice from a list is the
+model's reading and is not looked for. A value that is not there is not one: if the skill requires
+it the person is asked, and if it does not the skill is called without it. So **a default belongs to
+the skill**: `volume-change` is called with `direction: up` and no `amount` when the person says
+*alza il volume*, and its script turns it up by its usual step. Do not ask a model for a number
+that nobody said, and do not make an optional value required to get one. A manifest cannot say
+that one of two values is required (a level, or a direction), so a skill that would take either is
+two skills, as `volume` and `volume-change` are.
 
 Then the body. For a script it is notes for people. **For instructions it is what the model follows**,
 read whole every time the skill runs: at most 8000 characters.
@@ -121,7 +133,7 @@ A step is one of:
   address), `headers` (an object), and, except for `GET` and `DELETE`, `body`: a JSON value, which is
   sent as JSON, or a string, which is sent as text (`text/plain`), or `null`;
 * **a command for a device**: `name` and `args`, one of the vocabulary of the edge (`set_volume`,
-  `speak`, `play_url`, `pause`, `resume`, `stop`, `show_card`, `clear_display`, `set_led`), which
+  `adjust_volume` (a `delta` of points of the volume, positive for louder), `speak`, `play_url`, `pause`, `resume`, `stop`, `show_card`, `clear_display`, `set_led`), which
   the actions service gives to the device that was spoken to (or that the skill acts on) if it
   declared it can. `play_audio`, which carries a clip, is **not** among them: a clip is what a skill of
   the platform gives, and a script or a plan that says `speak` has the edge make the voice of it.

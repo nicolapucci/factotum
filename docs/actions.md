@@ -61,9 +61,10 @@ A skill is a folder with a `SKILL.md` and, if it runs code, the scripts. The `SK
 frontmatter (the manifest of [ADR 0006](decisions/0006-skills-and-sandboxed-execution.md): name,
 description, examples, target, parameters, required, device parameters, permissions, effect, confirm,
 approval, entrypoint) between two lines of three dashes, then instructions or notes in markdown.
-[`skills/`](../skills/README.md) has seven worked examples: a lamp, a garage door, a volume, the
-weather and a router restart, each showing a different way an action is decided, and two that are
-only instructions (a scene for a movie, the air quality). How to write one is in
+[`skills/`](../skills/README.md) has eight worked examples: a lamp, a garage door, a volume that is
+set to a level and one that is turned up or down, the weather and a router restart, each showing a
+different way an action is decided, and two that are only instructions (a scene for a movie, the air
+quality). How to write one is in
 [`skills.md`](skills.md). What the platform itself does (an announcement) is not an example but a
 skill of the platform, [below](#skills-of-the-platform).
 
@@ -171,8 +172,10 @@ nothing on the network, and is granted nothing. What it says is not the reply to
    with its values: their kind, and what the skill says each is for), with the names of the devices
    the caller may use, and answers a structured `Plan`: *why* (a few words,
    which is what makes a small model get the rest right), which skill or none, which device, which
-   values, the language, what to ask for a yes and what to ask for a missing value. It is shown 12
-   examples as turns of the conversation it is in, and **it is never shown the conversation**, a
+   values (only what the message says, or what the description of the skill says it is in that
+   case), the language, what to ask for a yes and what to ask for a missing value (in the language of
+   the message). It is shown 19 examples as turns of the conversation it is in, and **it is never
+   shown the conversation**, a
    document or a page: what plans an action is the message and nothing else. It is asked with the
    temperature at zero and cut off after 10 seconds.
 3. **Checked in code.** The skill must be one of those offered. A skill that acts on a system device
@@ -181,9 +184,21 @@ nothing on the network, and is granted nothing. What it says is not the reply to
    at the only one the caller may use that the skill is bound to; more than one is asked about, none
    is *there is no device set up for that*. Values are checked against what the skill declares:
    `"30"` for an integer becomes 30 and `"On"` becomes `"on"`, and a value outside the bounds or the
-   choices, or a required one that is not there, is *needs more* and the reply asks for it. A
-   sentence the model wrote to be spoken must be one printable line of moderate length or it is not
-   said. **A plan that does not pass is not an action.**
+   choices, or a required one that is not there, is *needs more* and the reply asks for it.
+   **A value must also be one that the person said** (ADR 0028, `grounding`): a number is one that
+   the message gives, in digits or in words (English and Italian, up to 999; *per cento* is a percent
+   and not a hundred), or an end or the middle of the range the skill declares, said as people do
+   (*al massimo*, *at full*, *a metà*), and a text is made of words that the message has. One that
+   is not there is *left out*: a value that the skill does not require is not passed on, so the
+   skill, or the device, applies its own default (*alza il volume* turns it up by the step of the
+   skill; a level of 100 that a model thought of is never run), and one that it requires is asked
+   for. A choice from a list (`on`, `off`) is the model's reading of the words and is not searched
+   for. The names of what was left out are in the log, never the values. A sentence the model wrote
+   to be spoken must be one printable line of moderate length or it is not said, and the question
+   that asks for a missing value must also be in the language of the message (read in code, as the
+   conversation service does): a model that was shown a question in English asks in English whatever
+   it is spoken to in, and the sentence of the code is said instead. **A plan that does not pass is
+   not an action.**
 
 A message the planner cannot read (the gateway is away, the model does not answer in time or with
 something that is not a plan) is `NO_SKILL` with `degraded` set: nothing runs, the conversation
@@ -527,8 +542,8 @@ What the 8B model got wrong, out of 61:
   first example had `state` as a required value with nothing to say that a brightness alone means on
   (in English, the 40 percent one, it was right); the example now says so.
 * *make the volume a bit lower* was **done**: it made up a level. No level was said, and the model
-  was told never to make one up; the check in code cannot tell a made-up 20 from a said one, because
-  it is a valid value. It is the limit of "the model proposes": see the limits.
+  was told never to make one up; the check in code could not tell a made-up 20 from a said one,
+  because it is a valid value. (It can since ADR 0028: a number must be in the message.)
 * *what is the weather usually like in Rome in August?* was **done** as a request for the weather now.
 
 ### The meaning search
@@ -696,6 +711,46 @@ geocoding-api.open-meteo.com, GET air-quality-api.open-meteo.com`). With the mod
 stand-in a message costs what the runner costs (2 to 3 s): the two model calls are the rest, and are
 measured in `skills.md`.
 
+### A value is one that was said (ADR 0028, slice B: nine skills, 90 messages)
+
+The corpus grew to **90 messages, 63 that ask for something and 27 that do not**: the volume turned up
+or down (*turn it up*, *alza il volume*, *abbassa il volume di quindici*, *change the volume*) and the
+questions that a missing value is asked with, in both languages. Said to the speaker, the display and
+the phone, by the 8B model in the `chat.fast` role and `bge-m3`, with the check of `grounding` in
+the code (the whole live test took 1 minute 50 seconds):
+
+| | before (82 messages) | `llama3.1:8b-instruct-q4_K_M` |
+| --- | --- | --- |
+| Commands read exactly as meant | 48 of 55 | **60 of 63** |
+| Commands with the right skill | 53 of 55 | 61 of 63 |
+| Questions left as questions | 26 of 27 | 26 of 27 |
+| A message that is acted on, median (90th percentile) | 1.10 s (1.25 s) | 1.24 s (1.41 s) |
+| A question that is passed over | 0.87 s | 1.05 s |
+| A command near its skill, by meaning, at 0.45 | 55 of 55 | 63 of 63 |
+| A yes or a no read as it was meant | 22 of 22 | 22 of 22 |
+
+By skill: air quality 6 of 6, announcement 6 of 6 (it was 3 of 6), garage door 6 of 7, lamp 12 of 13,
+scene 4 of 4, router 3 of 4, **volume 7 of 7** (it was 6 of 8), **volume change 8 of 8**, weather 8 of 8.
+The prompt has 19 examples, where it had 12: the volume turned up or down, a question that asks for a
+missing value in Italian (twice), the announcements that copy the words that were said (in both
+languages) and a *why* that is a question and not a request.
+
+* *Turn it up*, *make the volume a bit lower* and *alza il volume*, which the model had answered with
+  a level of its own (twice, in two measurements), are `volume-change` with a direction and no amount,
+  and the skill turns the volume by its step. *Turn the volume down a lot* came with an amount of 100
+  that nobody said; the check left it out and the step was used. *Metti il volume al massimo* is 100
+  and *a metà* is 50, *di quindici* is 15, and *set the lamp to forty* is 40: said in words, or as the
+  end or the middle of the range of the parameter.
+* *Dì che è ora di andare* came with the message *it's time to go*: a translation, which is not what
+  the person said, and the check refused it (the person was asked what to say). With two examples that
+  copy the words, the announcements are right.
+* An example more or a sentence changed moves a case or two out of 63 in a small model. Three other
+  variants of the prompt were measured and got 56 to 59 of 63; each of them broke *turn it up*,
+  *could you please turn the light on* or *set the movie scene* for the one case it fixed.
+* What is still wrong is the model's, as before: *could you dim the lights to thirty percent* goes to
+  the scene, *could you open up the garage for me* from the phone asks which garage, *reboot the wifi*
+  is no skill and *what is the weather usually like in Rome in August?* is taken for a request.
+
 ### What the measurements found
 
 * **A run makes a container, and it is the cheapest part of the wait now.** About a second and a half
@@ -748,14 +803,19 @@ measured in `skills.md`.
 * **The threshold is a property of the embedding model**: 0.45 was set with `bge-m3`. Another model
   puts unrelated texts nearer or further apart; the live test prints where they fall. And meaning
   is topic, not intent: a question about a skill's subject always reaches the model.
-* **A value that a model makes up is a value.** The checks in code refuse what is not the type, the
-  choice or the range the skill declares, and ask for what is missing; they cannot tell a level of
-  20 that a person said from one that a model made up ("make the volume a bit lower"). A skill that
-  has an effect and takes a number should be one that asks first, and the question the model writes
-  says what will be done. A check that a value appears in the message is possible (numbers written as
-  words in every language are what makes it not simple) and is not done: it is the second slice of
-  [ADR 0028](decisions/0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md),
-  with the volume that takes no level.
+* **What cannot be traced to the message is the choice from a list.** A number or a text that a
+  model made up is not a value (`grounding`, ADR 0028), but `on` for *accendi* and `open` for *il
+  garage* are the model's reading and no rule in code searches for them: a model that fills in the
+  choice of a skill that requires it (the garage door, which asks for a yes first) is caught by the
+  yes, and one that fills in a choice that does no harm is not caught. Numbers written as words are
+  read in English and Italian up to 999 (in another language a number is written with digits, which
+  is what a speech recogniser mostly gives), a text in a script with no spaces is looked for inside
+  the sentence, and the ends of a range are the bounds the skill declares (a parameter with no
+  `maximum` has no *al massimo*).
+* **A manifest cannot say "one of these is required".** *Set the volume to 30* and *turn it up* are
+  two skills (`volume`, which requires a level, and `volume-change`, which requires a direction),
+  because each asks for what it cannot do without; the model chooses between them by the words, and
+  a skill that wanted either would need a form of `required` that the manifest does not have.
 * **A device is told that the actions could not be asked only when nothing else answers.** The turn
   says so in a `warning`, and the edge does not pass warnings on to devices (`edge.md`), so a device
   whose planner was too slow leaves the command to the documents; when they have nothing relevant it

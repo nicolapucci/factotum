@@ -1,6 +1,6 @@
 # 0028. The model alone does nothing: a request is satisfied by skills, or it is declined
 
-Status: accepted, 2026-10-12.
+Status: accepted, 2026-10-12. Built: slice A (2026-10-12) and slice B (2026-10-13).
 
 ## Context
 
@@ -76,9 +76,19 @@ opposite: the model by itself can do nothing, and what the assistant can do is i
   serve ancora: la città."*). An optional value that was not said is left out, and the skill, or the device
   it acts on, applies its default: *"alza il volume"* calls the volume skill with no amount, and the skill
   or the speaker raises it by its usual step. To keep a model from filling in what it was not told, the
-  code checks that a value it wrote traces back to the message (the words it was taken from are in the
-  message), and a value that does not is treated as not said. How exactly is built and measured with the
-  real model, since an amount can be said with no digit in it (*"al massimo"*, *"a metà"*).
+  code checks that a value it wrote traces back to the message, and a value that does not is treated as not
+  said. The check is in code and the model is not asked to quote the words a value came from: a quote
+  proves that the model pointed at some words and not that they say the value, and it costs tokens in every
+  request. A number is traced by finding it in the message (in digits, or in words in the two languages the
+  assistant has sentences in), or by being the end or the middle of the range that the skill declares for
+  it, since an amount can be said with no digit in it (*"al massimo"*, *"a metà"*); a text is traced by its
+  words being the message's. A choice from a list (*on*, *off*) is the model's reading of the words and no
+  rule in code can search for it: it is left to the checks of the choices and, where an action has an effect,
+  to the person's yes. Because a manifest cannot say that one of two values is required, setting the volume
+  to a level and turning it up or down are two skills (`volume` and `volume-change`), each of which asks for
+  what it cannot do without. The default step belongs to the skill (the script of `volume-change` turns it
+  up by 10) and the command that reaches a device says how much (`adjust_volume`, a number of points): a
+  device does what it is told and has no step of its own.
 - **One or more skills, though one at a time for now.** The rule is stated for any number of them: a
   request is satisfied when every part of it has a skill that ran; a part that has none is declined, a part
   whose skill failed is said to have failed, and what was done is still said. Today a message chooses one
@@ -106,12 +116,12 @@ opposite: the model by itself can do nothing, and what the assistant can do is i
   `docs/skills.md` and `docs/development.md` where they say it, and the prompt of the conversation service,
   which loses "you may add what you know" and the date (a clock that is not a skill: *"che giorno è oggi"*
   would be answered from the prompt).
-- `volume` has to be called with no level. `set_volume` is absolute today (a level, 0 to 100), so *"alza il
-  volume"* needs a command that is relative, and the devices and the clients that run commands need to
-  learn it.
-- The work is two slices. A: the two sentences of "no", the documents as a skill with its floor, the
-  skill's own words for a failure, and the prompt. B: a value that cannot be traced to the message is not
-  believed, and the volume skill that is relative with a default step.
+- *"Alza il volume"* is called with no level. `set_volume` is absolute (a level, 0 to 100), so the volume
+  needs a command that is relative (`adjust_volume`), and the devices and the clients that run commands
+  learn it (vocabulary version 3).
+- The work was two slices, both built. A: the two sentences of "no", the documents as a skill with its
+  floor, the skill's own words for a failure, and the prompt. B: a value that cannot be traced to the message
+  is not believed, and the volume that is turned up or down with a default step.
 
 ## Alternatives considered
 
@@ -170,5 +180,47 @@ What the measurements found (`docs/knowledge.md`, `docs/conversation.md`):
   this record removes**: 26 of the conversation service and 10 of the end-to-end ones (the same
   five tests, run twice) had to be given a passage, or to say what the code says instead.
 
-Not built, as the record says: the second slice (a value that cannot be traced to the message is not
-believed, and the volume skill that is relative), the core skills, and several skills in one request.
+### The second slice (B)
+
+A value is one that the person said, and the volume can be turned up or down. `adjust_volume` is a
+command of the vocabulary (a `delta` from -100 to 100, version 3), run by the system device, the speaker
+(which keeps the level between 0 and 100), the hands of the device application and the terminal.
+`volume-change` is a skill with a direction (required) and an amount (optional): its script turns the volume
+by the amount if there is one and by 10 if there is not. `factotum.actions.grounding` finds out whether a
+message says a value; `check_values` leaves out what it does not say (`Checked.unsaid`: an optional value is
+not passed on and a required one is asked for), the service logs the names of what was left out and never
+the values, and the question that asks for a value that is missing is replaced by the sentence of the code
+when the model wrote it in another language than the message.
+
+What the measurements found (`docs/actions.md`; the 8B model of `chat.fast`, 63 commands and 27 questions
+said to the three devices, in English and Italian):
+
+* **The check works with the real model.** *Metti il volume al massimo* is a level of 100 and *a metà* one of
+  50 (the ends of the range), *di quindici* is an amount of 15, and *turn the volume down a lot* came with
+  an amount of 100 that nobody said, which was left out, so the skill turned it down by its step. *Turn it
+  up* and *make the volume a bit lower*, which the model had answered with a level of its own in two
+  earlier measurements, are done by `volume-change` with a direction and no amount: 8 of 8, and the
+  volume 7 of 7 (it was 6 of 8).
+* **A model translates, and the check refuses it.** *Dì che è ora di andare* came with the message *it's
+  time to go*; the person was asked what to say. Two examples in the prompt that copy the words as they were
+  said (one in English, one in Italian) took the announcements from 3 of 6 to 6 of 6. A text is accepted
+  when its words are the message's, in any order, so *everyone, dinner is ready* for *tell everyone that
+  dinner is ready* is said: it invents nothing, and a stricter rule (the words must follow one another)
+  would ask for what was said.
+* **The question was in English because the only example of one was.** *Alza il volume* asked *What
+  percentage do you want the volume to be?* before the examples had a question in Italian. Now it asks
+  *Vuoi alzarlo o abbassarlo?* for *cambia il volume*, and a question that comes in the wrong language is
+  not said.
+* **The prompt of a small model moves a case or two with every change.** Of the variants that were measured,
+  the one that is kept got 60 of 63 commands exactly as meant (it was 48 of 55 over the earlier corpus), 61
+  of 63 with the right skill and 26 of 27 questions left as questions; an example more or a sentence
+  changed sent *turn it up* or *could you please turn the light on* to *needs more* and brought the garage
+  from the phone back, and every one of those was one case of 63. What stays wrong is the model's: *could you
+  dim the lights to thirty percent* goes to the scene, *could you open up the garage for me* from the phone
+  asks which garage, *reboot the wifi* is no skill, and *what is the weather usually like in Rome in
+  August?* is taken for a request.
+* **Fourteen tests of the service and one of the end-to-end suite said a value that their message did
+  not.** They were given a message that says it, which is the point of the check.
+
+Not built, as the record says: the core skills (the time, small talk, help, the documents and the history as
+skills of the platform) and several skills in one request.

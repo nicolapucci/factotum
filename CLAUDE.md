@@ -116,9 +116,16 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   embedding model (`min_similarity`; what only the words found is not relevant, except a code as
   written). The documents behave as a skill (a name, a phase, a failure with words) and are one in the
   end. Nothing may treat the time, or anything else, as a special case: the assistant behaves the same
-  whether the core skills exist or not. A required value is asked for and an optional one that was not
-  said is left to the skill or the device (the second slice of the ADR, not built yet). Several skills
-  in one request are not built, and nothing may assume that there is exactly one.
+  whether the core skills exist or not. **A value is one that the person said**
+  (`factotum.actions.grounding`): a number has to be in the message (digits, or words in English and
+  Italian up to 999, or the end or the middle of the range the skill declares: *al massimo*), a text
+  has to be made of its words, and a choice from a list is the model's reading and is not searched
+  for. What was not said is not a value: a required one is asked for, in the language of the message,
+  and an optional one is left out so that the skill applies its default (*alza il volume* is
+  `volume-change` with a direction and no amount, and the script turns it up by its step of 10; a
+  device does what it is told, `adjust_volume` carries a number). A model is never asked to quote the
+  words a value came from: the check is in code. Several skills in one request are not built, and
+  nothing may assume that there is exactly one.
 - **A script runs in a container of its own and reaches only what its grant lists** (ADR 0015). The
   `runner` is the only service given the socket of the engine (as much as being root on the
   machine), and a job cannot say what the container is like: the body of the container is built in
@@ -365,6 +372,12 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   `test_conversation_app.py` that run against a real database are turns too, and a run without the
   database skips them: one of them still had a search that found nothing and expected a model's
   answer, and only the full gate with Postgres up showed it.
+- A test that gives the actions service a plan with values (`plan_of(..., parameters=...)`) says them
+  in the message it hears: a number or a text that the message does not have is left out (ADR 0028),
+  which is the point of it, and fourteen tests had to be given a message that says what the plan
+  does. The corpus (`plan_cases`) keeps itself honest the same way (`check_values(..., said=...)`).
+  A heredoc of Python run by the shell tool turns `\\b` of a pattern in a string into a backspace
+  (`^H` in `cat -A`): patch files with the Edit tool, or with a script file written by Write.
 - The score of a passage is not its relevance: it is a fusion of ranks scaled by the best a rank can
   score (a question about nothing has a first passage at 1.0). Ask for `min_similarity` and read
   `similarity`. The floor is measured with the real model and the numbers are in `docs/knowledge.md`
