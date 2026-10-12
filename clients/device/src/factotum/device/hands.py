@@ -2,9 +2,9 @@
 
 A command that the edge sends is one that this device declared it can run (ADR 0013): a speaker with
 a microphone declares ``audio_in`` and ``audio_out``, and what the hands of ``audio_out`` do in the
-vocabulary of commands is set the volume. The volume is the speaker's own (the samples are scaled
-before they are played: ``factotum.client_audio.Speaker``), and so it is the same on a PC and on a
-Raspberry Pi.
+vocabulary of commands is set the volume, or change it by some points. The volume is the speaker's
+own (the samples are scaled before they are played: ``factotum.client_audio.Speaker``), and so it is
+the same on a PC and on a Raspberry Pi.
 
 What is said is not the hands' work. A clip (``play_audio``, which the ``announce`` skill of the
 platform answers with) is played by the client core, which has the speaker and the sound of what is
@@ -18,7 +18,13 @@ truth.
 from factotum.client_audio import Speaker
 from factotum.client_core.ports import Renderer
 from factotum.contracts.capabilities import Capability
-from factotum.contracts.commands import CommandResult, CommandStatus, DeviceCommand, SetVolume
+from factotum.contracts.commands import (
+    AdjustVolume,
+    CommandResult,
+    CommandStatus,
+    DeviceCommand,
+    SetVolume,
+)
 
 
 class DeviceHands:
@@ -41,6 +47,9 @@ class DeviceHands:
             case SetVolume() if self._speaker is not None:
                 self._speaker.set_volume(command.level)
                 self._renderer.event(f"volume {command.level}")
+                return CommandResult.ok()
+            case AdjustVolume() if self._speaker is not None:
+                self._renderer.event(f"volume {self._speaker.adjust_volume(command.delta)}")
                 return CommandResult.ok()
         return CommandResult(
             status=CommandStatus.UNSUPPORTED,

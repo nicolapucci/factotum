@@ -2,6 +2,8 @@ import re
 from typing import Any, get_args
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from factotum.contracts.audio import wav_of
@@ -11,6 +13,7 @@ from factotum.contracts.commands import (
     COMMAND_MODELS,
     COMMAND_VOCABULARY_VERSION,
     SKILL_COMMAND_MODELS,
+    AdjustVolume,
     BaseCommand,
     ClearDisplay,
     CommandResult,
@@ -45,6 +48,7 @@ EXAMPLES: list[tuple[BaseCommand, Capability]] = [
     (Resume(), Capability.MEDIA_PLAYER),
     (Stop(), Capability.MEDIA_PLAYER),
     (SetVolume(level=30), Capability.AUDIO_OUT),
+    (AdjustVolume(delta=-10), Capability.AUDIO_OUT),
     (ShowCard(card=CARD), Capability.DISPLAY),
     (ClearDisplay(), Capability.DISPLAY),
     (SetLed(pattern=LedPattern.PULSE, color="#00ff00"), Capability.LED),
@@ -76,7 +80,8 @@ def test_command_names_are_unique_snake_case_identifiers() -> None:
 
 
 def test_the_vocabulary_is_versioned() -> None:
-    assert COMMAND_VOCABULARY_VERSION == 2  # play_audio is what version 2 added
+    # play_audio is what version 2 added, and adjust_volume what version 3 did
+    assert COMMAND_VOCABULARY_VERSION == 3
 
 
 @pytest.mark.parametrize(("command", "_"), EXAMPLES, ids=lambda x: type(x).__name__)
@@ -161,6 +166,43 @@ class TestValidation:
     @pytest.mark.parametrize("level", [0, 100])
     def test_the_volume_bounds_are_inclusive(self, level: int) -> None:
         assert SetVolume(level=level).level == level
+
+    @pytest.mark.parametrize("delta", [-101, 101, 1000])
+    def test_a_change_of_the_volume_is_at_most_all_of_it(self, delta: int) -> None:
+        with pytest.raises(ValidationError):
+            AdjustVolume(delta=delta)
+
+    @pytest.mark.parametrize("delta", [-100, -10, 1, 10, 100])
+    def test_the_bounds_of_a_change_of_the_volume_are_inclusive(self, delta: int) -> None:
+        assert AdjustVolume(delta=delta).delta == delta
+
+    @given(st.integers())
+    def test_a_change_of_the_volume_is_a_whole_number_of_points_from_minus_100_to_100(
+        self, delta: int
+    ) -> None:
+        if -100 <= delta <= 100:
+            assert AdjustVolume(delta=delta).delta == delta
+        else:
+            with pytest.raises(ValidationError):
+                AdjustVolume(delta=delta)
+
+    @pytest.mark.parametrize("delta", [0.5, None])
+    def test_a_change_of_the_volume_is_a_whole_number_of_points(self, delta: object) -> None:
+        with pytest.raises(ValidationError):
+            AdjustVolume.model_validate({"name": "adjust_volume", "delta": delta})
+
+    def test_a_change_of_the_volume_says_by_how_much(self) -> None:
+        with pytest.raises(ValidationError):
+            AdjustVolume.model_validate({"name": "adjust_volume"})
+
+    def test_the_name_selects_it_and_a_skill_may_give_it(self) -> None:
+        said = {"name": "adjust_volume", "delta": -20}
+
+        assert command_adapter.validate_python(said) == AdjustVolume(delta=-20)
+        assert skill_command_adapter.validate_python(said) == AdjustVolume(delta=-20)
+        assert SkillOutput.model_validate({"message": "Done.", "commands": [said]}).commands == (
+            AdjustVolume(delta=-20),
+        )
 
     def test_speech_cannot_be_empty(self) -> None:
         with pytest.raises(ValidationError):

@@ -1,4 +1,4 @@
-"""The vocabulary of commands a system device understands (version 2).
+"""The vocabulary of commands a system device understands (version 3).
 
 This is the single definition every other piece derives from: the server-side handle
 (``factotum.devices.SystemDevice``), the command builders offered to skills and the drivers that
@@ -19,8 +19,8 @@ from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 
-COMMAND_VOCABULARY_VERSION = 2
-"""Version 2 added ``play_audio``."""
+COMMAND_VOCABULARY_VERSION = 3
+"""Version 2 added ``play_audio``, version 3 added ``adjust_volume``."""
 
 MAX_SPOKEN_CHARS = 2000
 """The most a command says: a text to speak, or the words of a clip."""
@@ -101,6 +101,21 @@ class SetVolume(BaseCommand):
     level: int = Field(ge=0, le=100)
 
 
+class AdjustVolume(BaseCommand):
+    """Make the volume louder or quieter than it is, by a number of points of the volume (ADR 0028).
+
+    A ``set_volume`` says which level; this says how much more or less, which is what "turn it up"
+    means and needs no knowledge of where the volume is. A positive ``delta`` raises it, a negative
+    one lowers it, and the level that results stays between 0 and 100. How much a person means
+    when they do not say is the skill's to decide, and it gives the number: a device does what it
+    is told and has no step of its own."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["adjust_volume"] = "adjust_volume"
+    delta: int = Field(ge=-100, le=100)
+
+
 class ShowCard(BaseCommand):
     requires: ClassVar[Capability] = Capability.DISPLAY
 
@@ -130,6 +145,7 @@ COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
     Resume,
     Stop,
     SetVolume,
+    AdjustVolume,
     ShowCard,
     ClearDisplay,
     SetLed,
@@ -143,6 +159,7 @@ DeviceCommand = Annotated[
     | Resume
     | Stop
     | SetVolume
+    | AdjustVolume
     | ShowCard
     | ClearDisplay
     | SetLed,
@@ -155,7 +172,16 @@ SKILL_COMMAND_MODELS: tuple[type[BaseCommand], ...] = tuple(
 )
 
 SkillCommand = Annotated[
-    Speak | PlayUrl | Pause | Resume | Stop | SetVolume | ShowCard | ClearDisplay | SetLed,
+    Speak
+    | PlayUrl
+    | Pause
+    | Resume
+    | Stop
+    | SetVolume
+    | AdjustVolume
+    | ShowCard
+    | ClearDisplay
+    | SetLed,
     Field(discriminator="name"),
 ]
 """What a skill may give a device: the vocabulary but for what only the platform makes."""

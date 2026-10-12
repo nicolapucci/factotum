@@ -19,6 +19,7 @@ from factotum.contracts.audio import AudioPayload
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
+    AdjustVolume,
     ClearDisplay,
     CommandResult,
     DeviceCommand,
@@ -97,6 +98,9 @@ class SystemDevice(ABC):
 
     async def set_volume(self, level: int) -> CommandResult:
         return await self.execute(SetVolume(level=level))
+
+    async def adjust_volume(self, delta: int) -> CommandResult:
+        return await self.execute(AdjustVolume(delta=delta))
 
     async def show_card(self, card: Card) -> CommandResult:
         return await self.execute(ShowCard(card=card))

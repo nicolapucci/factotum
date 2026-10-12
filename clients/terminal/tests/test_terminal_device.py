@@ -6,6 +6,7 @@ from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
+    AdjustVolume,
     ClearDisplay,
     CommandStatus,
     DeviceCommand,
@@ -51,6 +52,27 @@ class TestWhatTheHardwareDoes:
         assert result.succeeded
         assert hardware.state.volume == 30
         assert shown.of("event") == ["volume 30"]
+
+    async def test_it_turns_the_volume_up_and_down_by_some_points(self) -> None:
+        hardware, shown = device()  # the volume starts at 50
+
+        up = await hardware.execute(AdjustVolume(delta=10))
+        down = await hardware.execute(AdjustVolume(delta=-30))
+
+        assert up.succeeded
+        assert down.succeeded
+        assert hardware.state.volume == 30
+        assert shown.of("event") == ["volume 60", "volume 30"]
+
+    async def test_a_change_of_the_volume_stops_at_either_end(self) -> None:
+        hardware, shown = device()
+
+        await hardware.execute(AdjustVolume(delta=100))
+        await hardware.execute(AdjustVolume(delta=-100))
+        await hardware.execute(AdjustVolume(delta=-5))
+
+        assert hardware.state.volume == 0
+        assert shown.of("event") == ["volume 100", "volume 0", "volume 0"]
 
     async def test_it_lights_a_light(self) -> None:
         hardware, shown = device()
@@ -115,6 +137,7 @@ class TestWhenItCannotDoIt:
         [
             (Speak(text="hello"), "audio_out"),
             (SetVolume(level=10), "audio_out"),
+            (AdjustVolume(delta=10), "audio_out"),
             (SetLed(pattern=LedPattern.SOLID), "led"),
             (ShowCard(card=Card(title="x")), "display"),
             (PlayUrl(url=RADIO), "media_player"),

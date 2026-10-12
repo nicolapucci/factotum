@@ -12,6 +12,7 @@ from factotum.client_core.ports import Renderer
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
+    AdjustVolume,
     ClearDisplay,
     CommandResult,
     CommandStatus,
@@ -92,6 +93,9 @@ class TerminalDevice:
             case SetVolume():
                 state.volume = command.level
                 self._renderer.event(f"volume {command.level}")
+            case AdjustVolume():
+                state.volume = max(0, min(state.volume + command.delta, 100))
+                self._renderer.event(f"volume {state.volume}")
             case ShowCard():
                 state.card = command.card
                 self._renderer.card(command.card)

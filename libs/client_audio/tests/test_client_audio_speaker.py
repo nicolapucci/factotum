@@ -8,6 +8,8 @@ from typing import Any
 
 import numpy as np
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from factotum.client_audio.backend import AudioUnavailableError
 from factotum.client_audio.speaker import CLIP_CHUNK_MS, FULL_VOLUME, Speaker, gain_of
@@ -70,6 +72,38 @@ class TestWhatAVolumeDoes:
         speaker = Speaker(FakeBackend(), volume=0)
 
         assert speaker.scaled(samples(1000, -1000)) == samples(0, 0)
+
+    def test_the_volume_goes_up_and_down_by_some_points_and_the_new_level_is_given(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=50)
+
+        assert speaker.adjust_volume(10) == 60
+        assert speaker.volume == 60
+        assert speaker.adjust_volume(-25) == 35
+        assert speaker.volume == 35
+
+    def test_it_is_never_taken_past_either_end(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=95)
+
+        assert speaker.adjust_volume(10) == FULL_VOLUME
+        assert speaker.adjust_volume(100) == FULL_VOLUME
+        speaker.set_volume(5)
+        assert speaker.adjust_volume(-10) == 0
+        assert speaker.adjust_volume(-100) == 0
+
+    @given(st.integers(0, 100), st.integers(-100, 100))
+    def test_the_level_that_results_is_the_sum_kept_between_nothing_and_the_full(
+        self, level: int, delta: int
+    ) -> None:
+        speaker = Speaker(FakeBackend(), volume=level)
+
+        assert speaker.adjust_volume(delta) == max(0, min(level + delta, FULL_VOLUME))
+
+    def test_what_is_played_after_it_is_at_the_new_level(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=100)
+
+        speaker.adjust_volume(-50)
+
+        assert np.frombuffer(speaker.scaled(samples(1000, -1000)), "<i2").tolist() == [250, -250]
 
 
 class TestPlayingATrack:

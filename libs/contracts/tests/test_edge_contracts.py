@@ -20,6 +20,7 @@ from factotum.contracts.audio import (
 from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.cards import Card, CardItem
 from factotum.contracts.commands import (
+    AdjustVolume,
     ClearDisplay,
     CommandResult,
     CommandStatus,
@@ -144,6 +145,7 @@ COMMANDS: tuple[DeviceCommand, ...] = (
     Resume(),
     Stop(),
     SetVolume(level=0),
+    AdjustVolume(delta=-15),
     ShowCard(card=CARD),
     ClearDisplay(),
     SetLed(pattern=LedPattern.SOLID, color="#00ff00"),

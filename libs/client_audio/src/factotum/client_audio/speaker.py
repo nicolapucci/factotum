@@ -6,9 +6,9 @@ reading the connection while this waits, never waits for the sound. Telling a sp
 (``abort``) lets a ``write`` that is waiting go, and that is what a person speaking over the answer
 gets: the sound ends where it was, and not where the device had got to in what it had been given.
 
-The volume is the speaker's and not the system's: a ``set_volume`` command scales the samples before
-they are played, so that the same device does it on a PC, on a Raspberry Pi and on whatever has
-no mixer, and a person's own setting of the system's volume is left alone.
+The volume is the speaker's and not the system's: a ``set_volume`` or an ``adjust_volume`` command
+scales the samples before they are played, so that the same device does it on a PC, on a Raspberry
+Pi and on whatever has no mixer, and a person's own setting of the system's volume is left alone.
 """
 
 import asyncio
@@ -57,6 +57,12 @@ class Speaker:
 
     def set_volume(self, level: int) -> None:
         self._volume = max(0, min(level, FULL_VOLUME))
+
+    def adjust_volume(self, delta: int) -> int:
+        """Louder or quieter by ``delta`` points of the volume, and never past either end. Returns
+        the level that results."""
+        self.set_volume(self._volume + delta)
+        return self._volume
 
     def scaled(self, pcm: bytes) -> bytes:
         """The samples at the volume of the speaker."""

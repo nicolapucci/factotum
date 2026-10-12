@@ -10,6 +10,7 @@ from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
     COMMAND_MODELS,
+    AdjustVolume,
     ClearDisplay,
     CommandResult,
     CommandStatus,
@@ -55,6 +56,7 @@ CALLS: list[tuple[str, Call, DeviceCommand]] = [
     ("resume", lambda d: d.resume(), Resume()),
     ("stop", lambda d: d.stop(), Stop()),
     ("set_volume", lambda d: d.set_volume(30), SetVolume(level=30)),
+    ("adjust_volume", lambda d: d.adjust_volume(-10), AdjustVolume(delta=-10)),
     ("show_card", lambda d: d.show_card(CARD), ShowCard(card=CARD)),
     ("clear_display", lambda d: d.clear_display(), ClearDisplay()),
     (

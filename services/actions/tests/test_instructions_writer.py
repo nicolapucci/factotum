@@ -9,7 +9,7 @@ from typing import Any, get_args
 
 import pytest
 
-from factotum.actions.instructions.checks import PlanRejected, check_plan
+from factotum.actions.instructions.checks import PlanRejected, check_plan, command_names
 from factotum.actions.instructions.testing import plan_dict, step_command, step_http
 from factotum.actions.instructions.writer import (
     EXAMPLES,
@@ -175,6 +175,13 @@ class TestWhatTheModelIsShown:
         everything = SYSTEM_PROMPT + "".join(e.user() + e.answer() for e in EXAMPLES)
 
         assert len(everything) < 9000
+
+    def test_it_is_told_of_every_command_that_a_plan_may_give_a_device(self) -> None:
+        """The checks derive the vocabulary from the contracts and the prompt is written by hand:
+        a command that was added and not said here is one that no model ever writes."""
+        listed = SYSTEM_PROMPT.split("The commands are:", 1)[1].split("\n\n", 1)[0]
+
+        assert {name for name in command_names() if name not in listed} == set()
 
     def test_the_shape_it_answers_with_is_one_piece(self) -> None:
         text = json.dumps(RESPONSE_SCHEMA)

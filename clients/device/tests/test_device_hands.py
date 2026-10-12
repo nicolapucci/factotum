@@ -7,6 +7,7 @@ from factotum.client_core.testing import RecordingRenderer
 from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.commands import (
+    AdjustVolume,
     CommandStatus,
     LedPattern,
     Pause,
@@ -51,6 +52,39 @@ class TestTheVolume:
 
         assert result.status is CommandStatus.UNSUPPORTED
         assert "set_volume" in (result.detail or "")
+        assert shown.of("event") == []
+
+    async def test_it_turns_the_volume_of_the_speaker_up_or_down_and_says_where_it_is(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=50)
+        hands, shown = hands_with(speaker)
+
+        up = await hands.execute(AdjustVolume(delta=10))
+        down = await hands.execute(AdjustVolume(delta=-30))
+
+        assert up.succeeded
+        assert down.succeeded
+        assert speaker.volume == 30
+        assert shown.of("event") == ["volume 60", "volume 30"]
+
+    async def test_a_change_never_takes_the_volume_past_either_end_and_the_level_said_is_real(
+        self,
+    ) -> None:
+        speaker = Speaker(FakeBackend(), volume=95)
+        hands, shown = hands_with(speaker)
+
+        await hands.execute(AdjustVolume(delta=20))
+        await hands.execute(AdjustVolume(delta=-100))
+
+        assert speaker.volume == 0
+        assert shown.of("event") == ["volume 100", "volume 0"]
+
+    async def test_a_device_with_no_speaker_has_no_volume_to_change_either(self) -> None:
+        hands, shown = hands_with(None)
+
+        result = await hands.execute(AdjustVolume(delta=10))
+
+        assert result.status is CommandStatus.UNSUPPORTED
+        assert "adjust_volume" in (result.detail or "")
         assert shown.of("event") == []
 
 
