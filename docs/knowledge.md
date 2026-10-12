@@ -335,6 +335,15 @@ answer among the first five sections; *precision@5* the share of those five that
   went down to seventh place across languages.
 * With a model that already understands the question, the words add little: 82% with both and with
   the meaning alone in Italian, a precision a little lower (46% against 49%).
+* **Relevance with `bge-m3`** (2026-10-12, ADR 0028; the raw cosine of the best section of the
+  library, `min_similarity`). On this book, questions in English scored 0.59 to 0.75 and in Italian
+  0.51 to 0.73, against 0.28 to 0.60 for 42 messages that are about nothing in it (greetings, the
+  time, jokes, general knowledge, commands): a floor of 0.5 keeps every question and 21% of the
+  rest. The messages that get through are the ones that name something the book has (*restart the
+  router*, *play some music* near a section about media): the number measures the topic and not
+  whether the passage answers, so the model that is shown it has a second line of instructions
+  ([`conversation.md`](conversation.md#measured) has the numbers on a library of Italian and English
+  texts too). Another embedding model has other cosines: measure its own.
 
 **How much the words count, and how much is looked at** were tuned on these questions with
 `nomic-embed-text` (with a script that is not in the repository). At a full weight for every question

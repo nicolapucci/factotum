@@ -97,9 +97,28 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   and a record never says that something ran without the confirmation or the approval its decision
   required.
 - The conversation service asks the actions service about every message and does not depend on it:
-  with no URL nothing is asked, and when it cannot be reached the message is a question and the turn
-  says so in a warning. Skills, the audit trail and everything that manages them are never served
-  through a device.
+  with no URL nothing is asked, and when it cannot be reached the message is left to the documents
+  and the turn says so in a warning (and in the sentence, if they have nothing relevant). Skills, the
+  audit trail and everything that manages them are never served through a device.
+- **The model alone does nothing** (ADR 0028). Whatever is asked, a question or a command, is
+  satisfied by one or more skills, or answered from material that a model is *given* (the relevant
+  passages of the documents, the earlier exchanges that a message refers to), or declined. A model
+  never makes a fact of its own: it has no clock (the prompt does not tell it the date), no
+  knowledge to add and nothing it can do, and with nothing to work on it is **not asked at all**
+  (`TurnEngine._declined`: one sentence of `conversation/phrases.py` that the code chooses, in the
+  language of the message read with no model by `factotum.common.language`). There are two kinds of
+  "no" and a person is told which: **no skill fits** (`no_skill`, said before anything is tried) and
+  **a skill that was found and failed**, which names the skill (*La skill weather ha fallito*) or
+  says why in words of its own (an `error` where a script would print a `message`; a script that
+  crashes says nothing, and its standard error never reaches a person). Relevance is decided in code
+  before a model sees a passage, on the raw similarity of the vector search (`Passage.similarity`,
+  never the fused `score`, which only says how high a passage came) with a floor that belongs to the
+  embedding model (`min_similarity`; what only the words found is not relevant, except a code as
+  written). The documents behave as a skill (a name, a phase, a failure with words) and are one in the
+  end. Nothing may treat the time, or anything else, as a special case: the assistant behaves the same
+  whether the core skills exist or not. A required value is asked for and an optional one that was not
+  said is left to the skill or the device (the second slice of the ADR, not built yet). Several skills
+  in one request are not built, and nothing may assume that there is exactly one.
 - **A script runs in a container of its own and reaches only what its grant lists** (ADR 0015). The
   `runner` is the only service given the socket of the engine (as much as being root on the
   machine), and a job cannot say what the container is like: the body of the container is built in
@@ -336,3 +355,19 @@ On Windows `uv` was installed with winget; a shell started before that may not h
 - The `e2e` conftest has an autouse fixture, `_how_the_house_is_run`, that runs a whole house three
   ways for every test of the folder: a module that is not about the house (the wake word is a device's)
   replaces it by defining a fixture of that name, or each of its tests is run three times.
+- A test of a turn that expects a model's answer gives the turn something to answer from
+  (`harness.documents.passages = [passage()]`, or an exchange that the message refers to): with
+  neither, and no skill, the model is not asked and the answer is the sentence of the code (ADR 0028).
+  A setup turn that must be answered by the fake chat needs a passage too, then the passages are
+  cleared for the turn that is about the past. The house of `e2e` uses the floor of its stand-in model
+  (`STAND_IN_FLOOR`, 0.25: it measures the words two texts share), not the 0.5 of `bge-m3`, and a
+  question of a test must share enough words with the document to be relevant to it.
+- The score of a passage is not its relevance: it is a fusion of ranks scaled by the best a rank can
+  score (a question about nothing has a first passage at 1.0). Ask for `min_similarity` and read
+  `similarity`. The floor is measured with the real model and the numbers are in `docs/knowledge.md`
+  and `docs/conversation.md`: another embedding model needs its own, and a stand-in needs its own.
+- A model that is told to say only what the sources say still answers *restart the router* with the
+  way to erase its settings if the manual is near (measured with llama3.1 8B): the prompt says that a
+  message which asks for something to be done is not a question for the sources, and the live tests
+  (`services/conversation/tests/live`) keep that line honest. The second line of defence is
+  probabilistic; the first (the floor, and not asking a model with nothing to work on) is not.

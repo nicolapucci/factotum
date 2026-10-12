@@ -98,9 +98,11 @@ What is made up is what a unit test cannot have:
 - **The models.** Whisper and Piper are the real adapters of the gateway on top of stand-in engines
   (the first reads the words out of a recording, the second writes a clip that carries the words it
   was asked to say, so a test reads what a speaker was made to say). The chat model answers from the
-  sources it was shown, the embedding model gives words a direction, and the small model that plans
-  reads a message as a question or as a command. What it proposes is a proposal: it names a skill or
-  a device whether or not they were offered, and the tests show that the code decides.
+  sources it was shown (and is not asked at all when there are none: ADR 0028), the embedding model
+  gives words a direction, and the small model that plans reads a message as a command or as
+  nothing a skill fits. What it proposes is a proposal: it names a skill or a device whether or not
+  they were offered, and the tests show that the code decides. The floor of meaning that decides
+  what is relevant is that of the stand-in (`STAND_IN_FLOOR`), not the one calibrated for `bge-m3`.
 - **What a skill reaches, and the container it runs in.** A script is the real one, run in a process
   of its own with what it was granted (`LocalRunner`); the Home Assistant it calls is a web server on
   this machine that every host resolves to, which keeps what it was asked (`FakeWeb`).
@@ -171,7 +173,8 @@ Italian, about the example skills, said to the kitchen speaker, the living room 
 phone) one after another, to the three devices at once, each on the one connection it holds for the
 whole series, and four more where the corpus is silent (a phone that has two lamps to choose from, a
 speaker that is told of a lamp that is not its own). Each message comes with what the code must make
-of it: done, asked about first, refused, asked for what is missing, or left as a question. What is
+of it: done, asked about first, refused, asked for what is missing, or told that no skill fits (the
+sentence of the code, in the language of the message, with no model asked). What is
 looked at, for every one, is what the whole assistant did: what the actions service made of it (it
 is recorded as it is said: `House.acts`), the skill that ran and what it was given (the values, the
 hosts it may reach, the secrets it was granted and no others), what Home Assistant was asked, what

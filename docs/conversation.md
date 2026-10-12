@@ -1,56 +1,84 @@
 # The conversation service
 
-A message in, an answer out, streamed. It answers from the user's own documents (asked of the
-knowledge service) and it **carries no conversation along**: a turn is stateless, and what was said
-before is looked up only when the message refers to it. It never knows which model answers, or which
-provider, or which key: it asks the gateway for the chat and the embeddings of the *owner* of the
-message (ADR 0008).
+A message in, an answer out, streamed. **A model answers nothing by itself** ([ADR
+0028](decisions/0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md)): a
+message is satisfied by a skill, or answered from the user's own documents (asked of the knowledge
+service) or from what was said before, or it is declined with a sentence that the code chooses. The
+service **carries no conversation along**: a turn is stateless, and what was said before is looked up
+only when the message refers to it. It never knows which model answers, or which provider, or which
+key: it asks the gateway for the chat and the embeddings of the *owner* of the message (ADR 0008).
 
 *Implemented* (text): streamed answers with citations, conversations saved and searched when a
 message refers to them, an HTTP API with server-sent events, and a container image. Devices reach it
 through [the edge](edge.md), which asks it for a turn on behalf of the device and cuts what it
 streams into what each device can render; the service itself knows no device. A turn begins by
-asking [the actions service](actions.md) whether the message asks for something to be done. *Not
-yet*: the web, the choice between answering and other things than acting (slice 6), voice (slice 8).
+asking [the actions service](actions.md) whether a skill fits the message. *Not yet*: the web, the
+documents as a skill of the platform (they behave as one here), voice (slice 8).
 
 The reasons behind the design are in
-[ADR 0012](decisions/0012-conversation-no-history-in-a-turn-a-log-to-search-when-referred-to.md).
+[ADR 0012](decisions/0012-conversation-no-history-in-a-turn-a-log-to-search-when-referred-to.md) and
+[ADR 0028](decisions/0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md).
 
 ## A turn
 
 ```mermaid
 flowchart TD
-    msg[message] --> act{does it ask for<br/>something to be done?<br/>the actions service}
+    msg[message] --> act{does a skill fit it?<br/>the actions service}
     act -- yes --> acted[what the actions service says<br/>is the answer, and it is saved]
-    act -- no, or not asked --> docs[search the documents<br/>starts at once]
+    act -- no, or not asked --> docs[search the documents<br/>starts at once<br/>only what is relevant]
     act -- no, or not asked --> said{has the owner<br/>said anything before?}
-    said -- no --> build
+    said -- no --> mat
     said -- yes --> gate[a small model reads<br/>the message alone]
-    gate -- none --> build
+    gate -- none --> mat
     gate -- continuation --> last[the last 3 exchanges<br/>of the conversation]
     gate -- earlier --> log[search the log:<br/>words, meaning, period]
     last --> again[search the documents again,<br/>with the previous question]
     log --> again
-    again --> build[build the prompt]
-    docs --> build
+    again --> mat{anything to answer from?<br/>a relevant passage,<br/>or an exchange}
+    docs --> mat
+    mat -- yes --> build[build the prompt]
+    mat -- no --> declined[the code says what was missing:<br/>no model is asked, and it is saved]
     build --> answer[the model answers, streamed]
     answer --> save[the exchange is saved,<br/>if the answer is complete]
 ```
 
-**Asking whether it is an action comes first**, when an actions service is named
-(`FACTOTUM_CONVERSATION_ACTIONS_URL`; without one every message is a question). The message goes
-alone, as the person's own words, for whom the turn is for and from the device it came from. If it
-asks for something to be done, what that service says (what was done, or a question to answer with a
-yes or a no, or why not) is the answer: it is one `delta`, preceded by `status` `acting`, saved like
-any answer, and nothing is searched. Otherwise the turn goes on as below. That service decides
-whether a message is an action at all ([`actions.md`](actions.md)): most messages are not, and cost
-it one embedding.
+**Asking whether a skill fits comes first**, when an actions service is named
+(`FACTOTUM_CONVERSATION_ACTIONS_URL`; without one no skill is asked for). The message goes alone, as
+the person's own words, for whom the turn is for and from the device it came from. If a skill fits,
+what that service says (what was done, or a question to answer with a yes or a no, or why not, or
+that the skill failed) is the answer: it is one `delta`, preceded by `status` `acting`, saved like any
+answer, and nothing is searched. Otherwise the turn goes on as below. That service decides whether a
+skill fits at all ([`actions.md`](actions.md)): most messages have none, and cost it one embedding.
 
-Most messages are the second branch: they can be understood alone, so the prompt has the
-instructions, the passages of the documents that answer, and the message, and nothing else. Chatting
-with an assistant is mostly that (a question, a command), and carrying the last turns of every
-conversation along costs tokens and time on every one of them, to serve the few messages that need
-them.
+**A model is asked only when there is something to work on.** A turn that no skill takes searches the
+documents, and the passages that come back are only the relevant ones: the search is asked for a
+floor of meaning (`FACTOTUM_CONVERSATION_DOCUMENTS_MIN_SIMILARITY`, 0.5, measured with `bge-m3`: see
+[`knowledge.md`](knowledge.md#what-is-relevant)). With a relevant passage, or an exchange that the
+message refers to, the prompt has the instructions, that material and the message, and nothing else,
+and the model reworks what it was given. With neither, **the code says so** and no model is asked: one
+sentence, in the language of the message (read with no model, by the small words of the language:
+`factotum.common.language`; `FACTOTUM_CONVERSATION_DEFAULT_LANGUAGE` when it cannot be told), that
+says what was missing and what could not be reached:
+
+| What happened | What is said (English; Italian in `phrases.py`) |
+| --- | --- |
+| no skill fits, nothing relevant in the documents | *I found no skill that fits, and no relevant document.* |
+| no skill fits, the documents could not be searched (or only by their words: the meaning is what proves a passage relevant) | *I found no skill that fits, and I cannot reach your documents right now.* |
+| the skills could not be asked, nothing relevant in the documents | *I cannot reach the skills right now, and I found no relevant document.* |
+| neither could be reached | *I cannot reach the skills or your documents right now.* |
+| the message refers to what was said before and none of it is to be had | *I do not remember what was said before.* |
+
+It is `status` `answering` and one `delta`, saved like any answer, and `finished` has no usage and
+no passage. It is not the model's to say, so it is the same every time and a test checks it in each
+language. This is also what a greeting, a joke, the time or *who wrote the Divine Comedy* get until a
+skill answers them.
+
+Chatting with an assistant is mostly a message that can be understood alone, so the prompt has no
+conversation in it: carrying the last turns of every conversation along costs tokens and time on
+every one of them, to serve the few messages that need them. **The model is not told the date, and
+has no clock**: the instructions say that it knows nothing but what it is given and that it never
+answers from its own knowledge, and that a message which asks it to do something is not a question
+for the sources (measured, below).
 
 **What a turn streams.** The events come in this order, each as one server-sent `data:` frame with a
 `type`:
@@ -252,9 +280,9 @@ headers a person with `curl` would use, and the hub will replace them with what 
 | --- | --- |
 | There is no chat model bound, or the message does not fit it | an HTTP error before the first event (`409`, `413`), and nothing is saved |
 | The conversation named is not the caller's | `404` |
-| The actions service is away, or does not answer in time | the message is a question; `warning` `actions_unavailable` |
+| The actions service is away, or does not answer in time | the turn goes on with the documents; `warning` `actions_unavailable`; with nothing relevant there either, the sentence says the skills could not be reached |
 | The small model cannot tell whether the message refers to the past | goes on with no history; `warning` `reference_unavailable` |
-| The documents cannot be searched (timeout of 4 s, or the service is away) | the answer is given without them; `warning` `documents_unavailable` |
+| The documents cannot be searched (timeout of 4 s, or the service is away), or only by their words | the turn goes on without them; `warning` `documents_unavailable`; with nothing else to answer from, the sentence says they could not be reached |
 | The embedding model is away or not set up | the log is searched by words only; `warning` `history_words_only` |
 | The model fails while it answers | `failed` with its code, nothing saved |
 | The model answers nothing, or the provider refuses the content | `failed` (`empty_answer`, `content_filtered`) |
@@ -302,7 +330,7 @@ Read from the environment (`FACTOTUM_*`) and, in development, from `.env`; every
 | `FACTOTUM_CONVERSATION_HOST`, `..._PORT` | `127.0.0.1`, `8083` | loopback unless told otherwise |
 | `FACTOTUM_CONVERSATION_GATEWAY_URL` | `http://127.0.0.1:8081` | where the model gateway is |
 | `FACTOTUM_CONVERSATION_KNOWLEDGE_URL` | `http://127.0.0.1:8082` | where the knowledge service is |
-| `FACTOTUM_CONVERSATION_ACTIONS_URL` | none | where the actions service is; without one no message is taken to ask for anything |
+| `FACTOTUM_CONVERSATION_ACTIONS_URL` | none | where the actions service is; without one no skill is asked for |
 | `FACTOTUM_CONVERSATION_ACTIONS_TIMEOUT_S` | `120` | how long it is waited for: it is the whole of an action |
 | `FACTOTUM_CONVERSATION_TIMEZONE` | `UTC` | the household's: "yesterday" and "last week" are counted in it |
 | `FACTOTUM_CONVERSATION_SESSION_MINUTES` | `30` | how long a conversation stays the current one of a caller and device |
@@ -310,6 +338,8 @@ Read from the environment (`FACTOTUM_*`) and, in development, from `.env`; every
 | `FACTOTUM_CONVERSATION_RECENT_EXCHANGES` | `3` | exchanges a continuation brings back |
 | `FACTOTUM_CONVERSATION_HISTORY_HITS` | `3` | exchanges a reference to something earlier brings back |
 | `FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES` | `6` | passages of the documents asked for |
+| `FACTOTUM_CONVERSATION_DOCUMENTS_MIN_SIMILARITY` | `0.5` | how alike by meaning a passage must be to the message to be shown to a model (0 to 1); measured with `bge-m3`, so tune it to your embedding model ([`knowledge.md`](knowledge.md#what-is-relevant)) |
+| `FACTOTUM_CONVERSATION_DEFAULT_LANGUAGE` | `en` | the language of the sentences the code says when the message does not say which it is in (`it` or `en`) |
 | `FACTOTUM_CONVERSATION_KNOWLEDGE_TIMEOUT_S` | `4` | how long the documents are waited for |
 | `FACTOTUM_CONVERSATION_GATE_TIMEOUT_S` | `8` | how long the small model is waited for |
 | `FACTOTUM_CONVERSATION_ANSWER_TIMEOUT_S` | `120` | how long the model may be silent while it answers |
@@ -449,6 +479,33 @@ first word.
   scored 0.34 to 0.51 at best, the two highest being router matters (the WiFi password, the firmware)
   beside an exchange about resetting a router. Another embedding model spreads its scores
   differently: tune `FACTOTUM_CONVERSATION_HISTORY_MIN_SIMILARITY` to yours.
+* **What the floor of the documents lets through** (2026-10-12, ADR 0028; `bge-m3`, the service's own
+  ingestion and search in memory, raw similarity of the best section). On a library of 17 short texts
+  in Italian and English (a router manual, a lease, an insurance policy, a washing machine, a boiler,
+  a trip...), 26 questions about them scored 0.49 to 0.76 (the English ones asked of Italian texts the
+  lowest), and 33 messages that are about nothing in it (greetings, general knowledge, jokes, the
+  time, commands) 0.22 to 0.69: 25 of them under 0.45, and over 0.55 only *turn on the oven* (0.59
+  and 0.61 to a recipe) and *restart the router* (0.69 to its manual). *What time is it* was 0.51 and
+  *che ore sono* 0.50, to a trip with flight times in it. On a book of 2956 pieces (the Linux
+  Bible, in English): 44 questions in English scored 0.59 to 0.75 and 34 in Italian 0.51 to 0.73, so
+  that a floor of 0.5 keeps all of them (0.55 would lose 6% of the Italian ones); 42 messages about
+  nothing in it 0.28 to 0.60, 21% of them over 0.5. 22 bare identifiers (`getenforce`, `lvcreate`)
+  scored 0.43 to 0.68 and 77% are over 0.5: the ones with a digit or a punctuation mark in them (a
+  code as written) are found by their words whatever the floor, the others are not.
+* **What the model does with a passage that is near and does not answer** (llama3.1 8B, the prompt
+  of the service, Ollama's default sampling, 4 to 5 samples each). Told only to say what the sources
+  say, *restart the router* with the manual of the router was answered with the way to erase its
+  settings 4 times of 4. With the instruction that a message which asks for something to be done is
+  not a question for the sources: *turn on the oven*, *restart the router*, *delete the wifi
+  password* and *can you turn the oven on?* were all answered that it cannot (5 of 5 each), *how do I
+  make a pizza?* that it did not find it (5 of 5), *what is the wifi password?* the same (4 of 5; once
+  that it cannot provide it), *what time is it?* with a trip with times that it did not have it (5
+  of 5), and the controls (*how do I reset the router?*, *how long should I bake sourdough bread?*)
+  were answered from the sources. In Italian *accendi il forno* was refused 5 of 5, and *riavvia il
+  router* said that it cannot 4 of 5 and quoted the way to reset it 4 of 5 (the model is weaker
+  there); once a sample mentioned the marker of the sources, and once it wrote one out. *How long is
+  the warranty of my phone?* with a warranty text that does not name the product was answered *two
+  years* 5 of 5: a passage that says it in general is an answer.
 * **A short follow-up is only as good as the model that answers it.** With four unrelated passages
   beside the exchange, "E in italiano?" was answered as a translation of the last answer 3 to 7 times
   out of 8 by the 3B and the 8B models and 8 of 8 by the 4B: it also reads as "is there one in
@@ -471,13 +528,18 @@ first word.
   (0.3 to 1.4 s on this machine, by model). Whether rules could skip it for the messages that plainly
   stand alone, at the price of a follow-up now and then missed, is an open question
   ([`design.md`](design.md#13-open-questions)).
-* **Passages come back by nearness, near or not.** The search of the documents always returns the
-  nearest passages, related to the message or not, and a message that is not about the documents
-  ("and in Italian?") is sent with them; a small model may then answer from them instead of from the
-  exchange. Leaving out the ones plainly unrelated needs the knowledge service to say how near each
-  is, which it does not yet.
-* **A shared device cannot be asked about anything older than a minute**, by anybody: it answers
-  that it does not remember, or, when the small model is not asked, answers the message as it is.
+* **Relevance is a number from the embedding model, and it is not exact.** The search of the
+  documents always returns the nearest passages, near or not, so the turn asks for a floor of
+  meaning and a passage under it is never shown (ADR 0028). The floor cannot tell *a question this
+  document answers* from *a command that names something in it*: *restart the router* is 0.60 alike
+  to the manual of the router and *turn on the oven* 0.61 to a recipe, over the 0.5 that keeps every
+  real question. What gets through is left to the instructions of the model (below, *Measured*), a
+  second line that a small model keeps most of the time and not always. Another embedding model needs
+  its own floor.
+* **Greetings and small talk are declined** until a skill answers them (*ciao*, *grazie*, *come ti
+  chiami*): the code says that no skill fits, not that it is rude.
+* **A shared device cannot be asked about anything older than a minute**, by anybody: it says that it
+  does not remember what was said before.
 * **The periods are six words.** "On Monday", "the other day" or "three weeks ago" are not one of
   them, and are looked for by the words of the message alone.
 * **A reference to two things at once** ("the router thing and the backup thing") gets one topic.

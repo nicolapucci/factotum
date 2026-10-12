@@ -35,7 +35,7 @@ sequenceDiagram
         A-->>C: done / cancelled / dropped (then it is a new message)
     end
     A->>G: embed the message
-    Note over A: near enough to a skill? no: it is a question
+    Note over A: near enough to a skill? no: no skill fits (no_skill)
     A->>G: plan: which skill, device, values (chat.fast, structured)
     Note over A: checked in code, then authorize() with the device's policy
     alt allowed
@@ -47,8 +47,13 @@ sequenceDiagram
     end
 ```
 
-The conversation service asks about **every** message. `NO_ACTION` is what most of them get, and it
-costs one embedding and no model call when the message is far from every skill.
+The conversation service asks about **every** message. `NO_SKILL` is what most of them get, and it
+costs one embedding and no model call when the message is far from every skill. It does not mean
+*answer it as a question*: a model answers nothing by itself ([ADR
+0028](decisions/0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md)),
+and what a message that no skill fits comes to is the conversation service's to say (the documents, if
+they have something relevant; else a sentence that says that nothing fits and nothing is relevant:
+[`conversation.md`](conversation.md)).
 
 ## Skills
 
@@ -161,7 +166,7 @@ nothing on the network, and is granted nothing. What it says is not the reply to
    the caller says about itself (the tenant's and their own). The skills that are at least
    `FACTOTUM_ACTIONS_MATCH_THRESHOLD` (0.45) near go on, the nearest first, up to six. If the
    message cannot be embedded the skills that could not be measured go on unscored, up to twelve.
-   With no candidates the answer is `NO_ACTION` and no model is asked.
+   With no candidates the answer is `NO_SKILL` and no model is asked.
 2. **A plan from a small model.** The model in `chat.fast` reads the message and the candidates (each
    with its values: their kind, and what the skill says each is for), with the names of the devices
    the caller may use, and answers a structured `Plan`: *why* (a few words,
@@ -181,8 +186,9 @@ nothing on the network, and is granted nothing. What it says is not the reply to
    said. **A plan that does not pass is not an action.**
 
 A message the planner cannot read (the gateway is away, the model does not answer in time or with
-something that is not a plan) is `NO_ACTION` with `degraded` set: it is answered as a question and
-nothing runs, and the turn says in a warning that it could not be told whether it was a request.
+something that is not a plan) is `NO_SKILL` with `degraded` set: nothing runs, the conversation
+service leaves it to the documents, and the turn says in a warning that it could not be told whether
+a skill fits (and, if the documents have nothing either, that the skills could not be reached).
 
 ## Deciding
 
@@ -327,7 +333,7 @@ wrote to ask for a yes, are said as they are.
 
 | What | What happens |
 | --- | --- |
-| The gateway is away, or has no `chat.fast`, or the model is slow | the message is not an action: it is a question, and it is answered as one; the outcome says it was not read (`degraded`) and the turn warns |
+| The gateway is away, or has no `chat.fast`, or the model is slow | no skill is found: `no_skill` with `degraded`, nothing runs, and the turn warns |
 | No embedding model, or it is slow | the skills that could not be measured go to the model unscored; without any, no action |
 | The message is from a device that is not known | refused if it is an action, and nothing is done for it |
 | A skill is disabled between the question and the yes | refused: *that is not available any more* |
@@ -337,7 +343,7 @@ wrote to ask for a yes, are said as they are.
 | A secret is not set, or the skill needs a linked account | `failed`; the log names the secret, never its value |
 | A command is not done (the device is not connected, is slow, or the edge is away) | `failed` with `command_failed`: *I asked the device to run the weather skill, and it did not do it*; the commands after it are not given |
 | The voice of an announcement cannot be made (no `tts` bound, the gateway away or slow) | `failed` with `skill_failed`, nothing is given to a device; the trail says `the voice could not be made (code)` |
-| The actions service is away (seen from the conversation service) | the turn goes on as a question and says so in a warning |
+| The actions service is away (seen from the conversation service) | the turn goes on with the documents and says so in a warning (and in the sentence, if they have nothing relevant) |
 | The database is away | `/readyz` says so, and the calls fail |
 
 ## The HTTP API
@@ -347,7 +353,7 @@ Everything is under `/v1` and needs an authenticated caller: the hub's token onc
 
 | Route | What |
 | --- | --- |
-| `POST /v1/act` | `{message, untrusted_content_in_turn}` → the outcome: `status` (`no_action`, `done`, `needs_confirmation`, `needs_more`, `cancelled`, `refused`, `failed`), the `reply`, a `code` and the `reasons`; for `no_action`, `degraded` says the message could not be read |
+| `POST /v1/act` | `{message, untrusted_content_in_turn}` → the outcome: `status` (`no_skill`, `done`, `needs_confirmation`, `needs_more`, `cancelled`, `refused`, `failed`), the `reply`, a `code` and the `reasons`; for `no_skill`, `degraded` says the message could not be read |
 | `GET /v1/skills`, `GET /v1/skills/{id}` | what is installed, which version runs, what was granted |
 | `POST /v1/skills` | install the text of a `SKILL.md` (201; 200 if it is the very same skill) |
 | `POST /v1/skills/reload` | read the folder of skills again (the tenant's, so an administrator's) |
@@ -386,8 +392,10 @@ not there and one that is another person's are the same `404`.
 | `_PLAN_TIMEOUT_S`, `_PLAN_ATTEMPTS` | `30`, `2` | how long a model is waited for to write the plan of a skill that is instructions (each try), and how many tries it has when the checks refuse a plan |
 | `_MAX_DEVICES_SHOWN` | `10` | other devices the model is shown by name |
 
-The conversation service is pointed at it with `FACTOTUM_CONVERSATION_ACTIONS_URL` (without one,
-every message is a question) and told how long to wait with `FACTOTUM_CONVERSATION_ACTIONS_TIMEOUT_S`.
+The conversation service is pointed at it with `FACTOTUM_CONVERSATION_ACTIONS_URL` (without one, no
+skill is asked for: every message is left to the documents, and a message they have nothing relevant
+for is told that no skill fits) and told how long to wait with
+`FACTOTUM_CONVERSATION_ACTIONS_TIMEOUT_S`.
 
 ## Storage
 
@@ -745,11 +753,15 @@ measured in `skills.md`.
   20 that a person said from one that a model made up ("make the volume a bit lower"). A skill that
   has an effect and takes a number should be one that asks first, and the question the model writes
   says what will be done. A check that a value appears in the message is possible (numbers written as
-  words in every language are what makes it not simple) and is not done.
-* **A device is not told when the actions could not be asked.** The turn says so in a `warning`, and
-  the edge does not pass warnings on to devices (`edge.md`), so a device whose planner was too slow
-  answers a command as a question and does not say why. What a device should say about it (a spoken
-  notice, a mark on a screen) is a decision about the voice, not about the protocol.
+  words in every language are what makes it not simple) and is not done: it is the second slice of
+  [ADR 0028](decisions/0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md),
+  with the volume that takes no level.
+* **A device is told that the actions could not be asked only when nothing else answers.** The turn
+  says so in a `warning`, and the edge does not pass warnings on to devices (`edge.md`), so a device
+  whose planner was too slow leaves the command to the documents; when they have nothing relevant it
+  is told in words that the skills could not be reached (ADR 0028), and never answers it from a
+  model's memory. What a device should say about a warning (a spoken notice, a mark on a screen) is a
+  decision about the voice, not about the protocol.
 * **A question that the person is asked is not carried.** "Which one do you mean: Bedroom lamp,
   Living room lamp?" is answered by saying the whole request again ("turn on the bedroom lamp"): an
   answer such as "the bedroom one" is a new message, which is near no skill. Carrying the request

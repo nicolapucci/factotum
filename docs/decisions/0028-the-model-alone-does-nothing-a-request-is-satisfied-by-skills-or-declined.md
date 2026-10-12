@@ -36,10 +36,11 @@ opposite: the model by itself can do nothing, and what the assistant can do is i
   not depend on which skills exist: with the core skills that are not built yet (the time, small talk, help)
   the assistant behaves exactly as it will when they are, and nothing in the code, the prompts or the tests
   treats the time, or anything else, as a special case. What ADR 0014 called a question, a message that no
-  skill is near, is now a message that no skill fits (`no_action` becomes `no_skill`, and it says the
-  language of the message: the planner reads it, and where no model is asked, because the message is far
-  from every skill, the code does). Whether something else can answer it (the documents, below) is the
-  conversation service's business.
+  skill is near, is now a message that no skill fits (`no_action` becomes `no_skill`). Whether something
+  else can answer it (the documents, below) is the conversation service's business, and so is the
+  sentence: it is said in the language of the message, which the conversation service reads itself, with
+  no model, by counting the small words of the languages it has sentences in (a statistical detector
+  tells nothing of "ciao"), and in the language it is set to when it cannot tell.
 - **A skill that was found and fails: the assistant says so, in the skill's own words if it has some.** The
   skill was the right one and could not do it. It may say why, for a person: *"Su meteo.it non ho trovato la
   città."* A script prints it as `error` where it would print `message` (a run that reports a failure ends
@@ -127,3 +128,47 @@ opposite: the model by itself can do nothing, and what the assistant can do is i
   shape prepared.
 - **Ask for every value, optional ones too.** A voice that asks *"di quanto?"* when told to turn it up is
   worse than one that turns it up by a step.
+
+## What was built, and what it found
+
+The first slice (A), in four steps. `no_action` is `no_skill`. A skill that failed is named in every
+sentence of a failure (`phrases.py` of the actions service), and a script that ended well can say why it
+could not do what was asked with an `error` (`SkillOutput`, `SkillFailedError`): those words are
+spoken as a `message` is and the trail keeps them; the weather example reports a city it did not
+find that way. The knowledge service gives a passage the raw `similarity` of its section and a search
+a `min_similarity`, and counts what it left out. The conversation service asks for the floor, asks no
+model when there is nothing to answer from (no relevant passage, no exchange that the message refers
+to, no skill) and says which of the two was missing, and which could not be reached, in one sentence of
+its own (`phrases.py`), in the language of the message (`factotum.common.language`). The prompt no
+longer tells the date or lets the model add what it knows, and tells it that a message which asks for
+something to be done is not a question for the sources. The documents and the history are not yet a
+skill of the platform: they behave as one (a name, a phase, a failure with words) in the conversation
+service.
+
+What the measurements found (`docs/knowledge.md`, `docs/conversation.md`):
+
+* **The score of a passage could not have decided anything.** It is a fusion of ranks, so a question
+  about nothing had a first passage at 1.0; the raw cosine is what separates, and it separates well but
+  not completely. With `bge-m3` a floor of 0.5 keeps all of 44 questions in English and 34 in Italian
+  over a book of 2956 pieces, and 25 of 26 over a small library in two languages (the one it loses is
+  an English question about an Italian policy, 0.49), and leaves out 79% of the messages that are about
+  nothing in the book and 88% of those in the library. What gets through is mostly a command that names
+  something a document has (*restart the router* is 0.60 to its manual, *turn on the oven* 0.61 to a
+  recipe) and, once, the time to a trip with times in it (0.51).
+* **Told only to say what the sources say, a model of 8B restarts a router by erasing it.** With the
+  manual near it answered *restart the router* with the way to reset it 4 times of 4; with the
+  instruction that a message which asks for something to be done is not a question for the sources it
+  said that it cannot 5 of 5, and it did the same for the oven, the wifi password to delete and *can
+  you turn the oven on?*. In Italian it is weaker (it refused *riavvia il router* and then quoted the
+  reset 4 times of 5). The second line is the model's and is not exact: the first (the floor, and the
+  model not being asked) is the code's.
+* **A statistical detector of the language cannot be used on what people say.** `langdetect` tells
+  nothing, or the wrong thing, of 10 of 60 short messages (*ciao*, *grazie*, *tell me a joke* are
+  Portuguese, Polish, Finnish); counting the small words of Italian and English got 59 of 60 and no
+  mistake, and the one it cannot tell (*meteo Carrara*) is answered in the language it is set to.
+* **Old tests that asked for a plain answer from a model with no sources were testing the thing
+  this record removes**: 26 of the conversation service and 10 of the end-to-end ones (the same
+  five tests, run twice) had to be given a passage, or to say what the code says instead.
+
+Not built, as the record says: the second slice (a value that cannot be traced to the message is not
+believed, and the volume skill that is relative), the core skills, and several skills in one request.
