@@ -276,6 +276,14 @@ class SkillRunError(FactotumError):
     code = "skill_run_error"
 
 
+class SkillFailedError(SkillRunError):
+    """A skill ran, and says in words meant for a person that it could not do what was asked (ADR
+    0028). The message of any other ``SkillRunError`` is for the trail and the log; this one's is
+    said, as a skill's own message is: as it is, and never read by a model."""
+
+    code = "skill_reported_failure"
+
+
 class RunnerUnavailableError(SkillRunError):
     """Nothing can run skills right now."""
 

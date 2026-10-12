@@ -143,7 +143,7 @@ class TestALampThroughTheRunner:
         outcome = await rig.hear(KITCHEN, "turn on the living room lamp")
 
         assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.SKILL_FAILED)
-        assert outcome.reply == "It did not work."
+        assert outcome.reply == "The lamp skill failed."
         [record] = await rig.audit()
         assert (record.result, record.detail) == (
             ActionResult.FAILED,

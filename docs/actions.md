@@ -264,11 +264,13 @@ skills, tenants or devices):
 **What comes back** is read as a `SkillOutput` (`message`, `data`, `commands`, and nothing else) and
 believed no further than that. A script that did not end well (a code that is not 0, too slow, killed
 for memory), that printed something that is not one JSON document, or whose document is not one a
-skill gives, is a failure of the skill, and **what the failure says is what is wrong and never what the
-script said**. A command is given to a device only if the device declared what it needs, and a script
-cannot choose the device: it is the one the skill was aimed at, or the one that was spoken to. What
-the runner did not or could not do (unreachable, busy, does not know us) is `runner_unavailable`,
-told to the person as *I cannot run that right now*.
+skill gives, is a failure of the skill, and **what the failure says is the platform's sentence that
+names the skill (*The weather skill failed*) and never what the script happened to write**. A script
+that ended well and says in an `error` why it could not do what was asked is heard in those words,
+as a `message` is (ADR 0028). A command is given to a device only if the device declared what it
+needs, and a script cannot choose the device: it is the one the skill was aimed at, or the one that
+was spoken to. What the runner did not or could not do (unreachable, busy, does not know us) is
+`runner_unavailable`, told to the person as *I cannot run the weather skill right now*.
 
 **A skill that is instructions** goes through the same runner and the same `RunRequest`, and what is
 different is what is run and how it came to be. There is no script: the notes are given to a model in
@@ -329,10 +331,11 @@ wrote to ask for a yes, are said as they are.
 | No embedding model, or it is slow | the skills that could not be measured go to the model unscored; without any, no action |
 | The message is from a device that is not known | refused if it is an action, and nothing is done for it |
 | A skill is disabled between the question and the yes | refused: *that is not available any more* |
-| A skill fails or takes too long | `failed`, a plain sentence, audited; the log says why |
-| The runner cannot be reached, is busy or does not know the service | `failed` with `runner_unavailable`: *I cannot run that right now* |
+| A skill fails or takes too long | `failed`, a sentence that names the skill (*The weather skill failed*), audited; the log says why |
+| A script reports why it could not do it (`error`) | `failed` with `skill_failed`, in the script's own words; the trail keeps them |
+| The runner cannot be reached, is busy or does not know the service | `failed` with `runner_unavailable`: *I cannot run the weather skill right now* |
 | A secret is not set, or the skill needs a linked account | `failed`; the log names the secret, never its value |
-| A command is not done (the device is not connected, is slow, or the edge is away) | `failed` with `command_failed`: *I asked the device, and it did not do it*; the commands after it are not given |
+| A command is not done (the device is not connected, is slow, or the edge is away) | `failed` with `command_failed`: *I asked the device to run the weather skill, and it did not do it*; the commands after it are not given |
 | The voice of an announcement cannot be made (no `tts` bound, the gateway away or slow) | `failed` with `skill_failed`, nothing is given to a device; the trail says `the voice could not be made (code)` |
 | The actions service is away (seen from the conversation service) | the turn goes on as a question and says so in a warning |
 | The database is away | `/readyz` says so, and the calls fail |
@@ -690,7 +693,8 @@ measured in `skills.md`.
 * **A run makes a container, and it is the cheapest part of the wait now.** About a second and a half
   where nothing else is going on; the model that reads the message is more than that on a card that
   is shared. Several runs at once wait for their turn (four at a time, five seconds) and are told
-  that the runner is busy after that: the person hears *I cannot run that right now*.
+  that the runner is busy after that: the person hears *I cannot run the weather skill right now*
+  (it said *that* before ADR 0028, and no word of which skill).
 * **A brightness alone still misses the lamp sometimes.** *Set the lamp to 30 percent* was answered
   *I still need: state* (the 8B model on the shared card left out that the lamp is to be on), after
   the example was changed to say that a brightness alone means on. It is the same weakness as in the

@@ -23,6 +23,7 @@ from factotum.actions.skills import LoadedSkill, load_folder
 from factotum.common.hosts import match_host
 from factotum.contracts.commands import SetVolume
 from factotum.contracts.effects import Effect
+from factotum.contracts.errors import SkillFailedError
 from factotum.contracts.instructions import InstructionPlan
 from factotum.contracts.runner import JobResult, RunResult
 from factotum.contracts.skills import (
@@ -184,7 +185,10 @@ class TestTheScriptsDoWhatTheirSkillsSay:
             code = stopped.code
         assert code in {0, None}
         printed = capsys.readouterr().out
-        return calls, read_output(name, JobResult(exit_code=0, stdout=printed))
+        try:
+            return calls, read_output(name, JobResult(exit_code=0, stdout=printed))
+        except SkillFailedError as failed:  # a script that says why it could not do it
+            return calls, RunResult(error=failed.message)
 
     @staticmethod
     def reaches(name: str, device: dict[str, Any], calls: list[Any]) -> set[str | None]:
@@ -332,7 +336,7 @@ class TestTheScriptsDoWhatTheirSkillsSay:
     def test_a_place_is_quoted_before_it_is_put_in_a_url(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        calls, result = self.run(
+        calls, _ = self.run(
             "weather",
             {"params": {"place": "São Paulo & co"}, "device_params": {}},
             monkeypatch,
@@ -341,7 +345,20 @@ class TestTheScriptsDoWhatTheirSkillsSay:
         )
 
         assert calls[0].endswith("&name=S%C3%A3o%20Paulo%20%26%20co")
-        assert result.message == "I could not find São Paulo & co."
+
+    def test_a_city_that_is_not_found_is_a_skill_that_says_why_it_could_not_do_it(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _, result = self.run(
+            "weather",
+            {"params": {"place": "Atlantis"}, "device_params": {}},
+            monkeypatch,
+            capsys,
+            answers=[{}],
+        )
+
+        assert result.error == "I could not find Atlantis."
+        assert (result.message, result.commands) == (None, ())
 
     def test_the_router_is_asked_to_restart_with_its_password(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

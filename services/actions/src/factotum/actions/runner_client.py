@@ -28,7 +28,12 @@ from factotum.actions.instructions import executor
 from factotum.actions.secrets import SecretResolver
 from factotum.actions.store.base import ActionsStore
 from factotum.common.devauth import PrincipalDelegation
-from factotum.contracts.errors import RunnerUnavailableError, SecretNotFoundError, SkillRunError
+from factotum.contracts.errors import (
+    RunnerUnavailableError,
+    SecretNotFoundError,
+    SkillFailedError,
+    SkillRunError,
+)
 from factotum.contracts.identity import Principal
 from factotum.contracts.runner import Job, JobFile, JobResult, RunRequest, RunResult, SkillOutput
 from factotum.contracts.skills import (
@@ -94,7 +99,8 @@ def _problems(error: ValidationError) -> str:
 
 def read_output(skill: str, result: JobResult) -> RunResult:
     """What a script did, as what a skill answers with. Raises ``SkillRunError`` when it did not
-    end well, or when what it printed is not an answer."""
+    end well, or when what it printed is not an answer, and ``SkillFailedError`` when the script
+    ended well and reports, in words for a person, that it could not do what was asked."""
     if result.timed_out:
         raise SkillRunError("the script did not finish in time")
     if result.oom_killed:
@@ -122,6 +128,8 @@ def read_output(skill: str, result: JobResult) -> RunResult:
         raise SkillRunError(
             f"the answer of the script is not one a skill gives: {_problems(error)}"
         ) from None
+    if output.error is not None:
+        raise SkillFailedError(output.error)
     return RunResult(message=output.message, data=output.data, commands=output.commands)
 
 

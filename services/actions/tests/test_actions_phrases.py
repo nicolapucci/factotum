@@ -57,6 +57,24 @@ class TestSaying:
         with pytest.raises(KeyError):
             say("en", Say.CONFIRM)
 
+    @pytest.mark.parametrize("key", [Say.FAILED, Say.RUNNER_UNAVAILABLE, Say.COMMAND_FAILED])
+    def test_a_sentence_about_a_skill_that_failed_names_it_in_every_language(
+        self, key: Say
+    ) -> None:
+        for language in sorted(LANGUAGES):
+            assert fields_of(_CATALOG[language][key]) == {"skill"}
+            assert "garage-door" in say(language, key, skill="garage-door")
+
+    def test_the_sentences_of_a_skill_that_failed(self) -> None:
+        assert say("en", Say.FAILED, skill="lamp") == "The lamp skill failed."
+        assert say("it", Say.FAILED, skill="lamp") == "La skill lamp ha fallito."
+        assert say("it", Say.RUNNER_UNAVAILABLE, skill="lamp") == (
+            "Non riesco a eseguire la skill lamp in questo momento."
+        )
+        assert say("en", Say.COMMAND_FAILED, skill="lamp") == (
+            "I asked the device to run the lamp skill, and it did not do it."
+        )
+
 
 class TestWhyNot:
     def test_a_device_that_may_not_start_something_is_told_so(self) -> None:

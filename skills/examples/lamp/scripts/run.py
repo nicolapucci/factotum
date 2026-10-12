@@ -1,8 +1,9 @@
 """Switch a lamp through Home Assistant.
 
 The parameters arrive as JSON on standard input ({"params": ..., "device_params": ...}) and the
-answer leaves as JSON on standard output ({"message": ..., "data": ..., "commands": [...]}). The
-token is in the environment, by the name the skill declares.
+answer leaves as JSON on standard output ({"message": ..., "data": ..., "commands": [...]}, or
+{"error": ...} for a skill that knows why it could not do it). The token is in the environment, by
+the name the skill declares.
 """
 
 import json

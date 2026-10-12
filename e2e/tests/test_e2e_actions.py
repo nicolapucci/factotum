@@ -104,7 +104,7 @@ class TestDoingWhatIsAsked:
             done = await speaker.says_aloud(LAMP)
 
             assert (failed.status, done.status) == (TurnStatus.FINISHED, TurnStatus.FINISHED)
-            assert speaker.spoken() == ["It did not work.", "The lamp is on."]
+            assert speaker.spoken() == ["The lamp skill failed.", "The lamp is on."]
 
 
 class TestWhatADeviceMayStart:

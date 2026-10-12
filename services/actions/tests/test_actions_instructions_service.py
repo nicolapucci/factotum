@@ -241,7 +241,7 @@ class TestAPlanThatIsNotRun:
 
             assert web.seen == []
         assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.SKILL_FAILED)
-        assert outcome.reply == "It did not work."
+        assert outcome.reply == "The lamp skill failed."
         assert local.jobs == []
         [record] = await rig.audit()
         assert record.result is ActionResult.FAILED

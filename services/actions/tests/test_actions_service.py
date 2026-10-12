@@ -10,10 +10,10 @@ import pytest
 
 from factotum.actions.execution import DryRunRunner
 from factotum.actions.rig import ActionsRig, plan_of
-from factotum.actions.service import ActionSettings
+from factotum.actions.service import MAX_FAILURE_DETAIL_CHARS, ActionSettings
 from factotum.actions.store import InMemoryStore
 from factotum.actions.testing import GARAGE, LAMP, ROUTER, VOLUME, WEATHER
-from factotum.contracts.actions import ActCode, ActOutcome, ActRequest, ActStatus
+from factotum.contracts.actions import MAX_REPLY_CHARS, ActCode, ActOutcome, ActRequest, ActStatus
 from factotum.contracts.approval import ApprovalOutcome, ApprovalResult, ApproverKind
 from factotum.contracts.audit import ActionResult, AuditRecord
 from factotum.contracts.authorization import DecisionOutcome, Reason
@@ -25,6 +25,7 @@ from factotum.contracts.errors import (
     GatewayUnavailableError,
     ProviderTimeoutError,
     RunnerUnavailableError,
+    SkillFailedError,
     SkillRunError,
 )
 from factotum.contracts.identity import Principal, Subject
@@ -37,6 +38,7 @@ from factotum.contracts.skills import (
     ParamType,
     SkillManifest,
 )
+from factotum.contracts.testing import make_tenant_id
 
 KITCHEN = "Kitchen speaker"
 DISPLAY = "Living room display"
@@ -326,7 +328,7 @@ class TestCommandsForADevice:
         outcome = await rig.hear(KITCHEN, "what is the weather like in Rome")
 
         assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.COMMAND_FAILED)
-        assert outcome.reply == "I asked the device, and it did not do it."
+        assert outcome.reply == "I asked the device to run the weather skill, and it did not do it."
         assert rig.dispatcher.given == []
         [record] = await rig.audit()
         assert (record.result, record.detail) == (
@@ -1012,13 +1014,17 @@ class TestWhenARunGoesWrong:
     @pytest.mark.parametrize(
         ("failure", "code", "said"),
         [
-            (SkillRunError("the script failed"), ActCode.SKILL_FAILED, "It did not work."),
+            (SkillRunError("the script failed"), ActCode.SKILL_FAILED, "The weather skill failed."),
             (
                 RunnerUnavailableError("nothing runs skills"),
                 ActCode.RUNNER_UNAVAILABLE,
-                "I cannot run that right now.",
+                "I cannot run the weather skill right now.",
             ),
-            (RuntimeError("a bug in a runner"), ActCode.SKILL_FAILED, "It did not work."),
+            (
+                RuntimeError("a bug in a runner"),
+                ActCode.SKILL_FAILED,
+                "The weather skill failed.",
+            ),
         ],
     )
     async def test_it_is_a_failure_that_is_said_and_audited(
@@ -1035,6 +1041,74 @@ class TestWhenARunGoesWrong:
         [record] = await rig.audit()
         assert record.result is ActionResult.FAILED
         assert record.id == outcome.audit_id
+
+    async def test_the_sentence_of_a_failure_names_the_skill_in_the_language_of_the_person(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(WEATHER)
+        rig.runner.results["weather"] = SkillRunError("the script failed")
+        rig.plans(plan_of("weather", parameters={"place": "Rome"}, language="it"))
+
+        outcome = await rig.hear(KITCHEN, "what is the weather like in Rome")
+
+        assert outcome.reply == "La skill weather ha fallito."
+
+    async def test_a_skill_that_says_why_it_failed_is_heard_in_its_own_words(self) -> None:
+        rig = ActionsRig()
+        await rig.install(WEATHER)
+        rig.runner.results["weather"] = SkillFailedError("I did not find Rome on meteo.it.")
+        rig.plans(plan_of("weather", parameters={"place": "Rome"}))
+
+        outcome = await rig.hear(KITCHEN, "what is the weather like in Rome")
+
+        assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.SKILL_FAILED)
+        assert outcome.reply == "I did not find Rome on meteo.it."
+        [record] = await rig.audit()
+        assert record.result is ActionResult.FAILED
+        assert record.detail == (
+            "the skill said that it could not do it: I did not find Rome on meteo.it."
+        )
+        assert record.id == outcome.audit_id
+
+    async def test_what_a_skill_said_of_its_failure_is_in_the_trail_of_its_tenant_only(
+        self,
+    ) -> None:
+        rig = ActionsRig()
+        await rig.install(WEATHER)
+        rig.runner.results["weather"] = SkillFailedError("I did not find Rome on meteo.it.")
+        rig.plans(plan_of("weather", parameters={"place": "Rome"}))
+
+        await rig.hear(KITCHEN, "what is the weather like in Rome")
+
+        assert len(await rig.audit()) == 1
+        assert await rig.store.list_audit(make_tenant_id(), before=None, limit=100) == []
+
+    async def test_its_words_are_cut_to_what_a_device_speaks_in_one_part(self) -> None:
+        rig = ActionsRig()
+        await rig.install(WEATHER)
+        rig.runner.results["weather"] = SkillFailedError("word " * 1000)
+        rig.plans(plan_of("weather", parameters={"place": "Rome"}))
+
+        outcome = await rig.hear(KITCHEN, "what is the weather like in Rome")
+
+        assert outcome.reply is not None
+        assert len(outcome.reply) <= MAX_REPLY_CHARS
+        assert outcome.reply.endswith("…")
+        [record] = await rig.audit()
+        assert record.detail is not None
+        assert len(record.detail) <= MAX_FAILURE_DETAIL_CHARS
+
+    async def test_what_a_skill_that_crashed_wrote_is_not_what_a_person_is_told(self) -> None:
+        rig = ActionsRig()
+        await rig.install(WEATHER)
+        rig.runner.results["weather"] = SkillRunError("Traceback: KeyError 'place' s3cr3t")
+        rig.plans(plan_of("weather", parameters={"place": "Rome"}))
+
+        outcome = await rig.hear(KITCHEN, "what is the weather like in Rome")
+
+        assert outcome.reply == "The weather skill failed."
+        assert "s3cr3t" not in (outcome.reply or "")
 
     async def test_a_skill_that_takes_too_long_is_a_failure(self) -> None:
         rig = ActionsRig(settings=ActionSettings(run_margin_s=0.05))

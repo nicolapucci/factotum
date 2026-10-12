@@ -65,7 +65,12 @@ from factotum.contracts.authorization import (
 )
 from factotum.contracts.commands import CommandResult, CommandStatus, DeviceCommand
 from factotum.contracts.devices import ExternalDeviceRecord, SystemDeviceRecord
-from factotum.contracts.errors import FactotumError, RunnerUnavailableError, SkillRunError
+from factotum.contracts.errors import (
+    FactotumError,
+    RunnerUnavailableError,
+    SkillFailedError,
+    SkillRunError,
+)
 from factotum.contracts.identity import Owner, Principal
 from factotum.contracts.ids import ApprovalId, AuditId, DeviceId, SkillId
 from factotum.contracts.instructions import InstructionPlan
@@ -642,9 +647,22 @@ class ActionService:
             return await settle(
                 ActStatus.FAILED,
                 ActCode.RUNNER_UNAVAILABLE,
-                say(language, Say.RUNNER_UNAVAILABLE),
+                say(language, Say.RUNNER_UNAVAILABLE, skill=stored.name),
                 ActionResult.FAILED,
                 "nothing can run skills",
+            )
+        except SkillFailedError as error:
+            # The skill ran and says why it could not do it, for a person: its words are said as a
+            # message is (ADR 0028). They are not what it printed by chance, which is never said.
+            logger.info("a skill said that it could not do it", extra={"skill": stored.name})
+            return await settle(
+                ActStatus.FAILED,
+                ActCode.SKILL_FAILED,
+                error.message,
+                ActionResult.FAILED,
+                f"the skill said that it could not do it: {error.message}"[
+                    :MAX_FAILURE_DETAIL_CHARS
+                ],
             )
         except Exception as error:
             # What a run says of itself is ours (which secret, which code, which status) and never
@@ -657,7 +675,7 @@ class ActionService:
             return await settle(
                 ActStatus.FAILED,
                 ActCode.SKILL_FAILED,
-                say(language, Say.FAILED),
+                say(language, Say.FAILED, skill=stored.name),
                 ActionResult.FAILED,
                 f"the skill failed: {reason}"[:MAX_FAILURE_DETAIL_CHARS],
             )
@@ -676,7 +694,7 @@ class ActionService:
             return await settle(
                 ActStatus.FAILED,
                 ActCode.COMMAND_FAILED,
-                say(language, Say.COMMAND_FAILED),
+                say(language, Say.COMMAND_FAILED, skill=stored.name),
                 ActionResult.FAILED,
                 f"a command was not done ({failed.status.value})",
             )
@@ -758,7 +776,7 @@ class ActionService:
                 decision,
                 status=ActStatus.FAILED,
                 code=ActCode.SKILL_FAILED,
-                reply=say(understood.language, Say.FAILED),
+                reply=say(understood.language, Say.FAILED, skill=stored.name),
                 result=ActionResult.FAILED,
                 detail=f"no plan: {reason}"[:MAX_FAILURE_DETAIL_CHARS],
                 confirmed=confirmed,

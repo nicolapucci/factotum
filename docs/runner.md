@@ -187,21 +187,28 @@ It prints **one JSON object** on standard output and exits with 0: `{"message": 
   `commands` (up to 20) are `factotum.contracts.commands` and nothing else. **A command is data**: the
   platform gives it to a device, after `authorize()` and after checking that the device declared what
   it needs, so the sandbox needs no way back into the platform.
-* **A field that is not one of the three is a failure**, and the message names the field (`messsage:
+* **A script that could not do what was asked, and knows why, says it in an `error`** instead of a
+  `message`: `{"error": "I did not find Rome on meteo.it."}`, still with an exit code of 0 (a run that
+  crashes reports nothing). It is spoken as a `message` is, as it is, up to 2000 characters, with the
+  secrets taken out by the runner, and it is never read by a model; it gives no message and no
+  commands. The outcome is `skill_failed`, and the trail keeps the words (ADR 0028).
+* **A field that is not one of the four is a failure**, and the message names the field (`messsage:
   Extra inputs are not permitted`): a script that misspells a key would otherwise be silent. A script
   cannot say that nothing was run (`dry_run`), and cannot choose the device.
 * Nothing at all on standard output is *nothing to say* (the reply is *Done.*).
 
-What goes wrong, and what the person hears (the trail says which):
+What goes wrong, and what the person hears (the trail says which). A sentence that is the platform's
+names the skill (ADR 0028):
 
 | What happened | Outcome | The person hears |
 | --- | --- | --- |
-| the runner cannot be reached, is busy (`503`), does not know the caller (`401`, `403`) | `runner_unavailable` | *I cannot run that right now.* |
-| the script ended with a code that is not 0, was killed for memory, took too long | `skill_failed` | *It did not work.* |
-| what it printed is not one JSON document, or not a `SkillOutput` | `skill_failed` | *It did not work.* |
-| a secret is not set, a file is gone, the device has no host to reach | `skill_failed` | *It did not work.* |
-| the skill needs a linked account | `skill_failed` (accounts come with the hub) | *It did not work.* |
-| a command was not done (the device is not connected, it took too long, the edge is away) | `command_failed` | *I asked the device, and it did not do it.* |
+| the runner cannot be reached, is busy (`503`), does not know the caller (`401`, `403`) | `runner_unavailable` | *I cannot run the weather skill right now.* |
+| the script reports why it could not do it (`error`) | `skill_failed` | *its own words* |
+| the script ended with a code that is not 0, was killed for memory, took too long | `skill_failed` | *The weather skill failed.* |
+| what it printed is not one JSON document, or not a `SkillOutput` | `skill_failed` | *The weather skill failed.* |
+| a secret is not set, a file is gone, the device has no host to reach | `skill_failed` | *The weather skill failed.* |
+| the skill needs a linked account | `skill_failed` (accounts come with the hub) | *The weather skill failed.* |
+| a command was not done (the device is not connected, it took too long, the edge is away) | `command_failed` | *I asked the device to run the weather skill, and it did not do it.* |
 
 ## The runner's API
 

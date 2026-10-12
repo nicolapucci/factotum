@@ -328,7 +328,7 @@ class TestWhenItCannotBeDone:
         outcome = await rig.hear(KITCHEN, TELL)
 
         assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.SKILL_FAILED)
-        assert outcome.reply == "It did not work."
+        assert outcome.reply == "The announce skill failed."
         assert rig.dispatcher.given == []
         [record] = await rig.audit()
         assert record.result is ActionResult.FAILED
@@ -360,7 +360,9 @@ class TestWhenItCannotBeDone:
         outcome = await rig.hear(KITCHEN, TELL)
 
         assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.COMMAND_FAILED)
-        assert outcome.reply == "I asked the device, and it did not do it."
+        assert (
+            outcome.reply == "I asked the device to run the announce skill, and it did not do it."
+        )
 
     async def test_a_second_clip_that_is_refused_is_a_command_that_was_not_done(self) -> None:
         rig, _ = a_rig()

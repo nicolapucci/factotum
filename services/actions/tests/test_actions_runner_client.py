@@ -27,7 +27,7 @@ from factotum.actions.testing import LAMP, LAMP_WORDS, START, VOLUME, WEATHER
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DevPrincipalDelegation
 from factotum.contracts.commands import SetVolume
-from factotum.contracts.errors import RunnerUnavailableError, SkillRunError
+from factotum.contracts.errors import RunnerUnavailableError, SkillFailedError, SkillRunError
 from factotum.contracts.identity import Owner, OwnerKind, Subject
 from factotum.contracts.ids import SkillId
 from factotum.contracts.instructions import InstructionPlan
@@ -520,6 +520,28 @@ class TestWhatWasPrinted:
     def test_a_script_cannot_say_that_nothing_was_run(self) -> None:
         with pytest.raises(SkillRunError, match="dry_run"):
             self.read(message="Done.", dry_run=True)
+
+    def test_a_script_that_ends_well_may_say_why_it_could_not_do_it(self) -> None:
+        with pytest.raises(SkillFailedError) as raised:
+            self.read(error="I did not find Rome on meteo.it.")
+
+        assert raised.value.message == "I did not find Rome on meteo.it."
+        assert isinstance(raised.value, SkillRunError)  # a failed run, to whoever does not ask why
+
+    def test_a_script_that_crashes_has_said_nothing_even_if_it_printed_a_reason(self) -> None:
+        printed = json.dumps({"error": "I did not find Rome."})
+
+        with pytest.raises(SkillRunError, match="exit code 1") as raised:
+            read_output("lamp", JobResult(exit_code=1, stdout=printed))
+
+        assert not isinstance(raised.value, SkillFailedError)
+        assert "Rome" not in str(raised.value)
+
+    def test_a_reason_that_comes_with_a_message_is_not_one_a_skill_gives(self) -> None:
+        with pytest.raises(SkillRunError, match="not one a skill gives") as raised:
+            self.read(error="It broke.", message="Done.")
+
+        assert not isinstance(raised.value, SkillFailedError)
 
     @pytest.mark.parametrize(
         ("result", "problem"),

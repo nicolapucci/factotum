@@ -271,3 +271,44 @@ class TestWhatAScriptPrints:
     def test_a_result_is_an_output_that_can_also_say_nothing_was_run(self) -> None:
         assert RunResult.model_validate({"dry_run": True}).dry_run
         assert not RunResult.model_validate({}).dry_run
+
+
+class TestAScriptThatSaysWhyItFailed:
+    def test_it_prints_why_in_words_for_a_person_instead_of_a_message(self) -> None:
+        output = SkillOutput.model_validate({"error": "I did not find Rome on meteo.it."})
+
+        assert output.error == "I did not find Rome on meteo.it."
+        assert (output.message, output.commands) == (None, ())
+
+    def test_what_it_found_on_the_way_may_come_with_it(self) -> None:
+        output = SkillOutput.model_validate({"error": "Nothing there.", "data": {"tried": 3}})
+
+        assert output.data == {"tried": 3}
+
+    def test_a_script_that_succeeds_says_no_error(self) -> None:
+        assert SkillOutput.model_validate({"message": "Done."}).error is None
+        assert SkillOutput.model_validate({}).error is None
+
+    @pytest.mark.parametrize(
+        "printed",
+        [
+            {"error": "It broke.", "message": "Done."},
+            {"error": "It broke.", "commands": [{"name": "stop"}]},
+        ],
+        ids=["and-a-message", "and-a-command"],
+    )
+    def test_a_script_that_failed_gives_no_message_and_does_nothing_to_a_device(
+        self, printed: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValidationError, match="no message and no commands"):
+            SkillOutput.model_validate(printed)
+
+    def test_its_words_are_as_long_as_a_message_may_be_and_not_empty(self) -> None:
+        SkillOutput.model_validate({"error": "x" * 2000})
+        for printed in ({"error": ""}, {"error": "x" * 2001}):
+            with pytest.raises(ValidationError):
+                SkillOutput.model_validate(printed)
+
+    def test_a_result_cannot_be_made_to_say_both(self) -> None:
+        with pytest.raises(ValidationError, match="no message and no commands"):
+            RunResult.model_validate({"error": "It broke.", "message": "Done."})

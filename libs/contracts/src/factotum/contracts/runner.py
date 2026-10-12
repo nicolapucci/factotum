@@ -97,6 +97,19 @@ class SkillOutput(Contract):
     """What the platform is to have a device do, once the checks are made: the commands that a skill
     may give (``play_audio`` is the platform's, ADR 0026)."""
 
+    error: str | None = Field(default=None, min_length=1, max_length=2000)
+    """Instead of a message: the skill ran, and could not do what was asked, and says why in words
+    for a person (*I did not find that city on meteo.it*). It is spoken as a message is, as it is
+    and never read by a model, and a run that ends with an exit code of 0 is how a skill reports it
+    (one that crashes reports nothing: a person is told which skill failed, and no more). It gives
+    no message and no commands (ADR 0028)."""
+
+    @model_validator(mode="after")
+    def _a_failure_gives_nothing_else_to_say_or_do(self) -> Self:
+        if self.error is not None and (self.message is not None or self.commands):
+            raise ValueError("a skill that says why it failed gives no message and no commands")
+        return self
+
 
 class RunResult(SkillOutput):
     dry_run: bool = False

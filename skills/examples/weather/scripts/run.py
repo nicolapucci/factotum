@@ -1,4 +1,7 @@
-"""The weather now in a city, from Open-Meteo (see the lamp skill for the protocol)."""
+"""The weather now in a city, from Open-Meteo (see the lamp skill for the protocol).
+
+When the city is not found it says so with an ``error`` in place of a ``message``: the person is
+told in those words that the skill could not do it, and not only that it failed."""
 
 import json
 import sys
@@ -16,7 +19,7 @@ found = get(
     "https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(place)
 ).get("results")
 if not found:
-    print(json.dumps({"message": f"I could not find {place}."}))
+    print(json.dumps({"error": f"I could not find {place}."}))
     sys.exit(0)
 
 city = found[0]

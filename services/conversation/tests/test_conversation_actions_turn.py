@@ -135,7 +135,7 @@ class TestAMessageThatAsksForSomethingToBeDone:
                 status=ActStatus.REFUSED, reply="I cannot do that from here.", code=ActCode.DENIED
             ),
             ActOutcome(
-                status=ActStatus.FAILED, reply="It did not work.", code=ActCode.SKILL_FAILED
+                status=ActStatus.FAILED, reply="The lamp skill failed.", code=ActCode.SKILL_FAILED
             ),
         ],
         ids=["asks", "needs-more", "cancelled", "refused", "failed"],

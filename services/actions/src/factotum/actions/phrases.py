@@ -6,8 +6,10 @@ person spoke. A model reads that language out of the message, and this is where 
 English and Italian are here; another language is answered in English until somebody adds it, and
 a test says that no sentence is missing from any of them.
 
-What a skill says of its own result (the ``message`` of a run) is said as it is, and so is the
-question a model wrote to ask for a yes: those are in the language they were written in.
+A sentence about a skill that failed names it (ADR 0028). What a skill says of its own result (the
+``message`` of a run, or the ``error`` of one that reports why it could not do it) is said as it
+is, and so is the question a model wrote to ask for a yes: those are in the language they were
+written in.
 """
 
 from enum import StrEnum
@@ -55,9 +57,9 @@ _CATALOG: dict[str, dict[Say, str]] = {
         Say.APPROVAL_EXPIRED: "Nobody approved it in time.",
         Say.UNKNOWN_DEVICE: "I do not know this device, so I did nothing.",
         Say.NOT_ENABLED: "That is not available any more.",
-        Say.FAILED: "It did not work.",
-        Say.RUNNER_UNAVAILABLE: "I cannot run that right now.",
-        Say.COMMAND_FAILED: "I asked the device, and it did not do it.",
+        Say.FAILED: "The {skill} skill failed.",
+        Say.RUNNER_UNAVAILABLE: "I cannot run the {skill} skill right now.",
+        Say.COMMAND_FAILED: "I asked the device to run the {skill} skill, and it did not do it.",
     },
     "it": {
         Say.DONE: "Fatto.",
@@ -74,9 +76,11 @@ _CATALOG: dict[str, dict[Say, str]] = {
         Say.APPROVAL_EXPIRED: "Nessuno l'ha approvato in tempo.",
         Say.UNKNOWN_DEVICE: "Non conosco questo dispositivo, quindi non ho fatto nulla.",
         Say.NOT_ENABLED: "Non è più disponibile.",
-        Say.FAILED: "Non ha funzionato.",
-        Say.RUNNER_UNAVAILABLE: "Non posso eseguirlo in questo momento.",
-        Say.COMMAND_FAILED: "L'ho chiesto al dispositivo, ma non l'ha fatto.",
+        Say.FAILED: "La skill {skill} ha fallito.",
+        Say.RUNNER_UNAVAILABLE: "Non riesco a eseguire la skill {skill} in questo momento.",
+        Say.COMMAND_FAILED: (
+            "Ho chiesto al dispositivo di eseguire la skill {skill}, ma non l'ha fatto."
+        ),
     },
 }
 

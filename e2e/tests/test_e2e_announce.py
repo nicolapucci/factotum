@@ -185,7 +185,7 @@ class TestWhenItCannotBeSaid:
             assert record.detail is not None
             assert record.detail.startswith("the skill failed: the voice could not be made (")
             assert display.spoken() == []
-            assert display.shown.of("text") == ["It did not work."]
+            assert display.shown.of("text") == ["The announce skill failed."]
 
     async def test_a_device_that_cannot_play_a_clip_is_given_the_words_to_say(self) -> None:
         async with (
@@ -214,4 +214,6 @@ class TestWhenItCannotBeSaid:
             assert ended.status is TurnStatus.FINISHED, ended
             [act] = house.acts
             assert (act.status, act.code) == (ActStatus.FAILED, ActCode.COMMAND_FAILED)
-            assert speaker.spoken() == ["I asked the device, and it did not do it."]
+            assert speaker.spoken() == [
+                "I asked the device to run the announce skill, and it did not do it."
+            ]

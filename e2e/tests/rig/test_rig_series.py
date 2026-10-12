@@ -275,7 +275,7 @@ class TestJudgingWhatCameOfAMessage:
         assert judge(Played(LAMP_ON, the_lamp_was_switched_on())) == []
 
     def test_what_came_to_another_status_is_said(self) -> None:
-        failed = ActOutcome(status=ActStatus.FAILED, reply="It did not work.", skill="lamp")
+        failed = ActOutcome(status=ActStatus.FAILED, reply="The lamp skill failed.", skill="lamp")
 
         found = judge(Played(LAMP_ON, window(outcome=failed, chat=0)))
 
