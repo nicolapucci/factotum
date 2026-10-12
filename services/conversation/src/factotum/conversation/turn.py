@@ -1,16 +1,21 @@
 """One turn: a message in, an answer streamed out, and the exchange saved (ADR 0012).
 
-A turn starts by asking the actions service, when there is one, whether the message asks for
-something to be done. If it does, what that service says is the answer: what was done, or what is
-asked before it is (a yes or a no, a missing value), or why not. Nothing else is asked of anybody:
-the message is not a question for the documents.
+A turn starts by asking the actions service, when there is one, whether a skill fits the message.
+If one does, what that service says is the answer: what was done, or what is asked before it is (a
+yes or a no, a missing value), or why not, or that the skill failed. Nothing else is asked of
+anybody: the message is not a question for the documents.
 
-Otherwise a turn carries no history. It searches the user's documents for what answers the message,
-and asks the model. Only when a small model, reading the message alone, says that it refers to an
-earlier exchange does the turn look at what was said before: the last exchanges for a continuation,
-a search of the log for something said earlier. The search of the documents starts at once, beside
-that question, and is thrown away when the answer to it says the message was to be read together
-with an earlier exchange.
+Otherwise a turn carries no history. It searches the user's documents for what answers the message.
+Only when a small model, reading the message alone, says that it refers to an earlier exchange does
+the turn look at what was said before: the last exchanges for a continuation, a search of the log
+for something said earlier. The search of the documents starts at once, beside that question, and
+is thrown away when the answer to it says the message was to be read together with an earlier
+exchange.
+
+A model answers nothing by itself (ADR 0028). It is asked only when there is something to work on:
+a passage of the documents that is relevant, or an exchange the message refers to. With neither,
+and no skill that fits, the answer is a sentence that the code chooses, in the language of the
+message, which says what was missing and what could not be reached.
 
 What goes wrong is met without giving up: actions that cannot be asked, a model that cannot say
 whether the message refers to the past, documents that do not answer, an embedding model that is
@@ -28,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from factotum.common.language import detect_language
 from factotum.contracts.chat import (
     ChatRequest,
     ErrorEvent,
@@ -64,6 +70,7 @@ from factotum.conversation.context import PromptBuilder, citations_of
 from factotum.conversation.documents import DocumentSearch
 from factotum.conversation.gate import ReferenceGate
 from factotum.conversation.history import History
+from factotum.conversation.phrases import Say, nothing_to_answer_from, say
 from factotum.conversation.store import ConversationStore
 from factotum.model_client import Chat
 
@@ -84,13 +91,21 @@ class TurnSettings:
     document_passages: int = 6
     """How many passages of the documents are asked for."""
 
+    document_min_similarity: float | None = 0.5
+    """How alike, by meaning, a passage must be to the message to be shown to a model (ADR 0028).
+    Nothing under it is: a message with no relevant passage, no earlier exchange and no skill is not
+    given to a model at all. None asks for no floor, and every passage found is shown."""
+
+    default_language: str = "en"
+    """The language of the sentences the code says when the message does not say which it is in."""
+
     knowledge_timeout_s: float = 4.0
     """How long the documents are waited for before the answer goes on without them."""
 
     actions_timeout_s: float = 120.0
     """How long the actions service is waited for. It is the whole of an action: reading the
     message, asking for an approval, running the skill. One that is not answered in time leaves the
-    message to be answered as a question, and says so."""
+    message to the documents, and says so."""
 
     session_gap: timedelta = field(default_factory=lambda: timedelta(minutes=30))
     """How long a conversation stays the one a message without a name belongs to."""
@@ -155,7 +170,6 @@ class TurnEngine:
             message=request.message,
             passages=(),
             earlier=(),
-            now=now,
             max_input_tokens=profile.max_input_tokens,
         )
         exchange_id = ExchangeId(self._new_id())
@@ -197,11 +211,13 @@ class TurnEngine:
         searching: asyncio.Task[Found] | None = None
         try:
             understanding = False
+            skills_away = False
             if self._actions is not None:
                 yield Status(phase=Phase.UNDERSTANDING)
                 understanding = True
                 reply, unavailable = await self._act(self._actions, principal, message)
                 if unavailable is not None:
+                    skills_away = True
                     yield unavailable
                 if reply is not None:
                     async for acted in self._acted(
@@ -285,19 +301,38 @@ class TurnEngine:
                     None if query is None else asyncio.create_task(self._passages(owner, query))
                 )
             passages: tuple[Passage, ...] = ()
+            documents_away = False
             if searching is not None:
                 yield Status(phase=Phase.SEARCHING)
                 passages, unavailable = await searching
                 if unavailable is not None:
+                    documents_away = True
                     yield unavailable
+
+            past_missing = reference.kind is not ReferenceKind.NONE and not earlier
+            if not passages and not earlier:
+                # Nothing to work on, and no skill that fits: a model answers nothing by itself
+                # (ADR 0028), so it is not asked.
+                async for declined in self._declined(
+                    tenant,
+                    owner,
+                    conversation_id,
+                    message,
+                    exchange_id,
+                    reference,
+                    skills_away=skills_away,
+                    documents_away=documents_away,
+                    past_missing=past_missing,
+                ):
+                    yield declined
+                return
 
             prompt = self._builder.build(
                 message=message,
                 passages=passages,
                 earlier=earlier,
-                now=self._now(),
                 max_input_tokens=profile.max_input_tokens,
-                past_missing=reference.kind is not ReferenceKind.NONE and not earlier,
+                past_missing=past_missing,
             )
             yield Status(phase=Phase.ANSWERING)
             parts: list[str] = []
@@ -364,13 +399,12 @@ class TurnEngine:
     async def _act(
         self, actions: Actions, principal: Principal, message: str
     ) -> tuple[str | None, TurnWarning | None]:
-        """What to say, when the message asks for something to be done; nothing when it does not,
-        or when that could not be told (then a warning says so, and the message is answered as a
-        question)."""
+        """What to say, when a skill fits the message; nothing when none does, or when that could
+        not be told (then a warning says so, and the message is left to the documents)."""
         unavailable = TurnWarning(
             code=WarningCode.ACTIONS_UNAVAILABLE,
-            message="it could not be told whether the message asks for something to be done: "
-            "it is answered as a question",
+            message="it could not be told whether a skill fits the message: it is left to the "
+            "documents",
         )
         try:
             async with asyncio.timeout(self._settings.actions_timeout_s):
@@ -423,11 +457,72 @@ class TurnEngine:
             untrusted_content=False,
         )
 
+    async def _declined(
+        self,
+        tenant: TenantId,
+        owner: Owner,
+        conversation_id: ConversationId,
+        message: str,
+        exchange_id: ExchangeId,
+        reference: Reference,
+        *,
+        skills_away: bool,
+        documents_away: bool,
+        past_missing: bool,
+    ) -> AsyncGenerator[TurnEvent]:
+        """The rest of a turn that has nothing to answer from. What is said is one of the sentences
+        of ``phrases``, in the language of the message, chosen by what was missing and what could
+        not be reached; no model is asked. It is remembered like any other answer."""
+        settings = self._settings
+        language = detect_language(message)
+        if past_missing:
+            text = say(language, Say.NOTHING_REMEMBERED, settings.default_language)
+        else:
+            text = nothing_to_answer_from(
+                language,
+                skills_away=skills_away,
+                documents_away=documents_away,
+                default=settings.default_language,
+            )
+        logger.info(
+            "a message was declined: nothing to answer from",
+            extra={
+                "skills": "away" if skills_away else "none fit",
+                "documents": "away" if documents_away else "nothing relevant",
+                "past_missing": past_missing,
+            },
+        )
+        yield Status(phase=Phase.ANSWERING)
+        yield Delta(text=text)
+        try:
+            await self._store.add_exchange(
+                tenant,
+                owner,
+                conversation_id=conversation_id,
+                exchange_id=exchange_id,
+                question=message,
+                answer=text,
+                citations=(),
+                untrusted=False,
+                now=self._now(),
+            )
+        except Exception:  # the answer is given; not being able to keep it is worth a line
+            logger.exception("an exchange could not be saved")
+        yield Finished(
+            reference=reference.kind,
+            exchanges_used=0,
+            passages_used=0,
+            untrusted_content=False,
+        )
+
     async def _passages(self, owner: Owner, query: str) -> Found:
         try:
             async with asyncio.timeout(self._settings.knowledge_timeout_s):
                 found = await self._documents.search(
-                    owner, query, limit=self._settings.document_passages
+                    owner,
+                    query,
+                    limit=self._settings.document_passages,
+                    min_similarity=self._settings.document_min_similarity,
                 )
         except (FactotumError, TimeoutError) as error:
             logger.warning(
@@ -437,6 +532,23 @@ class TurnEngine:
                 code=WarningCode.DOCUMENTS_UNAVAILABLE,
                 message="the documents could not be searched: the answer has none of them",
             )
+        if not found.passages and found.warnings:
+            # The meaning of the documents could not be asked (a model is away, they are being
+            # indexed again): words alone prove nothing relevant, so nothing is, and that is not the
+            # same as the documents having nothing.
+            logger.warning(
+                "the documents could only be searched by their words",
+                extra={"reasons": sorted({warning.code.value for warning in found.warnings})},
+            )
+            return (), TurnWarning(
+                code=WarningCode.DOCUMENTS_UNAVAILABLE,
+                message="the documents could not be searched by their meaning: the answer has "
+                "none of them",
+            )
+        logger.info(
+            "the documents were searched",
+            extra={"relevant": len(found.passages), "left_out": found.left_out},
+        )
         return found.passages, None
 
 

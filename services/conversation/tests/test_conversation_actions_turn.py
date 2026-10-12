@@ -269,7 +269,7 @@ class TestAMessageThatDoesNot:
 
 
 class TestWhenTheActionsServiceCannotBeAsked:
-    async def test_the_message_is_answered_as_a_question_and_the_turn_says_so(self) -> None:
+    async def test_the_message_is_left_to_the_documents_and_the_turn_says_so(self) -> None:
         harness = Harness(actions=True)
         harness.actions.outcomes.append(
             ActionsUnavailableError("the actions service could not be reached")
@@ -296,12 +296,13 @@ class TestWhenTheActionsServiceCannotBeAsked:
         assert said(events) == "Hold it [1]."
         assert phases(events) == [Phase.UNDERSTANDING, Phase.SEARCHING, Phase.ANSWERING]
 
-    async def test_a_message_that_was_read_and_is_a_question_has_no_warning(self) -> None:
+    async def test_a_message_that_was_read_and_that_no_skill_fits_has_no_warning(self) -> None:
         harness = Harness(actions=True)
 
         events = await harness.turn(alice(), "how do I reset the router?")
 
         assert warnings(events) == []
+        assert said(events) == "I found no skill that fits, and no relevant document."
 
     async def test_a_warning_comes_before_what_the_answer_goes_on_with(self) -> None:
         harness = Harness(actions=True)
@@ -319,7 +320,9 @@ class TestWhenTheActionsServiceCannotBeAsked:
         events = await harness.turn(alice(), LAMP)
 
         assert warnings(events) == [WarningCode.ACTIONS_UNAVAILABLE]
-        assert said(events) == "An answer."
+        assert said(events) == (
+            "I cannot reach the skills right now, and I found no relevant document."
+        )
 
     async def test_the_person_is_told_it_was_not_possible_and_no_more_than_that(self) -> None:
         harness = Harness(actions=True)
@@ -331,7 +334,6 @@ class TestWhenTheActionsServiceCannotBeAsked:
 
         [warning] = [e for e in events if isinstance(e, TurnWarning)]
         assert warning.message == (
-            "it could not be told whether the message asks for something to be done: "
-            "it is answered as a question"
+            "it could not be told whether a skill fits the message: it is left to the documents"
         )
         assert "500" not in warning.message

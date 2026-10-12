@@ -55,7 +55,6 @@ def build(
         message=message,
         passages=passages,
         earlier=earlier,
-        now=NOW,
         max_input_tokens=tokens,
         past_missing=past_missing,
     )
@@ -69,20 +68,32 @@ class TestAMessageThatStandsAlone:
         assert prompt.messages[1].content == "what does the warranty not cover?"
         assert (prompt.passages, prompt.exchanges) == ((), ())
 
-    def test_the_instructions_say_what_day_it_is_where_the_person_is(self) -> None:
+    def test_the_instructions_are_what_they_are_and_say_nothing_of_the_day(self) -> None:
         prompt = build()
 
-        assert prompt.messages[0].content.startswith(SYSTEM_PROMPT)
-        assert prompt.messages[0].content.endswith("Today is Monday 2026-09-21.")
+        assert prompt.messages[0].content == SYSTEM_PROMPT
+        assert "Today is" not in SYSTEM_PROMPT
+        assert "2026" not in prompt.messages[0].content
 
-    def test_a_day_is_the_one_of_the_persons_zone(self) -> None:
-        late = datetime(2026, 9, 21, 23, 30, tzinfo=UTC)  # already Tuesday in Rome
+    def test_a_model_that_knows_nothing_but_what_it_is_given_is_told_so(self) -> None:
+        """A model answers nothing by itself (ADR 0028): not the time, not the news, not what it
+        believes. The prompt used to let it "add what it knows if it is sure", and it told an hour
+        that nobody knew."""
+        assert "add what you know" not in SYSTEM_PROMPT
+        assert "answers only from what it is given" in SYSTEM_PROMPT
+        assert "never answer from your own knowledge" in SYSTEM_PROMPT
+        assert "never say that you have done something" in SYSTEM_PROMPT
 
-        prompt = builder().build(
-            message="hi", passages=(), earlier=(), now=late, max_input_tokens=BIG
-        )
+    def test_a_message_that_asks_for_something_to_be_done_is_not_a_question_for_the_sources(
+        self,
+    ) -> None:
+        """Measured with llama3.1 8B: told only to say what the sources say, a model answered
+        *restart the router* with the way to erase its settings (ADR 0028)."""
+        assert "asks you to do something" in SYSTEM_PROMPT
+        assert "say that you cannot do it, whatever the sources say" in SYSTEM_PROMPT
 
-        assert "Today is Tuesday 2026-09-22." in prompt.messages[0].content
+    def test_the_markers_are_not_part_of_what_a_model_may_say(self) -> None:
+        assert "never mention them" in SYSTEM_PROMPT
 
     def test_the_instructions_tell_the_model_what_the_markers_mean(self) -> None:
         assert '"SOURCES"' in SYSTEM_PROMPT
@@ -144,12 +155,8 @@ class TestPassages:
     def test_the_marker_is_new_for_every_prompt(self) -> None:
         plain = PromptBuilder()  # the default nonce
 
-        first = plain.build(
-            message="q", passages=(passage(),), earlier=(), now=NOW, max_input_tokens=BIG
-        )
-        second = plain.build(
-            message="q", passages=(passage(),), earlier=(), now=NOW, max_input_tokens=BIG
-        )
+        first = plain.build(message="q", passages=(passage(),), earlier=(), max_input_tokens=BIG)
+        second = plain.build(message="q", passages=(passage(),), earlier=(), max_input_tokens=BIG)
 
         assert first.messages[1].content != second.messages[1].content
 

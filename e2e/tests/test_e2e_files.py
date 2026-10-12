@@ -10,7 +10,7 @@ from factotum.contracts.knowledge import CollectionOwner, DocumentStatus
 from factotum.e2e.devices import connected
 from factotum.e2e.documents import PDF, WORD, a_pdf, a_word_document
 from factotum.e2e.house import running
-from factotum.e2e.models import FROM_YOUR_DOCUMENTS_IT, NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
+from factotum.e2e.models import FROM_YOUR_DOCUMENTS_IT, NOTHING_TO_GO_ON, ROUTER, SPOKEN_ANSWER
 
 QUESTION = "How do I reset the router?"
 MANUAL = [
@@ -98,12 +98,12 @@ class TestAFileThatWasUploaded:
                 await speaker.says_aloud(QUESTION)
 
                 # The process that read it came to nothing and the service did not: the document is
-                # one that failed, and the question was answered as one that has no document.
+                # one that failed, and the question was answered as one that has no document: with
+                # nothing to answer from, the code says so and no model is asked.
                 assert document.status is DocumentStatus.FAILED, document
                 assert document.error_code is not None
-                [prompt] = house.model.prompts
-                assert "SOURCES" not in prompt
-                assert speaker.spoken() == [NOT_FOUND, OFFER]
+                assert house.model.prompts == []
+                assert speaker.spoken() == [NOTHING_TO_GO_ON]
 
     async def test_a_file_is_read_for_what_its_bytes_are_and_not_for_what_it_is_said_to_be(
         self,

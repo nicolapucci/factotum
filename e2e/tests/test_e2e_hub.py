@@ -22,7 +22,7 @@ from factotum.contracts.identity import Principal
 from factotum.contracts.knowledge import CollectionOwner
 from factotum.e2e.devices import connected
 from factotum.e2e.house import House, running
-from factotum.e2e.models import LANGUAGES, NOT_FOUND, OFFER, ROUTER, SPOKEN_ANSWER
+from factotum.e2e.models import LANGUAGES, NOTHING_TO_GO_ON, ROUTER, SPOKEN_ANSWER
 from factotum.e2e.series import proposal_for
 from factotum.e2e.wiring import HA_TOKEN, TENANT, Auth
 
@@ -146,7 +146,7 @@ class TestADeviceThatTheHubPaired:
                 await speaker.says_aloud("What is the code of the safe?")
 
                 assert phone.spoken()[0] == "From your documents: The code of the safe is 4711."
-                assert speaker.spoken() == [NOT_FOUND, OFFER]
+                assert speaker.spoken() == [NOTHING_TO_GO_ON]
                 assert "4711" not in str(speaker.shown.shown)
 
 

@@ -33,11 +33,13 @@ from urllib.parse import parse_qs, urlsplit
 from factotum.actions.instructions.testing import Seen as WebRequest
 from factotum.actions.instructions.testing import plan_dict, step_http
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PHONE, PLAN_CASES, PlanCase
+from factotum.common.language import detect_language
 from factotum.contracts.actions import ActCode, ActOutcome, ActStatus
 from factotum.contracts.audit import ActionResult, AuditRecord
 from factotum.contracts.authorization import DecisionOutcome
 from factotum.contracts.edge import TurnEnded, TurnStatus
 from factotum.contracts.runner import Job
+from factotum.conversation.phrases import nothing_to_answer_from
 from factotum.e2e.devices import Device, connected
 from factotum.e2e.house import House
 from factotum.e2e.models import is_italian
@@ -399,9 +401,12 @@ def judge(played: Played) -> list[str]:
         problems.append(f"skill {outcome.skill} instead of {case.skill}")
     if problems:
         return problems  # what follows is about what was meant, and that is not what happened
-    if (first.chat > 0) is not (case.status is ActStatus.NO_SKILL):
+    if first.chat > 0:  # a model answers nothing by itself (ADR 0028), and none was asked
         problems.append(f"the chat model wrote {first.chat} answers")
     match case.status:
+        case ActStatus.NO_SKILL:
+            problems += _nothing_happened(first)
+            problems += _declined(case, first)
         case ActStatus.DONE:
             problems += _done(case, first)
         case ActStatus.NEEDS_CONFIRMATION:
@@ -423,6 +428,18 @@ def judge(played: Played) -> list[str]:
         case _:
             problems += _nothing_happened(first)
     return problems
+
+
+def _declined(case: PlanCase, window: Window) -> list[str]:
+    """What no skill fits is told so, in its own language, by the code: no model wrote it, and the
+    house has no document that answers it."""
+    if window.spoken is None:
+        return []
+    wanted = nothing_to_answer_from(
+        detect_language(case.message), skills_away=False, documents_away=False
+    )
+    said = " ".join(window.spoken[case.speaker])
+    return [] if said == wanted else [f"it said {said!r} instead of {wanted!r}"]
 
 
 def _nothing_happened(window: Window) -> list[str]:

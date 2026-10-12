@@ -126,7 +126,7 @@ def handled(runner: HouseRunner, asked: Job) -> JobResult:
 
 
 def window(**changes: Any) -> Window:
-    """A window in which nothing happened, as a message that is only a question leaves one."""
+    """A window in which nothing happened, as a message that no skill fits leaves one."""
     fields: dict[str, Any] = {
         "said": "words",
         "heard": "words",
@@ -140,7 +140,7 @@ def window(**changes: Any) -> Window:
         "sentences": dict.fromkeys(NAMES, 0),
         "volumes": dict.fromkeys(NAMES, 50),
         "spoken": None,
-        "chat": 1,
+        "chat": 0,
     }
     return Window(**{**fields, **changes})
 
@@ -363,11 +363,46 @@ class TestJudgingWhatCameOfAMessage:
 
         assert found[0].startswith(f"{KITCHEN} was told")
 
-    def test_what_was_to_be_left_as_a_question_and_was_answered_by_the_model_is_right(self) -> None:
+    def test_what_no_skill_fits_is_right_when_nothing_ran_and_no_model_was_asked(self) -> None:
         assert judge(Played(A_QUESTION, window())) == []
 
-    def test_a_question_that_nothing_answered_is_said(self) -> None:
-        assert judge(Played(A_QUESTION, window(chat=0))) == ["the chat model wrote 0 answers"]
+    def test_a_model_that_was_asked_to_answer_it_is_said(self) -> None:
+        assert judge(Played(A_QUESTION, window(chat=1))) == ["the chat model wrote 1 answers"]
+
+    def test_it_is_told_so_in_the_sentence_of_the_code_in_the_language_of_the_message(self) -> None:
+        english = window(
+            spoken={KITCHEN: ("I found no skill that fits, and no relevant document.",)}
+        )
+        italian = PlanCase("che ore sono", KITCHEN, None, ActStatus.NO_SKILL)
+        in_italian = window(
+            spoken={KITCHEN: ("Non ho trovato una skill adatta, né documenti pertinenti.",)}
+        )
+
+        assert judge(Played(A_QUESTION, english)) == []
+        assert judge(Played(italian, in_italian)) == []
+
+    def test_another_sentence_is_said_with_what_it_should_have_been(self) -> None:
+        wrong = window(spoken={KITCHEN: ("I do not know.",)})
+
+        [problem] = judge(Played(A_QUESTION, wrong))
+
+        assert problem == (
+            "it said 'I do not know.' instead of "
+            "'I found no skill that fits, and no relevant document.'"
+        )
+
+    def test_the_wrong_language_is_another_sentence(self) -> None:
+        italian = PlanCase("che ore sono", KITCHEN, None, ActStatus.NO_SKILL)
+        in_english = window(
+            spoken={KITCHEN: ("I found no skill that fits, and no relevant document.",)}
+        )
+
+        [problem] = judge(Played(italian, in_english))
+
+        assert problem.endswith("'Non ho trovato una skill adatta, né documenti pertinenti.'")
+
+    def test_what_was_not_heard_is_not_looked_for(self) -> None:
+        assert judge(Played(A_QUESTION, window(spoken=None))) == []
 
     def test_a_question_that_ran_something_is_said(self) -> None:
         found = judge(Played(A_QUESTION, window(jobs=(job("lamp"),))))

@@ -35,8 +35,7 @@ from factotum.e2e.models import (
     FROM_THE_MANUAL,
     FROM_YOUR_DOCUMENTS_IT,
     LANGUAGES,
-    NOT_FOUND,
-    OFFER,
+    NOTHING_TO_GO_ON,
     ROUTER,
     SPOKEN_ANSWER,
     STT_MODEL,
@@ -199,7 +198,7 @@ class TestAskingByVoice:
             await house.library.add("Home", "Router manual", ROUTER, owner=CollectionOwner.TENANT)
             async with joined(house, "speaker") as speaker:
                 # What the microphone hands over is the recordings or the streams, as it is run.
-                heard = speaker.microphone(QUESTION, "Where is it kept?")
+                heard = speaker.microphone(QUESTION, "Where is the reset button?")
                 conversing = asyncio.create_task(VoiceLoop(heard).serve(speaker.client))
                 await until(lambda: len(speaker.shown.of("turn_ended")) == 2)
                 await house.sessions.close_all()
@@ -211,8 +210,8 @@ class TestAskingByVoice:
                     TurnStatus.FINISHED,
                     TurnStatus.FINISHED,
                 ]
-                assert house.whisper.heard == [QUESTION, "Where is it kept?"]
-                assert speaker.understood() == [QUESTION, "Where is it kept?"]
+                assert house.whisper.heard == [QUESTION, "Where is the reset button?"]
+                assert speaker.understood() == [QUESTION, "Where is the reset button?"]
                 assert speaker.spoken() == SPOKEN_ANSWER * 2
 
 
@@ -226,11 +225,12 @@ class TestWhoHearsWhat:
                 await phone.says_aloud(SAFE_QUESTION)
                 await speaker.says_aloud(SAFE_QUESTION)
 
-                [for_the_phone, for_the_speaker] = house.model.prompts
+                [for_the_phone] = (
+                    house.model.prompts
+                )  # nothing was asked of the model for the speaker
                 assert SAFE in for_the_phone
-                assert "SOURCES" not in for_the_speaker  # nothing of it was in front of the model
                 assert phone.spoken()[0] == "From your documents: The code of the safe is 4711."
-                assert speaker.spoken() == [NOT_FOUND, OFFER]
+                assert speaker.spoken() == [NOTHING_TO_GO_ON]
                 assert "4711" not in str(speaker.shown.shown)
 
     async def test_what_the_tenant_shares_is_read_out_by_both(self) -> None:

@@ -147,6 +147,7 @@ class TestATurn:
         self, client: tuple[Rig, httpx.AsyncClient]
     ) -> None:
         rig, http = client
+        rig.harness.documents.passages = [passage()]
         rig.harness.chat.answers.append(["Ten ", GatewayUnavailableError("down")])
 
         response = await ask(http, "how long?")
@@ -160,6 +161,7 @@ class TestATurn:
         self, client: tuple[Rig, httpx.AsyncClient]
     ) -> None:
         rig, http = client
+        rig.harness.documents.passages = [passage()]
         rig.harness.chat.answers.append(
             ["Ten ", ErrorEvent(code="provider_timeout", message="slow")]
         )

@@ -32,6 +32,7 @@ from factotum.contracts.chat import (
 from factotum.contracts.ids import TenantId
 from factotum.contracts.models import BindingOptions, ModelBinding, ModelRole, ProviderKind
 from factotum.contracts.testing import make_model_binding
+from factotum.conversation.phrases import Say, say
 from factotum.knowledge.testing import FakeEmbedder
 from factotum.model_gateway.providers.base import (
     EmbeddingBatch,
@@ -57,6 +58,11 @@ CLOSING_IT = "Fammi sapere se ti serve altro."
 NOT_FOUND_IT = "Non l'ho trovato nei tuoi documenti."
 OFFER_IT = "Vuoi che cerchi qualcos'altro?"
 FROM_YOUR_DOCUMENTS_IT = "Dai tuoi documenti:"
+
+# What the conversation service itself says, with no model, when nothing fits and nothing in the
+# documents is relevant (ADR 0028): the stand-in model of the house is never asked for it.
+NOTHING_TO_GO_ON = say("en", Say.NO_SKILL_NO_DOCUMENTS)
+NOTHING_TO_GO_ON_IT = say("it", Say.NO_SKILL_NO_DOCUMENTS)
 
 ROUTER = "To reset the router, hold the reset button for ten seconds."
 """A sentence of a manual: the questions about the router are answered from it."""

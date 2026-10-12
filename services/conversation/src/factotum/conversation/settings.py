@@ -39,7 +39,8 @@ class ConversationSettings(DatabaseSettings):
 
     conversation_timezone: str = "UTC"
     """The time zone of the household (``Europe/Rome``): "yesterday" and "last week" are counted in
-    it, and the date the model is told is the one there."""
+    it, and so are the dates of the earlier exchanges that a model is shown. A model is not told
+    what day it is (ADR 0028)."""
 
     conversation_session_minutes: int = Field(default=30, ge=1, le=24 * 60)
     """How long a conversation stays the one a message that names none belongs to."""
@@ -57,6 +58,18 @@ class ConversationSettings(DatabaseSettings):
 
     conversation_document_passages: int = Field(default=6, ge=1, le=20)
     """How many passages of the documents a turn asks for."""
+
+    conversation_documents_min_similarity: float = Field(default=0.5, ge=0, le=1)
+    """How alike, by meaning, a passage of the documents must be to the message to be shown to a
+    model (ADR 0028): under it a passage is not relevant, and a message with nothing relevant and
+    nothing said before to answer from is not given to a model at all. Models differ in how near
+    unrelated texts are (this is measured with ``bge-m3``, whose cosines for what has nothing to do
+    with a library are mostly under 0.5, and for what a library answers over it): tune it to yours,
+    with ``docs/knowledge.md``."""
+
+    conversation_default_language: str = "en"
+    """The language the assistant answers in when a message does not say (``it``). It has words
+    for English and Italian; any other is answered in English."""
 
     conversation_knowledge_timeout_s: float = Field(default=4.0, gt=0, le=60)
     """How long the documents are waited for before the answer goes on without them."""
@@ -111,6 +124,8 @@ class ConversationSettings(DatabaseSettings):
             recent_exchanges=self.conversation_recent_exchanges,
             history_hits=self.conversation_history_hits,
             document_passages=self.conversation_document_passages,
+            document_min_similarity=self.conversation_documents_min_similarity,
+            default_language=self.conversation_default_language,
             knowledge_timeout_s=self.conversation_knowledge_timeout_s,
             actions_timeout_s=self.conversation_actions_timeout_s,
             session_gap=timedelta(minutes=self.conversation_session_minutes),

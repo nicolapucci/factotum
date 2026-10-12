@@ -54,9 +54,20 @@ class TestDefaults:
             recent_exchanges=3,
             history_hits=3,
             document_passages=6,
+            document_min_similarity=0.5,
+            default_language="en",
             knowledge_timeout_s=4.0,
             session_gap=timedelta(minutes=30),
         )
+
+    def test_a_passage_is_shown_to_a_model_only_if_it_is_as_alike_as_bge_m3_says_half(self) -> None:
+        """The floor is measured with ``bge-m3`` (docs/knowledge.md): what a library answers is
+        over it, and what has nothing to do with it mostly under."""
+        assert load().conversation_documents_min_similarity == 0.5
+        assert load().turn.document_min_similarity == 0.5
+
+    def test_the_assistant_answers_in_english_when_it_is_not_told_otherwise(self) -> None:
+        assert load().conversation_default_language == "en"
 
 
 class TestReadingTheEnvironment:
@@ -71,6 +82,8 @@ class TestReadingTheEnvironment:
         monkeypatch.setenv("FACTOTUM_CONVERSATION_SESSION_MINUTES", "10")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_RETENTION_DAYS", "90")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_DOCUMENT_PASSAGES", "4")
+        monkeypatch.setenv("FACTOTUM_CONVERSATION_DOCUMENTS_MIN_SIMILARITY", "0.35")
+        monkeypatch.setenv("FACTOTUM_CONVERSATION_DEFAULT_LANGUAGE", "it")
         monkeypatch.setenv("FACTOTUM_CONVERSATION_SHARED_WINDOW_SECONDS", "90")
 
         settings = load()
@@ -83,6 +96,8 @@ class TestReadingTheEnvironment:
         assert settings.retention == timedelta(days=90)
         assert settings.turn.session_gap == timedelta(minutes=10)
         assert settings.turn.document_passages == 4
+        assert settings.turn.document_min_similarity == 0.35
+        assert settings.turn.default_language == "it"
         assert settings.turn.shared_window == timedelta(seconds=90)
         assert settings.shared_keep == timedelta(seconds=180)
 
@@ -117,6 +132,8 @@ class TestWhatIsRefused:
             {"conversation_actions_timeout_s": 601},
             {"conversation_gate_timeout_s": 61},
             {"conversation_history_min_similarity": 1.5},
+            {"conversation_documents_min_similarity": 1.5},
+            {"conversation_documents_min_similarity": -0.1},
             {"conversation_retention_days": -1},
             {"conversation_embed_batch": 0},
         ],

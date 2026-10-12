@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from factotum.contracts.actions import ActOutcome, ActStatus
 from factotum.contracts.chat import (
     ChatRequest,
     EventUnion,
@@ -30,6 +31,7 @@ from factotum.contracts.conversation import (
     WarningCode,
 )
 from factotum.contracts.errors import (
+    ActionsUnavailableError,
     ChatNotConfiguredError,
     ContextTooLongError,
     ConversationNotFoundError,
@@ -38,7 +40,8 @@ from factotum.contracts.errors import (
     KnowledgeUnavailableError,
 )
 from factotum.contracts.identity import Owner, Principal
-from factotum.contracts.ids import ConversationId, DeviceId
+from factotum.contracts.ids import CollectionId, ConversationId, DeviceId
+from factotum.contracts.knowledge import SearchWarning, SearchWarningCode
 from factotum.contracts.models import ModelRole
 from factotum.contracts.testing import (
     make_tenant_id,
@@ -139,15 +142,30 @@ class TestATurnWithNoHistory:
 
         assert harness.documents.queries == [(owner_of(alice()), "how do I reset the router?", 4)]
 
-    async def test_without_passages_the_message_is_sent_as_it_is(self) -> None:
+    async def test_the_floor_of_meaning_is_asked_for_and_is_the_one_the_settings_say(self) -> None:
+        harness = Harness(settings=TurnSettings(document_min_similarity=0.62))
+
+        await harness.turn(alice(), "how do I reset the router?")
+
+        assert harness.documents.floors == [0.62]
+        assert TurnSettings().document_min_similarity == 0.5
+
+    async def test_a_passage_that_is_not_alike_enough_is_never_shown_to_the_model(self) -> None:
         harness = Harness()
+        harness.documents.passages = [
+            passage("A recipe for bread.", similarity=0.31),
+            passage("Hold the button.", similarity=0.74),
+        ]
 
-        await harness.turn(alice(), "what is the capital of Australia?")
+        events = await harness.turn(alice(), "how do I reset the router?")
 
-        assert prompt_of(harness.chat) == "what is the capital of Australia?"
+        assert "Hold the button." in prompt_of(harness.chat)
+        assert "bread" not in prompt_of(harness.chat)
+        assert finished(events).passages_used == 1
 
     async def test_the_length_of_the_answer_and_the_usage_come_from_the_model(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat.max_output_tokens = 300
 
         events = await harness.turn(alice(), "hello")
@@ -157,6 +175,7 @@ class TestATurnWithNoHistory:
 
     async def test_the_exchange_is_saved_when_the_answer_is_complete(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat.answers.append(["Ten ", "seconds."])
 
         events = await harness.turn(alice(), "how long do I hold the button?")
@@ -211,15 +230,197 @@ class TestATurnWithNoHistory:
         assert exchange.untrusted is with_passages
 
 
+class TestWhenThereIsNothingToAnswerFrom:
+    """A model answers nothing by itself (ADR 0028): with no skill that fits, no relevant passage
+    and nothing said before that the message refers to, it is not asked."""
+
+    async def test_the_model_is_not_asked_and_the_code_says_what_was_missing(self) -> None:
+        harness = Harness()
+
+        events = await harness.turn(alice(), "what is the capital of Australia?")
+
+        assert harness.chat.streams == []
+        assert harness.chat.classifications == []
+        assert kinds(events) == ["started", "status", "status", "delta", "finished"]
+        assert phases(events) == [Phase.SEARCHING, Phase.ANSWERING]
+        assert said(events) == "I found no skill that fits, and no relevant document."
+        assert finished(events).passages_used == finished(events).exchanges_used == 0
+        assert finished(events).untrusted_content is False
+        assert finished(events).usage is None
+
+    async def test_it_is_said_in_the_language_of_the_message(self) -> None:
+        harness = Harness()
+
+        events = await harness.turn(alice(), "che ore sono")
+
+        assert said(events) == "Non ho trovato una skill adatta, né documenti pertinenti."
+
+    async def test_a_language_that_cannot_be_told_is_answered_in_the_one_it_is_set_to(self) -> None:
+        harness = Harness(settings=TurnSettings(default_language="it"))
+
+        events = await harness.turn(alice(), "Carrara")
+
+        assert said(events) == "Non ho trovato una skill adatta, né documenti pertinenti."
+
+    async def test_the_documents_that_were_asked_for_are_the_ones_that_had_nothing_relevant(
+        self,
+    ) -> None:
+        harness = Harness()
+        harness.documents.passages = [passage("A recipe for bread.", similarity=0.31)]
+
+        events = await harness.turn(alice(), "what time is it")
+
+        assert harness.chat.streams == []
+        assert said(events) == "I found no skill that fits, and no relevant document."
+        assert harness.documents.floors == [0.5]
+
+    async def test_it_is_remembered_like_any_other_answer(self) -> None:
+        harness = Harness()
+
+        events = await harness.turn(alice(), "what time is it")
+
+        [started] = [e for e in events if isinstance(e, Started)]
+        _, [exchange] = await harness.store.get_conversation(
+            TENANT, owner_of(alice()), started.conversation_id
+        )
+        assert exchange.question == "what time is it"
+        assert exchange.answer == "I found no skill that fits, and no relevant document."
+        assert (exchange.citations, exchange.untrusted) == ((), False)
+
+    async def test_documents_that_could_not_be_reached_are_said_to_be_so_and_not_to_have_nothing(
+        self,
+    ) -> None:
+        harness = Harness()
+        harness.documents.failure = KnowledgeUnavailableError("down")
+
+        events = await harness.turn(alice(), "what time is it")
+
+        assert warnings(events) == [WarningCode.DOCUMENTS_UNAVAILABLE]
+        assert said(events) == (
+            "I found no skill that fits, and I cannot reach your documents right now."
+        )
+
+    async def test_documents_whose_meaning_could_not_be_asked_are_not_ones_with_nothing_either(
+        self,
+    ) -> None:
+        harness = Harness()
+        harness.documents.warnings = [
+            SearchWarning(
+                collection_id=CollectionId(uuid4()),
+                code=SearchWarningCode.VECTOR_UNAVAILABLE,
+                message="the embedding model could not be reached",
+            )
+        ]
+
+        events = await harness.turn(alice(), "what time is it")
+
+        assert warnings(events) == [WarningCode.DOCUMENTS_UNAVAILABLE]
+        [warning] = [e for e in events if isinstance(e, TurnWarning)]
+        assert warning.message == (
+            "the documents could not be searched by their meaning: the answer has none of them"
+        )
+        assert "cannot reach your documents" in said(events)
+
+    async def test_a_message_that_refers_to_what_nobody_remembers_says_so(self) -> None:
+        harness = Harness()
+        harness.documents.passages = [passage()]
+        await harness.turn(alice(), "first")
+        harness.documents.passages = []
+        harness.clock.advance(hours=2)  # the next message begins another conversation
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
+        streams_before = len(harness.chat.streams)
+
+        events = await harness.turn(alice(), "and in English?")
+
+        assert len(harness.chat.streams) == streams_before
+        assert said(events) == "I do not remember what was said before."
+        assert finished(events).reference is ReferenceKind.CONTINUATION
+
+    async def test_a_message_that_refers_to_the_past_is_answered_in_its_language(self) -> None:
+        harness = Harness()
+        harness.documents.passages = [passage()]
+        await harness.turn(alice(), "first")
+        harness.documents.passages = []
+        harness.clock.advance(hours=2)
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
+
+        events = await harness.turn(alice(), "e in inglese?")
+
+        assert said(events) == "Non ricordo cosa è stato detto prima."
+
+    async def test_what_nobody_remembers_is_not_what_the_documents_had_nothing_of(self) -> None:
+        """A message that refers to the past and has a relevant passage is still the model's to
+        answer, with the note that none of the past is to be had."""
+        harness = Harness()
+        harness.documents.passages = [passage()]
+        await harness.turn(alice(), "first")
+        harness.clock.advance(hours=2)
+        harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
+
+        await harness.turn(alice(), "and in English?")
+
+        assert PAST_MISSING in prompt_of(harness.chat)
+
+    async def test_the_skills_that_could_not_be_asked_are_said_to_be_so(self) -> None:
+        harness = Harness(actions=True)
+        harness.actions.outcomes.append(ActionsUnavailableError("down"))
+
+        events = await harness.turn(alice(), "what time is it")
+
+        assert warnings(events) == [WarningCode.ACTIONS_UNAVAILABLE]
+        assert (
+            said(events) == "I cannot reach the skills right now, and I found no relevant document."
+        )
+
+    async def test_neither_the_skills_nor_the_documents_could_be_asked(self) -> None:
+        harness = Harness(actions=True)
+        harness.actions.outcomes.append(ActionsUnavailableError("down"))
+        harness.documents.failure = KnowledgeUnavailableError("down")
+
+        events = await harness.turn(alice(), "what time is it")
+
+        assert said(events) == "I cannot reach the skills or your documents right now."
+
+    async def test_a_skill_that_fits_has_the_word_and_the_documents_are_not_asked(self) -> None:
+        harness = Harness(actions=True)
+        harness.actions.outcomes.append(
+            ActOutcome(status=ActStatus.DONE, reply="Done.", skill="lamp")
+        )
+
+        events = await harness.turn(alice(), "turn on the lamp")
+
+        assert said(events) == "Done."
+        assert harness.documents.queries == []
+        assert harness.chat.streams == []
+
+    async def test_what_a_person_in_another_tenant_said_does_not_make_material_for_this_one(
+        self,
+    ) -> None:
+        harness = Harness()
+        harness.documents.passages = [passage()]
+        stranger = make_user_principal(tenant_id=make_tenant_id(), user_id=make_user_id())
+        await harness.turn(stranger, "how do I reset the router?")
+        harness.documents.passages = []
+
+        events = await harness.turn(alice(), "how do I reset the router?")
+
+        assert said(events) == "I found no skill that fits, and no relevant document."
+        assert len(harness.chat.streams) == 1  # the stranger's, and none of ours
+
+
 class TestAMessageThatStandsAlone:
     async def test_it_carries_nothing_of_what_was_said_before(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage("Paris is the capital of France.")]
+        harness.chat.answers.append(["Something."])
         await harness.turn(alice(), "what is the wifi password of the guest network?")
         harness.chat.answers.append(["Paris."])
 
         events = await harness.turn(alice(), "what is the capital of France?")
 
-        assert prompt_of(harness.chat) == "what is the capital of France?"
+        assert "EARLIER EXCHANGES" not in prompt_of(harness.chat)
+        assert "wifi" not in prompt_of(harness.chat)
+        assert prompt_of(harness.chat).endswith("Message: what is the capital of France?")
         assert finished(events).reference is ReferenceKind.NONE
         assert finished(events).exchanges_used == 0
 
@@ -240,8 +441,10 @@ class TestAMessageThatStandsAlone:
 
 class TestAContinuation:
     async def turn_after_one(self, harness: Harness, question: str = "how do I reset it?") -> None:
+        harness.documents.passages = [passage()]  # something to answer the first one from
         harness.chat.answers.append(["Hold the button."])
         await harness.turn(alice(), question)
+        harness.documents.passages = []  # and nothing for the next: it carries on the last
         harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
 
     async def test_the_exchange_just_before_is_what_the_message_carries_on(self) -> None:
@@ -271,10 +474,12 @@ class TestAContinuation:
 
     async def test_only_the_last_few_exchanges_come_back_and_all_of_them_are_in_order(self) -> None:
         harness = Harness(settings=TurnSettings(recent_exchanges=3))
+        harness.documents.passages = [passage()]
         for n in range(5):
             harness.chat.answers.append([f"answer {n}"])
             await harness.turn(alice(), f"question {n}")
             harness.clock.advance(minutes=1)
+        harness.documents.passages = []
         harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
 
         events = await harness.turn(alice(), "and after that?")
@@ -287,6 +492,7 @@ class TestAContinuation:
 
     async def test_a_conversation_that_has_just_begun_has_nothing_to_carry_on(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         await harness.turn(alice(), "long ago")
         harness.clock.advance(hours=2)  # the next message begins another conversation
         harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
@@ -294,15 +500,17 @@ class TestAContinuation:
         events = await harness.turn(alice(), "and in English?")
 
         assert finished(events).exchanges_used == 0
-        assert "EARLIER EXCHANGES" not in prompt_of(harness.chat)
+        assert "EARLIER EXCHANGES" not in prompt_of(harness.chat)  # the passage is what it has
 
 
 class TestSomethingSaidEarlier:
     async def a_day_after(self, harness: Harness) -> None:
+        harness.documents.passages = [passage()]  # something to answer from, then and not now
         harness.chat.answers.append(["Hold the reset button for ten seconds."])
         await harness.turn(alice(), "how do I reset the router?")
         harness.chat.answers.append(["Carbonara has eggs."])
         await harness.turn(alice(), "what is in a carbonara?")
+        harness.documents.passages = []
         harness.clock.advance(days=1)
 
     async def test_the_exchange_that_was_meant_is_found_and_quoted(self) -> None:
@@ -348,9 +556,29 @@ class TestSomethingSaidEarlier:
         assert "Hold the reset button for ten seconds." in prompt_of(harness.chat)
         assert finished(events).exchanges_used == 1
 
-    async def test_when_what_was_referred_to_is_not_found_the_model_is_told_so(self) -> None:
+    async def test_what_was_referred_to_and_not_found_with_nothing_else_asks_no_model(
+        self,
+    ) -> None:
         harness = Harness()
         await self.a_day_after(harness)
+        harness.chat.decisions.append(
+            Reference(kind=ReferenceKind.EARLIER, topic="submarine", when=Period.LAST_MONTH)
+        )
+        streams_before = len(harness.chat.streams)
+
+        events = await harness.turn(alice(), "what did you tell me last month about the submarine?")
+
+        assert len(harness.chat.streams) == streams_before
+        assert said(events) == "I do not remember what was said before."
+        assert finished(events).exchanges_used == 0
+        assert finished(events).reference is ReferenceKind.EARLIER
+
+    async def test_when_what_was_referred_to_is_not_found_but_a_passage_is_the_model_is_told_so(
+        self,
+    ) -> None:
+        harness = Harness()
+        await self.a_day_after(harness)
+        harness.documents.passages = [passage("Submarines dive.")]
         harness.chat.decisions.append(
             Reference(kind=ReferenceKind.EARLIER, topic="submarine", when=Period.LAST_MONTH)
         )
@@ -359,6 +587,7 @@ class TestSomethingSaidEarlier:
 
         assert PAST_MISSING in prompt_of(harness.chat)
         assert finished(events).exchanges_used == 0
+        assert finished(events).passages_used == 1
 
     async def test_the_model_is_not_told_so_when_something_was_found(self) -> None:
         harness = Harness()
@@ -424,7 +653,8 @@ class TestSomethingSaidEarlier:
 
     async def test_what_an_earlier_turn_did_not_have_in_it_leaves_this_one_clean(self) -> None:
         harness = Harness()
-        await harness.turn(alice(), "how do I reset the router?")
+        harness.documents.passages = []
+        await harness.turn(alice(), "how do I reset the router?")  # nothing to answer from
         harness.clock.advance(hours=3)
         harness.chat.decisions.append(Reference(kind=ReferenceKind.EARLIER, topic="router"))
 
@@ -439,6 +669,7 @@ class TestWhenSomethingGoesWrongAlong:
         self,
     ) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         await harness.turn(alice(), "first")
         harness.chat.decisions.append(GatewayUnavailableError("down"))
 
@@ -452,14 +683,16 @@ class TestWhenSomethingGoesWrongAlong:
     @pytest.mark.parametrize(
         "failure", [KnowledgeUnavailableError("down"), TimeoutError()], ids=["down", "slow"]
     )
-    async def test_documents_that_do_not_answer_leave_the_answer_without_them(
+    async def test_documents_that_do_not_answer_leave_the_turn_with_nothing_to_answer_from(
         self, failure: Exception
     ) -> None:
         harness = Harness(settings=TurnSettings(knowledge_timeout_s=0.05))
         harness.documents.failure = failure
         if isinstance(failure, TimeoutError):
 
-            async def slow(owner: Owner, query: str, *, limit: int) -> object:
+            async def slow(
+                owner: Owner, query: str, *, limit: int, min_similarity: float | None = None
+            ) -> object:
                 await asyncio.sleep(5)
                 raise AssertionError("it should have been given up on")
 
@@ -470,7 +703,10 @@ class TestWhenSomethingGoesWrongAlong:
         assert warnings(events) == [WarningCode.DOCUMENTS_UNAVAILABLE]
         assert finished(events).passages_used == 0
         assert finished(events).untrusted_content is False
-        assert said(events) == "An answer."
+        assert said(events) == (
+            "I found no skill that fits, and I cannot reach your documents right now."
+        )
+        assert harness.chat.streams == []
 
     async def test_a_message_that_is_being_read_does_not_hold_up_the_documents_it_was_not_about(
         self,
@@ -492,6 +728,7 @@ class TestWhenSomethingGoesWrongAlong:
                 raise RuntimeError("disk full")
 
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.store = Broken()
         harness.engine._store = harness.store  # type: ignore[assignment]
 
@@ -499,6 +736,24 @@ class TestWhenSomethingGoesWrongAlong:
             events = await harness.turn(alice(), "hello")
 
         assert said(events) == "An answer."
+        assert isinstance(events[-1], Finished)
+        assert "could not be saved" in caplog.text
+
+    async def test_nor_does_it_take_away_the_word_that_there_was_nothing_to_answer_from(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class Broken(InMemoryStore):
+            async def add_exchange(self, *args: object, **kwargs: object) -> object:  # type: ignore[override]
+                raise RuntimeError("disk full")
+
+        harness = Harness()
+        harness.store = Broken()
+        harness.engine._store = harness.store  # type: ignore[assignment]
+
+        with caplog.at_level(logging.ERROR, logger="factotum.conversation"):
+            events = await harness.turn(alice(), "what time is it")
+
+        assert said(events) == "I found no skill that fits, and no relevant document."
         assert isinstance(events[-1], Finished)
         assert "could not be saved" in caplog.text
 
@@ -532,6 +787,7 @@ class TestWhatCannotBeGotOver:
 
     async def test_a_failure_after_the_start_is_the_last_event_and_leaves_nothing(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat.answers.append(["Ten ", GatewayUnavailableError("down")])
 
         events = await harness.turn(alice(), "how long?")
@@ -546,6 +802,7 @@ class TestWhatCannotBeGotOver:
         from factotum.contracts.chat import ErrorEvent
 
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat.answers.append(["Ten ", ErrorEvent(code="provider_timeout", message="slow")])
 
         events = await harness.turn(alice(), "how long?")
@@ -556,6 +813,7 @@ class TestWhatCannotBeGotOver:
 
     async def test_no_answer_at_all_is_a_failure_and_leaves_nothing(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat.answers.append(["  "])
 
         events = await harness.turn(alice(), "how long?")
@@ -573,6 +831,7 @@ class TestWhatCannotBeGotOver:
                 yield FinishEvent(reason=FinishReason.CONTENT_FILTER)
 
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat = Refusing()
         harness.engine._chat = harness.chat
 
@@ -583,6 +842,7 @@ class TestWhatCannotBeGotOver:
 
     async def test_a_caller_that_goes_away_leaves_nothing_and_nothing_running(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat.answers.append(["Ten ", "seconds ", "of holding."])
         stream = harness.engine.run(alice(), TurnRequest(message="how long?"))
 
@@ -608,8 +868,10 @@ class TestASharedDevice:
     most likely still there."""
 
     async def a_first_exchange(self, harness: Harness) -> None:
+        harness.documents.passages = [passage()]  # something to answer from, then and not now
         harness.chat.answers.append(["Hold the reset button for ten seconds."])
         await harness.turn(kitchen(), "how do I reset the router?")
+        harness.documents.passages = []
 
     async def test_a_follow_up_within_the_minute_is_understood_with_what_was_just_said(
         self,
@@ -634,7 +896,8 @@ class TestASharedDevice:
 
         assert harness.chat.classifications == []
         assert finished(events).exchanges_used == 0
-        assert "how do I reset the router?" not in prompt_of(harness.chat)
+        assert len(harness.chat.streams) == 1  # the first one's: this one has nothing to go on
+        assert said(events) == "I found no skill that fits, and no relevant document."
 
     async def test_a_message_after_the_minute_starts_a_conversation_and_one_within_it_carries_on(
         self,
@@ -712,8 +975,10 @@ class TestASharedDevice:
 
     async def test_a_person_on_a_personal_device_is_not_held_to_the_minute(self) -> None:
         harness = Harness()
+        harness.documents.passages = [passage()]
         harness.chat.answers.append(["Hold the reset button for ten seconds."])
         await harness.turn(alice(), "how do I reset the router?")
+        harness.documents.passages = []
         harness.clock.advance(minutes=20)
         harness.chat.decisions.append(Reference(kind=ReferenceKind.CONTINUATION))
 

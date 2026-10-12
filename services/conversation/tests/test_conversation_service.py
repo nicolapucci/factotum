@@ -19,7 +19,7 @@ from factotum.contracts.identity import Principal
 from factotum.contracts.ids import ConversationId
 from factotum.contracts.testing import make_tenant_id, make_tenant_principal, make_user_principal
 from factotum.conversation.service import ConversationService
-from factotum.conversation.testing import Harness
+from factotum.conversation.testing import Harness, passage
 
 TENANT = make_tenant_id()
 ALICE = make_user_principal(tenant_id=TENANT)
@@ -46,7 +46,8 @@ class TestAnybodyMayTalk:
     async def test_a_turn_is_answered_for_the_subject_the_caller_acts_for(
         self, who: Principal
     ) -> None:
-        _, service = rig()
+        harness, service = rig()
+        harness.documents.passages = [passage()]
 
         events = await talk(service, who, "hello")
 

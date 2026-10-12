@@ -17,8 +17,11 @@ from factotum.model_client import Delegation
 
 
 class DocumentSearch(Protocol):
-    async def search(self, owner: Owner, query: str, *, limit: int) -> SearchResult:
-        """The passages of ``owner``'s documents that answer ``query``. Raises
+    async def search(
+        self, owner: Owner, query: str, *, limit: int, min_similarity: float | None = None
+    ) -> SearchResult:
+        """The passages of ``owner``'s documents that answer ``query``, and only the ones at least
+        ``min_similarity`` alike to it in meaning when that is given (ADR 0028). Raises
         ``KnowledgeUnavailableError`` when they cannot be searched."""
         ...
 
@@ -28,10 +31,12 @@ class KnowledgeClient:
         self._client = client
         self._delegation = delegation
 
-    async def search(self, owner: Owner, query: str, *, limit: int) -> SearchResult:
-        body = SearchRequest(query=query[:MAX_QUERY_CHARS], limit=limit).model_dump(
-            mode="json", exclude_none=True
-        )
+    async def search(
+        self, owner: Owner, query: str, *, limit: int, min_similarity: float | None = None
+    ) -> SearchResult:
+        body = SearchRequest(
+            query=query[:MAX_QUERY_CHARS], limit=limit, min_similarity=min_similarity
+        ).model_dump(mode="json", exclude_none=True)
         try:
             response = await self._client.post(
                 "/v1/search", json=body, headers=dict(self._delegation.headers(owner))

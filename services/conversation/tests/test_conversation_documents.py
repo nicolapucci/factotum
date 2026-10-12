@@ -42,6 +42,30 @@ class TestSearching:
         assert json.loads(sent.content) == {"query": "how do I reset the router?", "limit": 6}
 
     @respx.mock
+    async def test_the_floor_of_meaning_goes_with_the_search_when_there_is_one(
+        self, documents: KnowledgeClient
+    ) -> None:
+        found = SearchResult(passages=(passage("Hold the button."),), left_out=2)
+        route = respx.post(f"{URL}/v1/search").respond(200, json=found.model_dump(mode="json"))
+
+        result = await documents.search(USER, "router", limit=6, min_similarity=0.5)
+
+        assert json.loads(route.calls.last.request.content) == {
+            "query": "router",
+            "limit": 6,
+            "min_similarity": 0.5,
+        }
+        assert result.left_out == 2
+
+    @respx.mock
+    async def test_a_search_without_a_floor_asks_for_none(self, documents: KnowledgeClient) -> None:
+        route = respx.post(f"{URL}/v1/search").respond(200, json={"passages": []})
+
+        await documents.search(USER, "router", limit=6)
+
+        assert "min_similarity" not in json.loads(route.calls.last.request.content)
+
+    @respx.mock
     async def test_the_warnings_of_the_search_come_back_too(
         self, documents: KnowledgeClient
     ) -> None:

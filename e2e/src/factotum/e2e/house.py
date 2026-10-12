@@ -53,7 +53,7 @@ from factotum.conversation.documents import KnowledgeClient
 from factotum.conversation.gate import ReferenceGate
 from factotum.conversation.history import History
 from factotum.conversation.service import ConversationService
-from factotum.conversation.turn import TurnEngine
+from factotum.conversation.turn import TurnEngine, TurnSettings
 from factotum.devices.home import parse_home
 from factotum.e2e.models import HouseholdModel, bindings
 from factotum.e2e.runner import HouseRunner
@@ -85,6 +85,12 @@ each (see its ``conftest.py``), which is what changes this."""
 
 TIMEOUT_S = 10.0
 """What a test waits for something that should be immediate: a stuck one ends instead of hanging."""
+
+STAND_IN_FLOOR = 0.25
+"""How alike, by meaning, a passage must be to a question for the house to show it to a model (ADR
+0028). The default of the conversation service is calibrated for ``bge-m3``; the stand-in of the
+house measures the words that two texts share (a bag of hashed words), so a question about the
+router is 0.5 to 0.6 alike to the manual of the router, and one about nothing in it is under 0.2."""
 
 _ROOT = Path(__file__).resolve().parents[4]
 HOME_FILE = _ROOT / "config" / "devices.example.yaml"
@@ -454,6 +460,7 @@ async def running(
             ReferenceGate(chat),
             PromptBuilder(),
             actions=ActionsClient(actions, wiring.principals),
+            settings=TurnSettings(document_min_similarity=STAND_IN_FLOOR),
         )
         conversation = await reach(
             create_conversation_app(

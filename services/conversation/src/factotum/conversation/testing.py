@@ -129,6 +129,7 @@ def passage(
     page: int | None = 12,
     headings: tuple[str, ...] = ("Router", "Reset"),
     score: float = 1.0,
+    similarity: float | None = 0.8,
 ) -> Passage:
     return Passage(
         chunk_id=ChunkId(uuid4()),
@@ -139,24 +140,43 @@ def passage(
         context=context or text,
         location=Location(page=page, headings=headings),
         score=score,
+        similarity=similarity,
         matched_by=("vector", "text"),
     )
 
 
 class FakeDocuments:
-    """The search of the user's documents, with what it finds and how it fails told by the test."""
+    """The search of the user's documents, with what it finds and how it fails told by the test.
+    As the real search does, it leaves out (and counts) what is not alike enough to the query when
+    a floor is asked for: a passage that was given no similarity is the one the words found."""
 
     def __init__(self, *passages: Passage) -> None:
         self.passages = list(passages)
         self.warnings: list[SearchWarning] = []
         self.queries: list[tuple[Owner, str, int]] = []
+        self.floors: list[float | None] = []
+        """The floor of each search, in turn."""
+
         self.failure: Exception | None = None
 
-    async def search(self, owner: Owner, query: str, *, limit: int) -> SearchResult:
+    async def search(
+        self, owner: Owner, query: str, *, limit: int, min_similarity: float | None = None
+    ) -> SearchResult:
         self.queries.append((owner, query, limit))
+        self.floors.append(min_similarity)
         if self.failure is not None:
             raise self.failure
-        return SearchResult(passages=tuple(self.passages[:limit]), warnings=tuple(self.warnings))
+        kept = [
+            p
+            for p in self.passages
+            if min_similarity is None
+            or (p.similarity is not None and p.similarity >= min_similarity)
+        ]
+        return SearchResult(
+            passages=tuple(kept[:limit]),
+            warnings=tuple(self.warnings),
+            left_out=len(self.passages) - len(kept),
+        )
 
 
 class FakeActions:

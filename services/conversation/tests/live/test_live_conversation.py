@@ -410,6 +410,53 @@ async def test_a_conversation_carries_no_history_until_a_message_refers_to_it(
     )
 
 
+NOTHING_TO_GO_ON = {
+    "en": "I found no skill that fits, and no relevant document.",
+    "it": "Non ho trovato una skill adatta, né documenti pertinenti.",
+}
+
+
+async def test_what_nothing_answers_is_declined_by_the_code_with_no_model_to_ask(
+    conversation: Conversation,
+) -> None:
+    """ADR 0028, the first line: what no document is about is under the floor of meaning, so the
+    code says so (a model could not write this exact sentence) and the model is not asked."""
+    asked = {
+        "Tell me a joke.": "en",
+        "Who wrote the Divine Comedy?": "en",
+        "What is your name?": "en",
+        "Chi ha scritto la Divina Commedia?": "it",
+        "Dimmi una barzelletta.": "it",
+        "Come ti chiami?": "it",
+        "Ciao!": "it",
+    }
+    for message, language in asked.items():
+        talk = await conversation.say(message)
+        assert talk.said == NOTHING_TO_GO_ON[language], message
+        assert talk.finished.passages_used == 0
+        assert talk.finished.usage is None  # nothing was written by a model
+
+
+async def test_what_the_floor_lets_through_and_the_sources_do_not_answer_is_not_answered_from_them(
+    conversation: Conversation,
+) -> None:
+    """The second line: a passage that is near (an oven in the recipe, the router in its manual) and
+    does not answer. The model is asked, and says it cannot, or that it did not find it, instead of
+    reading out the recipe or the way to erase the settings of a router that was to be restarted."""
+    for message, forbidden in (
+        ("Turn on the oven.", ("forty", "40 minutes", "starter")),
+        ("Restart the router.", ("ten seconds", "factory", "reset button")),
+        ("How do I make a pizza?", ("forty", "40 minutes", "starter")),
+    ):
+        talk = await conversation.say(message)
+        said = talk.said.lower()
+        print(f"    {talk.said.strip()!r}")
+        assert not any(word in said for word in forbidden), (message, talk.said)
+        # (A pizza is far enough from a loaf for the floor, and then it is the code that says so.)
+        said_no = ("cannot", "can't", "did not find", "not find", "no relevant document")
+        assert any(word in said for word in said_no), (message, talk.said)
+
+
 async def test_what_was_said_is_found_by_meaning_in_another_language(
     conversation: Conversation,
 ) -> None:
