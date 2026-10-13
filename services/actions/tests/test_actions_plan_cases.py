@@ -12,10 +12,9 @@ from factotum.actions.core import platform_skills
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PHONE, PLAN_CASES, PlanCase
 from factotum.actions.rig import ActionsRig, plan_of
 from factotum.actions.skills import load_folder
-from factotum.actions.testing import FakeSpeech
+from factotum.actions.testing import FakeSpeech, a_device_answers
 from factotum.actions.values import check_values
 from factotum.contracts.actions import ActStatus
-from factotum.contracts.commands import CommandResult
 from factotum.contracts.skills import SkillManifest, SkillTarget
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -24,7 +23,8 @@ EXAMPLES = ROOT / "skills" / "examples"
 
 ITALIAN = (
     "accendi", "spegni", "metti", "apri", "chiudi", "alza", "abbassa", "che ", "riavvia",
-    "com'è", "annuncia", "dì ", "prepara",
+    "com'è", "annuncia", "dì ", "prepara", "imposta", "avvisami", "annulla", "ferma", "quanto",
+    "svegliami", "cancella", "a che ora", "quali",
 )  # fmt: skip
 
 
@@ -133,9 +133,7 @@ async def test_a_planner_that_reads_it_right_gets_the_outcome_the_case_expects(
     rig = ActionsRig(
         home_text=HOME_TEXT, core=platform_skills(FakeSpeech()), every_skill_is_offered=True
     )
-    rig.dispatcher.answer = CommandResult.ok(
-        {"volume": 50, "muted": False}
-    )  # a device says how it is
+    rig.dispatcher.responder = a_device_answers  # a device says how it is, and what it set
     skills, _ = load_folder(EXAMPLES)
     for skill in skills:  # enabled but not indexed
         installed = await rig.store.install(rig.tenant, rig.shared_owner, skill, now=rig.clock())

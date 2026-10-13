@@ -39,10 +39,12 @@ from factotum.contracts.audit import ActionResult, AuditRecord
 from factotum.contracts.authorization import DecisionOutcome
 from factotum.contracts.edge import TurnEnded, TurnStatus
 from factotum.contracts.runner import Job
+from factotum.contracts.timekeeping import TimeState, answer_in
 from factotum.conversation.phrases import nothing_to_answer_from
 from factotum.e2e.devices import Device, connected
 from factotum.e2e.house import House
 from factotum.e2e.models import is_italian
+from factotum.e2e.series_time import judge as judge_time
 from factotum.e2e.wiring import HA_TOKEN
 from factotum.terminal.device import VOLUME_STEP
 
@@ -248,6 +250,13 @@ class Window:
     muted_before: dict[str, bool]
     """By device: whether it was muted when it began."""
 
+    time: dict[str, TimeState]
+    """By device: what its keeper of time holds when it is over (ADR 0029): the wall, its timers and
+    its alarms."""
+
+    time_before: dict[str, TimeState]
+    """By device: what it held when it began."""
+
     spoken: dict[str, tuple[str, ...]] | None
     """By device: what its speaker was made to say, where that can be read back out of the sound
     (the clips of the stand-in of Piper carry their words)."""
@@ -286,6 +295,7 @@ class _Mark:
     devices: dict[str, _DeviceMark] = field(default_factory=dict)
     volumes: dict[str, int] = field(default_factory=dict)
     muted: dict[str, bool] = field(default_factory=dict)
+    time: dict[str, TimeState] = field(default_factory=dict)
 
 
 Say = Callable[[Device, str], Awaitable[TurnEnded]]
@@ -354,6 +364,7 @@ class Series:
             },
             volumes={name: device.hardware.state.volume for name, device in self._devices.items()},
             muted={name: device.hardware.state.muted for name, device in self._devices.items()},
+            time={name: _time_of(device) for name, device in self._devices.items()},
         )
 
     async def _window(self, speaker: str, words: str) -> Window:
@@ -385,6 +396,8 @@ class Series:
             volumes_before=before.volumes,
             muted={name: device.hardware.state.muted for name, device in self._devices.items()},
             muted_before=before.muted,
+            time={name: _time_of(device) for name, device in self._devices.items()},
+            time_before=before.time,
             sentences={
                 name: len(device.sentences()) - before.devices[name].sentences
                 for name, device in self._devices.items()
@@ -529,6 +542,8 @@ def _done(case: PlanCase, window: Window) -> list[str]:
             problems += _muted(case, window)
         case "volume-status":
             problems += _volume_said(case, window)
+        case "timer" | "timer-cancel" | "timer-status" | "alarm" | "alarm-cancel" | "alarm-status":
+            problems += judge_time(case, window)
         case "announce":
             problems += _announced(case, window)
         case "movie-scene":
@@ -618,6 +633,14 @@ def _volume_said(case: PlanCase, window: Window) -> list[str]:
     if window.volumes != window.volumes_before or window.muted != window.muted_before:
         problems.append("a question changed the sound of a device")
     return problems + _no_job(window) + _nothing_else_was_reached(window)
+
+
+def _time_of(device: Device) -> TimeState:
+    """What the keeper of time of a device holds: the wall it shows, its timers and its alarms."""
+    assert device.timekeeper is not None
+    state = answer_in(TimeState, device.timekeeper.state())
+    assert state is not None
+    return state
 
 
 def _no_job(window: Window) -> list[str]:

@@ -27,6 +27,7 @@ nothing and a number too few asks a person for what they said.
 
 import re
 import unicodedata
+from collections.abc import Sequence
 
 from factotum.contracts.skills import ParameterSpec, ParamValue
 
@@ -131,6 +132,19 @@ def _without_percent(words: list[str]) -> list[str]:
         for index, word in enumerate(words)
         if not (word == "cento" and words[index - 1 : index] == ["per"])
     ]
+
+
+def number_at(words: Sequence[str], index: int) -> tuple[int, int] | None:
+    """The whole number that the words give from ``index`` on, and how many words it takes: digits,
+    or words in English and Italian (up to 999), the longest that fits. Nothing if there is none."""
+    word = words[index]
+    if word.isdigit():
+        return int(word), 1
+    for length in range(min(_LONGEST, len(words) - index), 0, -1):
+        number = _SPELLED.get(tuple(words[index : index + length]))
+        if number is not None:
+            return number, length
+    return None
 
 
 def numbers_in(text: str) -> frozenset[float]:

@@ -14,11 +14,12 @@ arrives.
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
-from factotum.client_core import AudioStream, DeviceClient, WebSocketConnection
+from factotum.client_core import AudioStream, DeviceClient, Timekeeper, WebSocketConnection
 from factotum.client_core.testing import (
+    FakeClock,
     FakeSpeaker,
     FakeVoiceInput,
     FakeVoiceOutput,
@@ -68,6 +69,13 @@ class Device:
 
     carrier: Carrier = Carrier.CLIP
     """How it hands a recording over."""
+
+    clock: FakeClock = field(default_factory=FakeClock)
+    """The clock of the device: time passes on it when a test says so (``clock.advance``), and
+    nowhere else, so that the timers and the alarms it keeps ring when a test lets them."""
+
+    timekeeper: Timekeeper | None = None
+    """What keeps its timers and its alarms, on that clock."""
 
     def sentences(self) -> list[AudioPayload]:
         """What the speaker was made to say, a clip for each sentence: the clips that it was asked
@@ -151,20 +159,25 @@ async def joined(
     speaker: FakeVoiceOutput | FakeSpeaker
     speaker = FakeSpeaker() if carrier is Carrier.STREAM else FakeVoiceOutput()
     hardware = TerminalDevice(profile.capabilities, shown)
+    voice_output = None if carrier is Carrier.STREAM or not plays_clips else speaker
+    clock = FakeClock()
+    timekeeper = Timekeeper(shown, clock=clock, output=voice_output)
     client = DeviceClient(
         await WebSocketConnection.open(house.edge_url),
         profile,
         shown,
         hardware,
         token=credential or house.tokens.get(profile.hardware_id),
-        voice_output=None if carrier is Carrier.STREAM or not plays_clips else speaker,
+        voice_output=voice_output,
         voice_sink=speaker if isinstance(speaker, FakeSpeaker) and plays_clips else None,
+        timekeeper=timekeeper,
     )
     try:
         await client.connect()
-        yield Device(client, shown, speaker, hardware, house.timeout_s, carrier)
+        yield Device(client, shown, speaker, hardware, house.timeout_s, carrier, clock, timekeeper)
     finally:
         await client.close()
+        await timekeeper.close()
 
 
 @asynccontextmanager

@@ -19,6 +19,18 @@ from factotum.contracts.chat import (
     EventUnion,
     FinishReason,
 )
+from factotum.contracts.commands import (
+    AdjustVolume,
+    CancelAlarm,
+    CancelTimer,
+    CommandResult,
+    DeviceCommand,
+    GetState,
+    SetAlarm,
+    SetMute,
+    SetTimer,
+    SetVolume,
+)
 from factotum.contracts.effects import Effect
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.ids import SkillId, TenantId
@@ -31,6 +43,16 @@ from factotum.contracts.skills import (
     SkillManifest,
     SkillPermissions,
     SkillTarget,
+)
+from factotum.contracts.timekeeping import (
+    AlarmInfo,
+    AlarmsCancelled,
+    AlarmSet,
+    TimerInfo,
+    TimersCancelled,
+    TimerSet,
+    TimeState,
+    data_of,
 )
 from factotum.model_client import Embedded
 
@@ -94,6 +116,48 @@ class FakeSpeech:
 
         pcm, _ = pcm_of(clip.data)
         return pcm.rstrip(b"\0").decode("utf-8")
+
+
+WALL = datetime(2026, 10, 13, 22, 1)  # noqa: DTZ001 - civil time: the wall has no zone
+"""What the wall of a device shows in the tests: a Tuesday evening."""
+
+
+def a_device_answers(command: DeviceCommand) -> CommandResult:
+    """What a device that keeps time and a volume answers to a command, in the shape a skill reads:
+    plausible, and not a device (the moment of an alarm is *tomorrow* whatever the day was said to
+    be: working out the day is the device's, ``factotum.client_core.moments``). For the tests of
+    the skills that read what a device answers, in place of one answer for every command."""
+    tomorrow = WALL.replace(hour=7, minute=0) + timedelta(days=1)
+    match command:
+        case SetVolume():
+            return CommandResult.ok({"volume": command.level})
+        case AdjustVolume():
+            return CommandResult.ok({"volume": 50})
+        case SetMute():
+            return CommandResult.ok({"muted": command.muted})
+        case SetTimer():
+            seconds = command.seconds
+            timer = TimerInfo(id="t1", seconds=seconds, left_s=seconds)
+            return CommandResult.ok(data_of(TimerSet(timer=timer)))
+        case CancelTimer():
+            timer = TimerInfo(id="t1", seconds=command.seconds or 300, left_s=60)
+            return CommandResult.ok(data_of(TimersCancelled(cancelled=(timer,), remaining=0)))
+        case SetAlarm():
+            at = tomorrow.replace(hour=command.hour, minute=command.minute)
+            alarm = AlarmInfo(id="a1", at=at)
+            return CommandResult.ok(data_of(AlarmSet(now=WALL, alarm=alarm)))
+        case CancelAlarm():
+            at = tomorrow.replace(hour=command.hour or 7, minute=command.minute or 0)
+            gone = AlarmsCancelled(now=WALL, cancelled=(AlarmInfo(id="a1", at=at),), remaining=0)
+            return CommandResult.ok(data_of(gone))
+        case GetState():
+            state = TimeState(
+                now=WALL,
+                timers=(TimerInfo(id="t1", seconds=300, left_s=274),),
+                alarms=(AlarmInfo(id="a1", at=tomorrow),),
+            )
+            return CommandResult.ok({"volume": 50, "muted": False, **data_of(state)})
+    return CommandResult.ok()
 
 
 def just_announce(speech: "FakeSpeech | None" = None) -> "CoreSkills":

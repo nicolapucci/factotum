@@ -729,6 +729,19 @@ class ActionService:
         if ran.after is not None:
             try:
                 message = ran.after(given) or message
+            except SkillFailedError as error:
+                # The device answered, and what it answered is why the skill could not do it (a
+                # moment that has gone by, a device that is full): the skill says it in its words.
+                logger.info("a skill said that it could not do it", extra={"skill": stored.name})
+                return await settle(
+                    ActStatus.FAILED,
+                    ActCode.SKILL_FAILED,
+                    error.message,
+                    ActionResult.FAILED,
+                    f"the skill said that it could not do it: {error.message}"[
+                        :MAX_FAILURE_DETAIL_CHARS
+                    ],
+                )
             except SkillRunError as error:
                 # The device answered, and not with what the skill needed: it did not do its work.
                 logger.warning(

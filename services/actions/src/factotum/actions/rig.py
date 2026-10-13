@@ -2,6 +2,7 @@
 tests of the service, of its HTTP interface and of its wiring are built on."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -59,19 +60,27 @@ class FakeRunner:
 
 class FakeDispatcher:
     """A dispatcher that keeps the commands it was given, and answers OK unless told otherwise:
-    ``answers`` are what it says to the next commands, in order, and ``answer`` is what it says
-    when there are none left."""
+    ``answers`` are what it says to the next commands, in order; when there are none left it is
+    ``responder`` that answers each command by what it is (a device that keeps time, say:
+    ``factotum.actions.testing.a_device_answers``), if there is one, and ``answer`` for all
+    otherwise."""
 
     def __init__(self) -> None:
         self.given: list[tuple[TenantId, DeviceId, DeviceCommand]] = []
         self.answer: CommandResult | Exception = CommandResult.ok()
         self.answers: list[CommandResult | Exception] = []
+        self.responder: Callable[[DeviceCommand], CommandResult] | None = None
 
     async def dispatch(
         self, tenant_id: TenantId, device_id: DeviceId, command: DeviceCommand
     ) -> CommandResult:
         self.given.append((tenant_id, device_id, command))
-        answer = self.answers.pop(0) if self.answers else self.answer
+        if self.answers:
+            answer = self.answers.pop(0)
+        elif self.responder is not None:
+            answer = self.responder(command)
+        else:
+            answer = self.answer
         if isinstance(answer, Exception):
             raise answer
         return answer

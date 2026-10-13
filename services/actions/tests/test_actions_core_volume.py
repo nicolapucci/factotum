@@ -356,9 +356,12 @@ class TestSayingHowItIs:
 class TestTheSentences:
     def test_each_is_in_each_language(self) -> None:
         assert {"en", "it"} == LANGUAGES
+        every_field: dict[str, str | int] = dict.fromkeys(
+            ("level", "duration", "left", "count", "when", "at", "list"), 50
+        )
         for language in LANGUAGES:
             for key in CoreSay:
-                said = core_say(language, key, level=50)
+                said = core_say(language, key, **every_field)
                 assert said, (language, key)
                 assert "{" not in said, (language, key)
 
@@ -587,4 +590,10 @@ class TestFromAMessageToADevice:
             "volume-change",
             "mute",
             "volume-status",
+            "timer",
+            "timer-cancel",
+            "timer-status",
+            "alarm",
+            "alarm-cancel",
+            "alarm-status",
         )

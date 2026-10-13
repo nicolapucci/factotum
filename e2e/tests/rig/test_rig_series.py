@@ -24,7 +24,8 @@ from factotum.actions.plan_cases import DISPLAY, KITCHEN, PHONE, PLAN_CASES, Pla
 from factotum.actions.planner import Plan
 from factotum.actions.runner_client import hosts_of
 from factotum.actions.skills import load_folder
-from factotum.client_core.testing import RecordingRenderer
+from factotum.client_core import Timekeeper
+from factotum.client_core.testing import FakeClock, RecordingRenderer
 from factotum.contracts.actions import ActCode, ActOutcome, ActStatus
 from factotum.contracts.audit import ActionResult, AuditRecord
 from factotum.contracts.authorization import DecisionOutcome
@@ -36,6 +37,7 @@ from factotum.contracts.instructions import InstructionPlan
 from factotum.contracts.models import ModelRole
 from factotum.contracts.runner import Job, JobFile, JobResult
 from factotum.contracts.testing import make_tenant_id
+from factotum.contracts.timekeeping import TimeState
 from factotum.e2e.house import SKILLS_FOLDER, House
 from factotum.e2e.models import HouseholdModel, plan_for
 from factotum.e2e.runner import HouseRunner
@@ -114,6 +116,7 @@ TURNED_DOWN_BY_TWENTY = PlanCase(
 )
 
 NAMES = tuple(PROFILES)
+NOTHING_KEPT = TimeState(now=datetime(2026, 10, 13, 22, 0))  # noqa: DTZ001 - civil time
 LAMP_CALL = "http://homeassistant.local:8123/api/services/light/turn_on"
 ENDED = TurnEnded(utterance_id="u1", status=TurnStatus.FINISHED)
 
@@ -156,6 +159,8 @@ def window(**changes: Any) -> Window:
         "volumes_before": dict.fromkeys(NAMES, 50),
         "muted": dict.fromkeys(NAMES, False),
         "muted_before": dict.fromkeys(NAMES, False),
+        "time": dict.fromkeys(NAMES, NOTHING_KEPT),
+        "time_before": dict.fromkeys(NAMES, NOTHING_KEPT),
         "spoken": None,
         "chat": 0,
     }
@@ -1015,8 +1020,10 @@ class TestACase:
         )
 
     def a_device(self) -> Any:
+        shown = RecordingRenderer()
         return SimpleNamespace(
-            shown=RecordingRenderer(),
+            shown=shown,
+            timekeeper=Timekeeper(shown, clock=FakeClock()),
             hardware=SimpleNamespace(state=SimpleNamespace(spoken=[], volume=50, muted=False)),
             client=SimpleNamespace(wait_until_played=lambda: asyncio.sleep(0)),
             timeout_s=1.0,
