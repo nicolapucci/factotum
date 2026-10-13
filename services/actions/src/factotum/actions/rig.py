@@ -183,6 +183,7 @@ class ActionsRig:
         chat: Chat | None = None,
         embedder: Embedder | None = None,
         patience_s: float | None = None,
+        every_skill_is_offered: bool = False,
         instructions: bool = False,
         core: CoreSkills | None = None,
     ) -> None:
@@ -192,7 +193,9 @@ class ActionsRig:
         the doubles are used, and ``plans`` and ``embedder`` are how they are told what to do.
         ``patience_s`` is how long each model is waited for, where the defaults would give up on a
         model that is only slow, which is not what such a test measures. ``core`` is the skills of
-        the platform that the service is given (it has none without)."""
+        the platform that the service is given (it has none without). ``every_skill_is_offered``
+        makes every enabled skill a candidate whatever the stand-in of the embedding model thinks
+        of the message, for a test of what the code makes of a plan."""
         self.core = core
         self.tenant = make_tenant_id()
         self.user = make_user_id()
@@ -206,8 +209,11 @@ class ActionsRig:
         self._patience_s = patience_s
         self._writer = PlanWriter(self._chat, timeout_s=self._wait(30.0)) if instructions else None
         self.index = SkillIndex(self.store, self._embedder, timeout_s=self._wait(8.0))
+        near: dict[str, Any] = (
+            {"threshold": 0.0, "max_candidates": 40} if every_skill_is_offered else {}
+        )
         self.matcher = SkillMatcher(
-            self.store, self._embedder, self.index, timeout_s=self._wait(4.0)
+            self.store, self._embedder, self.index, timeout_s=self._wait(4.0), **near
         )
         self.runner = FakeRunner()
         self._runner: SkillRunner = runner or self.runner

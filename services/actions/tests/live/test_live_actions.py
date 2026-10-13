@@ -165,7 +165,7 @@ async def home_of(opened: Gateway) -> ActionsRig:
     )
     read = await catalog.reload(rig.principal(None))
     assert read.problems == ()
-    assert len(read.enabled) == 8  # the folder: the platform's skills are not in it
+    assert len(read.enabled) == 6  # the folder: the platform's skills are not in it
     return rig
 
 

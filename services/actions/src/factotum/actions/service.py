@@ -151,6 +151,9 @@ class _Ran:
     audit: str | None
     """What the trail says of it, when the skill says it (a skill of the platform does)."""
 
+    after: Callable[[Sequence[CommandResult]], str | None] | None
+    """What a skill of the platform says of what the device answered, if that is what it says."""
+
 
 def _kind_of(target: SystemDeviceRecord | ExternalDeviceRecord | None) -> str | None:
     if target is None:
@@ -658,11 +661,11 @@ class ActionService:
         try:
             async with asyncio.timeout(manifest.timeout_s + self._settings.run_margin_s):
                 if core is not None:
-                    done = await core.run(request, principal)
-                    ran = _Ran(done.message, done.commands, False, done.audit)
+                    done = await core.run(request, principal, language=language)
+                    ran = _Ran(done.message, done.commands, False, done.audit, done.after)
                 else:
                     result = await self._runner.run(request)
-                    ran = _Ran(result.message, result.commands, result.dry_run, None)
+                    ran = _Ran(result.message, result.commands, result.dry_run, None, None)
         except RunnerUnavailableError as error:
             logger.warning(
                 "the runner could not run a skill",
@@ -722,10 +725,27 @@ class ActionService:
                 ActionResult.FAILED,
                 f"a command was not done ({failed.status.value})",
             )
+        message = ran.message
+        if ran.after is not None:
+            try:
+                message = ran.after(given) or message
+            except SkillRunError as error:
+                # The device answered, and not with what the skill needed: it did not do its work.
+                logger.warning(
+                    "a skill could not read what the device answered",
+                    extra={"skill": stored.name, "reason": error.message},
+                )
+                return await settle(
+                    ActStatus.FAILED,
+                    ActCode.SKILL_FAILED,
+                    say(language, Say.FAILED, skill=stored.name),
+                    ActionResult.FAILED,
+                    f"the skill failed: {error.message}"[:MAX_FAILURE_DETAIL_CHARS],
+                )
         return await settle(
             ActStatus.DONE,
             None,
-            _clip(ran.message, MAX_REPLY_CHARS) if ran.message else say(language, Say.DONE),
+            _clip(message, MAX_REPLY_CHARS) if message else say(language, Say.DONE),
             ActionResult.EXECUTED,
             _with_plan(ran.audit, plan),
         )

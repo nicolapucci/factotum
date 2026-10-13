@@ -15,6 +15,7 @@ from factotum.actions.skills import load_folder
 from factotum.actions.testing import FakeSpeech
 from factotum.actions.values import check_values
 from factotum.contracts.actions import ActStatus
+from factotum.contracts.commands import CommandResult
 from factotum.contracts.skills import SkillManifest, SkillTarget
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -127,9 +128,16 @@ def case_id(index: int, case: PlanCase) -> str:
 async def test_a_planner_that_reads_it_right_gets_the_outcome_the_case_expects(
     case: PlanCase,
 ) -> None:
-    rig = ActionsRig(home_text=HOME_TEXT, core=platform_skills(FakeSpeech()))
+    # What is looked at is what the code makes of a plan, and not what the stand-in of the embedding
+    # model thinks is near a message: every skill that is enabled is offered to the model.
+    rig = ActionsRig(
+        home_text=HOME_TEXT, core=platform_skills(FakeSpeech()), every_skill_is_offered=True
+    )
+    rig.dispatcher.answer = CommandResult.ok(
+        {"volume": 50, "muted": False}
+    )  # a device says how it is
     skills, _ = load_folder(EXAMPLES)
-    for skill in skills:  # enabled but not indexed: every one of them is offered to the model
+    for skill in skills:  # enabled but not indexed
         installed = await rig.store.install(rig.tenant, rig.shared_owner, skill, now=rig.clock())
         await rig.store.enable(
             rig.tenant,

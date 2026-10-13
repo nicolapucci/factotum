@@ -10,10 +10,10 @@ from typing import ClassVar
 
 import pytest
 
-from factotum.actions.core import Announce, CoreResult, CoreSkill, CoreSkills, platform_skills
+from factotum.actions.core import Announce, CoreResult, CoreSkill, CoreSkills
 from factotum.actions.skills import LoadedSkill, parse_skill
 from factotum.actions.store import ActionsStore, InMemoryStore, Installed, StoredSkill
-from factotum.actions.testing import START, FakeSpeech, stored_skill
+from factotum.actions.testing import START, FakeSpeech, just_announce, stored_skill
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import SkillInvalidError
 from factotum.contracts.identity import Owner, Principal, Subject
@@ -28,7 +28,7 @@ class Newer(CoreSkill):
 
     source: ClassVar[str] = Announce.source.replace("effect: reversible", "effect: irreversible")
 
-    async def run(self, request: RunRequest, principal: Principal) -> CoreResult:
+    async def run(self, request: RunRequest, principal: Principal, *, language: str) -> CoreResult:
         return CoreResult(message="newer")
 
 
@@ -68,7 +68,7 @@ def labels(skills: Sequence[StoredSkill]) -> list[str]:
 class TestHavingThemInstalled:
     async def test_a_tenant_that_is_asked_for_has_them_installed_and_enabled(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
-        core = platform_skills(FakeSpeech())
+        core = just_announce()
 
         enabled = await core.ensure(store, tenant, now=START)
 
@@ -83,7 +83,7 @@ class TestHavingThemInstalled:
     async def test_what_is_returned_is_the_skills_as_they_run_not_their_names(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
 
-        [skill] = await platform_skills(FakeSpeech()).ensure(store, tenant, now=START)
+        [skill] = await just_announce().ensure(store, tenant, now=START)
 
         assert (skill.name, skill.tenant_id, skill.owner) == ("announce", tenant, owner_of(tenant))
         assert skill.enabled is not None
@@ -91,7 +91,7 @@ class TestHavingThemInstalled:
 
     async def test_it_is_done_once_for_a_tenant_for_as_long_as_the_service_runs(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
-        core = platform_skills(FakeSpeech())
+        core = just_announce()
         await core.ensure(store, tenant, now=START)
 
         again = await core.ensure(store, tenant, now=START)
@@ -102,7 +102,7 @@ class TestHavingThemInstalled:
 
     async def test_it_is_not_asked_of_the_store_again_once_it_is_done(self) -> None:
         store, tenant = CountingStore(), make_tenant_id()
-        core = platform_skills(FakeSpeech())
+        core = just_announce()
 
         for _ in range(3):
             await core.ensure(store, tenant, now=START)
@@ -112,7 +112,7 @@ class TestHavingThemInstalled:
     async def test_each_tenant_has_its_own_and_sees_no_other(self) -> None:
         store = InMemoryStore()
         one, two = make_tenant_id(), make_tenant_id()
-        core = platform_skills(FakeSpeech())
+        core = just_announce()
 
         await core.ensure(store, one, now=START)
         assert await skills_of(store, two) == []
@@ -124,7 +124,7 @@ class TestHavingThemInstalled:
 
     async def test_two_asks_at_once_install_it_once(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
-        core = platform_skills(FakeSpeech())
+        core = just_announce()
 
         first, second = await asyncio.gather(
             core.ensure(store, tenant, now=START), core.ensure(store, tenant, now=START)
@@ -138,11 +138,11 @@ class TestHavingThemInstalled:
 class TestWhatIsLeftAlone:
     async def test_one_that_an_administrator_disabled_stays_disabled_after_a_restart(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
-        await platform_skills(FakeSpeech()).ensure(store, tenant, now=START)
+        await just_announce().ensure(store, tenant, now=START)
         [skill] = await skills_of(store, tenant)
         await store.disable(tenant, skill.id)
 
-        restarted = platform_skills(FakeSpeech())  # the same text: not a new version
+        restarted = just_announce()  # the same text: not a new version
         enabled = await restarted.ensure(store, tenant, now=START)
 
         assert enabled == ()
@@ -164,7 +164,7 @@ class TestWhatIsLeftAlone:
 
     async def test_a_new_version_of_one_is_enabled_where_it_ships(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
-        old = platform_skills(FakeSpeech())
+        old = just_announce()
         await old.ensure(store, tenant, now=START)
         newer = CoreSkills(Newer())
 
@@ -180,7 +180,7 @@ class TestWhatIsLeftAlone:
 
     async def test_a_new_version_is_enabled_even_where_the_old_one_was_disabled(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
-        await platform_skills(FakeSpeech()).ensure(store, tenant, now=START)
+        await just_announce().ensure(store, tenant, now=START)
         [skill] = await skills_of(store, tenant)
         await store.disable(tenant, skill.id)
 
@@ -213,7 +213,7 @@ class TestASkillOfThatNameThatSomebodyWrote:
     async def test_the_platforms_is_added_to_it_as_a_version_and_is_the_one_that_runs(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
         theirs = await self.theirs(store, tenant)
-        core = platform_skills(FakeSpeech())
+        core = just_announce()
 
         enabled = await core.ensure(store, tenant, now=START)
 
@@ -228,7 +228,7 @@ class TestASkillOfThatNameThatSomebodyWrote:
     ) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
         theirs = await self.theirs(store, tenant)
-        core = platform_skills(FakeSpeech())
+        core = just_announce()
         await core.ensure(store, tenant, now=START)
 
         back = await store.enable(
@@ -248,7 +248,7 @@ class TestASkillOfThatNameThatSomebodyWrote:
     async def test_and_it_is_not_taken_from_them_again_at_the_next_start(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
         theirs = await self.theirs(store, tenant)
-        await platform_skills(FakeSpeech()).ensure(store, tenant, now=START)
+        await just_announce().ensure(store, tenant, now=START)
         await store.enable(
             tenant,
             theirs.id,
@@ -258,7 +258,7 @@ class TestASkillOfThatNameThatSomebodyWrote:
             now=START,
         )
 
-        enabled = await platform_skills(FakeSpeech()).ensure(store, tenant, now=START)
+        enabled = await just_announce().ensure(store, tenant, now=START)
 
         assert enabled == ()
         [skill] = await skills_of(store, tenant)
@@ -274,7 +274,9 @@ class TestWhatTheyAreGranted:
                 "effect: reversible\npermissions:\n  network: [api.example.org]",
             )
 
-            async def run(self, request: RunRequest, principal: Principal) -> CoreResult:
+            async def run(
+                self, request: RunRequest, principal: Principal, *, language: str
+            ) -> CoreResult:
                 return CoreResult()
 
         store, tenant = InMemoryStore(), make_tenant_id()
@@ -290,7 +292,7 @@ class TestWhatTheyAreGranted:
     async def test_the_platforms_announce_declares_nothing_and_is_granted_nothing(self) -> None:
         store, tenant = InMemoryStore(), make_tenant_id()
 
-        await platform_skills(FakeSpeech()).ensure(store, tenant, now=START)
+        await just_announce().ensure(store, tenant, now=START)
 
         [skill] = await skills_of(store, tenant)
         assert skill.enabled is not None
@@ -342,14 +344,14 @@ class TestWhatThePlatformSays:
             CoreSkills(Announce(FakeSpeech()), Announce(FakeSpeech()))
 
     def test_what_a_skill_says_about_itself_is_what_a_message_is_matched_against(self) -> None:
-        manifest = platform_skills(FakeSpeech()).manifests()["announce"]
+        manifest = just_announce().manifests()["announce"]
 
         assert manifest.description.startswith("Say something out loud")
         assert any(example.startswith("annuncia") for example in manifest.examples)
         assert any(example.startswith("tell the kitchen") for example in manifest.examples)
 
     def test_announcing_acts_on_a_device_and_reaches_nothing_on_the_network(self) -> None:
-        manifest = platform_skills(FakeSpeech()).manifests()["announce"]
+        manifest = just_announce().manifests()["announce"]
 
         assert manifest.target is SkillTarget.SYSTEM
         assert manifest.effect is Effect.REVERSIBLE
@@ -361,7 +363,9 @@ class TestWhatThePlatformSays:
         class Broken(CoreSkill):
             source: ClassVar[str] = "no front matter at all"
 
-            async def run(self, request: RunRequest, principal: Principal) -> CoreResult:
+            async def run(
+                self, request: RunRequest, principal: Principal, *, language: str
+            ) -> CoreResult:
                 return CoreResult()
 
         with pytest.raises(SkillInvalidError, match="the core skill Broken"):

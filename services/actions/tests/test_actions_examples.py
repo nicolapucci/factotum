@@ -23,7 +23,6 @@ from factotum.actions.runner_client import hosts_of, read_output
 from factotum.actions.skills import LoadedSkill, load_folder
 from factotum.actions.testing import FakeSpeech
 from factotum.common.hosts import match_host
-from factotum.contracts.commands import AdjustVolume, SetVolume, VolumeDirection
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import SkillFailedError
 from factotum.contracts.instructions import InstructionPlan
@@ -74,8 +73,6 @@ def test_every_example_skill_is_a_skill() -> None:
         "lamp",
         "movie-scene",
         "restart-router",
-        "volume",
-        "volume-change",
         "weather",
     ]
 
@@ -100,8 +97,6 @@ def test_the_examples_show_each_way_an_action_can_be_decided() -> None:
     assert by_name["weather"].manifest.effect is Effect.READ_ONLY
     assert by_name["garage-door"].manifest.confirm is ConfirmPolicy.ASK
     assert by_name["restart-router"].manifest.approval is ApprovalPolicy.REQUIRED
-    assert by_name["volume"].manifest.target is SkillTarget.SYSTEM
-    assert by_name["volume-change"].manifest.target is SkillTarget.SYSTEM
     assert by_name["lamp"].manifest.target is SkillTarget.EXTERNAL
 
 
@@ -288,66 +283,6 @@ class TestTheScriptsDoWhatTheirSkillsSay:
         assert json.loads(call.data) == {"entity_id": "cover.garage"}
         assert result.message == message
         assert self.reaches("garage-door", device, calls) == {"192.168.1.20"}
-
-    def test_the_volume_is_a_command_for_the_device_and_reaches_nothing(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        calls, result = self.run(
-            "volume", {"params": {"level": 35}, "device_params": {}}, monkeypatch, capsys
-        )
-
-        assert calls == []
-        assert result.message == "Volume set to 35."
-        assert result.commands == (SetVolume(level=35),)
-
-    @pytest.mark.parametrize(
-        ("params", "command", "message"),
-        [
-            (
-                {"direction": "up"},
-                AdjustVolume(direction=VolumeDirection.UP),
-                "Volume up.",
-            ),
-            (
-                {"direction": "down"},
-                AdjustVolume(direction=VolumeDirection.DOWN),
-                "Volume down.",
-            ),
-            (
-                {"direction": "up", "amount": 25},
-                AdjustVolume(direction=VolumeDirection.UP, amount=25),
-                "Volume up by 25.",
-            ),
-            (
-                {"direction": "down", "amount": 5},
-                AdjustVolume(direction=VolumeDirection.DOWN, amount=5),
-                "Volume down by 5.",
-            ),
-        ],
-    )
-    def test_the_volume_is_turned_by_what_is_said_and_the_step_of_the_device_is_not_the_skills(
-        self,
-        params: dict[str, object],
-        command: AdjustVolume,
-        message: str,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        calls, result = self.run(
-            "volume-change", {"params": params, "device_params": {}}, monkeypatch, capsys
-        )
-
-        assert calls == []
-        assert result.message == message
-        assert result.commands == (command,)
-
-    def test_only_the_direction_of_the_volume_is_asked_for_and_how_much_is_left_to_the_skill(
-        self,
-    ) -> None:
-        manifest = examples()["volume-change"].manifest
-
-        assert manifest.required == ("direction",)
-        assert set(manifest.parameters) == {"direction", "amount"}
 
     def test_the_weather_of_a_city_is_looked_up_and_read(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

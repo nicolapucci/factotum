@@ -98,6 +98,9 @@ GARAGE_AT_THE_KITCHEN = PlanCase(
 )
 A_QUESTION = PlanCase("tell me a joke", KITCHEN, None, ActStatus.NO_SKILL)
 TOO_LITTLE = PlanCase("turn it up", KITCHEN, "volume", ActStatus.NEEDS_MORE)
+MUTED = PlanCase("mute the sound", KITCHEN, "mute", ActStatus.DONE, None, {"muted": True})
+UNMUTED = PlanCase("unmute", KITCHEN, "mute", ActStatus.DONE, None, {"muted": False})
+HOW_LOUD = PlanCase("what is the volume", KITCHEN, "volume-status", ActStatus.DONE)
 TURNED_UP = PlanCase(
     "turn the volume up", KITCHEN, "volume-change", ActStatus.DONE, None, {"direction": "up"}
 )
@@ -151,6 +154,8 @@ def window(**changes: Any) -> Window:
         "sentences": dict.fromkeys(NAMES, 0),
         "volumes": dict.fromkeys(NAMES, 50),
         "volumes_before": dict.fromkeys(NAMES, 50),
+        "muted": dict.fromkeys(NAMES, False),
+        "muted_before": dict.fromkeys(NAMES, False),
         "spoken": None,
         "chat": 0,
     }
@@ -358,20 +363,20 @@ class TestJudgingWhatCameOfAMessage:
     def test_a_volume_that_was_set_on_the_device_that_was_spoken_to_is_right(self) -> None:
         events = dict.fromkeys(NAMES, ()) | {KITCHEN: ("volume 30",)}
         volumes = dict.fromkeys(NAMES, 50) | {KITCHEN: 30}
-        set_to_30 = done("volume", jobs=(job("volume"),), events=events, volumes=volumes)
+        set_to_30 = done("volume", events=events, volumes=volumes)
 
         assert judge(Played(VOLUME, set_to_30)) == []
 
     def test_a_volume_that_a_device_was_told_and_did_not_take_is_said(self) -> None:
         events = dict.fromkeys(NAMES, ()) | {KITCHEN: ("volume 30",)}
-        stuck = done("volume", jobs=(job("volume"),), events=events)  # still at 50
+        stuck = done("volume", events=events)  # still at 50
 
         assert judge(Played(VOLUME, stuck)) == [f"{KITCHEN} has its volume at 50"]
 
     def test_a_volume_that_was_set_to_another_level_or_on_another_device_is_said(self) -> None:
         events = dict.fromkeys(NAMES, ()) | {DISPLAY: ("volume 30",)}
 
-        found = judge(Played(VOLUME, done("volume", jobs=(job("volume"),), events=events)))
+        found = judge(Played(VOLUME, done("volume", events=events)))
 
         assert found[0].startswith(f"{KITCHEN} was told")
 
@@ -381,7 +386,6 @@ class TestJudgingWhatCameOfAMessage:
         events = dict.fromkeys(NAMES, ()) | {KITCHEN: (told or f"volume {now}",)}
         return done(
             "volume-change",
-            jobs=(job("volume-change"),),
             events=events,
             volumes=dict.fromkeys(NAMES, 50) | {KITCHEN: now},
             volumes_before=dict.fromkeys(NAMES, 50) | {KITCHEN: before},
@@ -421,12 +425,116 @@ class TestJudgingWhatCameOfAMessage:
 
         assert judge(Played(TURNED_UP, moved)) == [f"{DISPLAY} had its volume moved to 60"]
 
-    def test_it_is_the_skill_that_turns_a_volume_and_not_the_one_that_sets_it(self) -> None:
-        set_instead = changed(self.turned(TURNED_UP, before=50, now=60), jobs=(job("volume"),))
+    def test_a_skill_of_the_platform_runs_nothing_in_a_sandbox(self) -> None:
+        ran = changed(self.turned(TURNED_UP, before=50, now=60), jobs=(job("volume-change"),))
 
-        assert judge(Played(TURNED_UP, set_instead)) == [
-            "it ran ['volume'] instead of ['volume-change']"
+        assert judge(Played(TURNED_UP, ran)) == ["it ran ['volume-change']"]
+
+    @staticmethod
+    def sound(
+        *,
+        muted: bool,
+        was_muted: bool = False,
+        told: tuple[str, ...] | None = None,
+        reply: str = "Done.",
+    ) -> Window:
+        """The kitchen speaker's sound muted or brought back, from the state it was in."""
+        events = dict.fromkeys(NAMES, ()) | {
+            KITCHEN: told or (("muted",) if muted else ("unmuted",))
+        }
+        return window(
+            outcome=ActOutcome(status=ActStatus.DONE, reply=reply, skill="mute"),
+            chat=0,
+            events=events,
+            muted=dict.fromkeys(NAMES, False) | {KITCHEN: muted},
+            muted_before=dict.fromkeys(NAMES, False) | {KITCHEN: was_muted},
+        )
+
+    def test_a_sound_that_was_muted_on_the_device_that_was_spoken_to_is_right(self) -> None:
+        assert judge(Played(MUTED, self.sound(muted=True))) == []
+        assert judge(Played(UNMUTED, self.sound(muted=False, was_muted=True))) == []
+
+    def test_a_sound_that_was_told_to_mute_and_was_not_is_said(self) -> None:
+        stuck = changed(self.sound(muted=True), muted=dict.fromkeys(NAMES, False))
+        brought_back = changed(
+            self.sound(muted=False, was_muted=True),
+            muted=dict.fromkeys(NAMES, False) | {KITCHEN: True},
+        )
+
+        assert judge(Played(MUTED, stuck)) == [f"{KITCHEN} has its sound on"]
+        assert judge(Played(UNMUTED, brought_back)) == [f"{KITCHEN} has its sound muted"]
+
+    def test_a_device_that_was_told_something_else_is_said(self) -> None:
+        wrong = self.sound(muted=True, told=("volume 0",))
+
+        assert judge(Played(MUTED, wrong)) == [f"{KITCHEN} was told ('volume 0',)"]
+
+    def test_muting_that_lost_the_level_is_said(self) -> None:
+        lost = changed(self.sound(muted=True), volumes=dict.fromkeys(NAMES, 50) | {KITCHEN: 0})
+
+        assert judge(Played(MUTED, lost)) == [f"{KITCHEN} lost the level of its volume"]
+
+    def test_another_device_whose_sound_changed_is_said(self) -> None:
+        other = changed(
+            self.sound(muted=True),
+            muted=dict.fromkeys(NAMES, False) | {KITCHEN: True, DISPLAY: True},
+        )
+
+        assert judge(Played(MUTED, other)) == [f"{DISPLAY} had its sound changed"]
+
+    def test_a_skill_of_the_platform_that_ran_in_a_sandbox_is_said_for_a_mute_too(self) -> None:
+        ran = changed(self.sound(muted=True), jobs=(job("mute"),))
+
+        assert judge(Played(MUTED, ran)) == ["it ran ['mute']"]
+
+    @staticmethod
+    def said_how_loud(reply: str, *, muted: bool = False, level: int = 50) -> Window:
+        return window(
+            outcome=ActOutcome(status=ActStatus.DONE, reply=reply, skill="volume-status"),
+            chat=0,
+            volumes=dict.fromkeys(NAMES, 50) | {KITCHEN: level},
+            volumes_before=dict.fromkeys(NAMES, 50) | {KITCHEN: level},
+            muted=dict.fromkeys(NAMES, False) | {KITCHEN: muted},
+            muted_before=dict.fromkeys(NAMES, False) | {KITCHEN: muted},
+        )
+
+    def test_a_question_to_the_device_is_right_when_it_is_said_what_the_device_has(self) -> None:
+        assert judge(Played(HOW_LOUD, self.said_how_loud("The volume is at 50 percent."))) == []
+        muted = self.said_how_loud(
+            "L'audio è in muto. Il volume è al 35 per cento.", muted=True, level=35
+        )
+        assert judge(Played(HOW_LOUD, muted)) == []
+
+    def test_a_level_that_is_not_the_one_the_device_has_is_said(self) -> None:
+        wrong = self.said_how_loud("The volume is at 80 percent.", level=35)
+
+        assert judge(Played(HOW_LOUD, wrong)) == [
+            "the volume is 35 and it was said 'The volume is at 80 percent.'"
         ]
+
+    def test_a_sound_that_is_muted_is_said_to_be_and_one_that_is_not_is_not(self) -> None:
+        not_said = self.said_how_loud("The volume is at 50 percent.", muted=True)
+        said_wrongly = self.said_how_loud("The sound is muted. The volume is at 50 percent.")
+
+        assert judge(Played(HOW_LOUD, not_said)) == [
+            "the sound is muted and it was said 'The volume is at 50 percent.'"
+        ]
+        assert judge(Played(HOW_LOUD, said_wrongly)) == [
+            "the sound is not muted and it was said "
+            "'The sound is muted. The volume is at 50 percent.'"
+        ]
+
+    def test_a_question_that_changed_something_is_said(self) -> None:
+        moved = changed(
+            self.said_how_loud("The volume is at 50 percent."),
+            events=dict.fromkeys(NAMES, ()) | {KITCHEN: ("volume 60",)},
+            volumes=dict.fromkeys(NAMES, 50) | {KITCHEN: 60},
+        )
+
+        found = judge(Played(HOW_LOUD, moved))
+
+        assert any(line.startswith("a question changed something") for line in found)
+        assert "a question changed the sound of a device" in found
 
     def test_what_no_skill_fits_is_right_when_nothing_ran_and_no_model_was_asked(self) -> None:
         assert judge(Played(A_QUESTION, window())) == []
@@ -909,7 +1017,7 @@ class TestACase:
     def a_device(self) -> Any:
         return SimpleNamespace(
             shown=RecordingRenderer(),
-            hardware=SimpleNamespace(state=SimpleNamespace(spoken=[], volume=50)),
+            hardware=SimpleNamespace(state=SimpleNamespace(spoken=[], volume=50, muted=False)),
             client=SimpleNamespace(wait_until_played=lambda: asyncio.sleep(0)),
             timeout_s=1.0,
             sentences=list,

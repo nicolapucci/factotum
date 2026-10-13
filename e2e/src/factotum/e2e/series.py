@@ -242,6 +242,12 @@ class Window:
     """By device: the volume its hardware had when it began (a volume turned up or down goes from
     where it was)."""
 
+    muted: dict[str, bool]
+    """By device: whether the sound of its hardware is muted when it is over."""
+
+    muted_before: dict[str, bool]
+    """By device: whether it was muted when it began."""
+
     spoken: dict[str, tuple[str, ...]] | None
     """By device: what its speaker was made to say, where that can be read back out of the sound
     (the clips of the stand-in of Piper carry their words)."""
@@ -279,6 +285,7 @@ class _Mark:
     prompts: int
     devices: dict[str, _DeviceMark] = field(default_factory=dict)
     volumes: dict[str, int] = field(default_factory=dict)
+    muted: dict[str, bool] = field(default_factory=dict)
 
 
 Say = Callable[[Device, str], Awaitable[TurnEnded]]
@@ -346,6 +353,7 @@ class Series:
                 for name, device in self._devices.items()
             },
             volumes={name: device.hardware.state.volume for name, device in self._devices.items()},
+            muted={name: device.hardware.state.muted for name, device in self._devices.items()},
         )
 
     async def _window(self, speaker: str, words: str) -> Window:
@@ -375,6 +383,8 @@ class Series:
             },
             volumes={name: device.hardware.state.volume for name, device in self._devices.items()},
             volumes_before=before.volumes,
+            muted={name: device.hardware.state.muted for name, device in self._devices.items()},
+            muted_before=before.muted,
             sentences={
                 name: len(device.sentences()) - before.devices[name].sentences
                 for name, device in self._devices.items()
@@ -511,10 +521,14 @@ def _done(case: PlanCase, window: Window) -> list[str]:
                 problems.append(f"{case.speaker} was told {window.events[case.speaker]}")
             if window.volumes[case.speaker] != case.params["level"]:
                 problems.append(f"{case.speaker} has its volume at {window.volumes[case.speaker]}")
-            problems += _job(window, "volume", (), {})
+            problems += _no_job(window)
             problems += _nothing_else_was_reached(window)
         case "volume-change":
             problems += _volume_turned(case, window)
+        case "mute":
+            problems += _muted(case, window)
+        case "volume-status":
+            problems += _volume_said(case, window)
         case "announce":
             problems += _announced(case, window)
         case "movie-scene":
@@ -565,8 +579,50 @@ def _volume_turned(case: PlanCase, window: Window) -> list[str]:
     for name, level in window.volumes.items():
         if name != case.speaker and level != window.volumes_before[name]:
             problems.append(f"{name} had its volume moved to {level}")
-    problems += _job(window, "volume-change", (), {})
+    problems += _no_job(window)
     return problems + _nothing_else_was_reached(window)
+
+
+def _muted(case: PlanCase, window: Window) -> list[str]:
+    """The sound of the device that was spoken to is muted, or brought back, with the level where it
+    was; no other device is touched, and nothing ran in a sandbox (the skill is the platform's)."""
+    muted = bool(case.params["muted"])
+    problems: list[str] = []
+    if window.events[case.speaker] != (("muted",) if muted else ("unmuted",)):
+        problems.append(f"{case.speaker} was told {window.events[case.speaker]}")
+    if window.muted[case.speaker] is not muted:
+        problems.append(f"{case.speaker} has its sound {'on' if muted else 'muted'}")
+    if window.volumes[case.speaker] != window.volumes_before[case.speaker]:
+        problems.append(f"{case.speaker} lost the level of its volume")
+    for name, was in window.muted_before.items():
+        if name != case.speaker and window.muted[name] is not was:
+            problems.append(f"{name} had its sound changed")
+    return problems + _no_job(window) + _nothing_else_was_reached(window)
+
+
+def _volume_said(case: PlanCase, window: Window) -> list[str]:
+    """A question to the device that was spoken to, said from what it answered: the level of its
+    volume, and that it is muted when it is. Nothing is changed, nothing ran in a sandbox."""
+    problems: list[str] = []
+    said = window.outcome.reply if window.outcome is not None and window.outcome.reply else ""
+    level = window.volumes_before[case.speaker]
+    if str(level) not in said:
+        problems.append(f"the volume is {level} and it was said {said!r}")
+    muted_words = ("muto", "muted") if window.muted_before[case.speaker] else ()
+    if muted_words and not any(word in said for word in muted_words):
+        problems.append(f"the sound is muted and it was said {said!r}")
+    if not muted_words and any(word in said for word in ("muto", "muted")):
+        problems.append(f"the sound is not muted and it was said {said!r}")
+    if any(window.events.values()):
+        problems.append(f"a question changed something: {window.events}")
+    if window.volumes != window.volumes_before or window.muted != window.muted_before:
+        problems.append("a question changed the sound of a device")
+    return problems + _no_job(window) + _nothing_else_was_reached(window)
+
+
+def _no_job(window: Window) -> list[str]:
+    """A skill of the platform is code of the actions service: no sandbox runs anything for it."""
+    return [f"it ran {[job.label for job in window.jobs]}"] if window.jobs else []
 
 
 def _announced(case: PlanCase, window: Window) -> list[str]:

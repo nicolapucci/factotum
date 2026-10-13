@@ -8,7 +8,7 @@ import zlib
 from collections.abc import AsyncGenerator, Sequence
 from datetime import UTC, datetime, timedelta
 from math import sqrt
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from factotum.actions.store import StoredSkill, StoredVersion, VersionMeta
@@ -33,6 +33,9 @@ from factotum.contracts.skills import (
     SkillTarget,
 )
 from factotum.model_client import Embedded
+
+if TYPE_CHECKING:
+    from factotum.actions.core import CoreSkills
 
 START = datetime(2026, 9, 21, 9, 30, tzinfo=UTC)
 
@@ -91,6 +94,15 @@ class FakeSpeech:
 
         pcm, _ = pcm_of(clip.data)
         return pcm.rstrip(b"\0").decode("utf-8")
+
+
+def just_announce(speech: "FakeSpeech | None" = None) -> "CoreSkills":
+    """The skills of the platform as they were when it had one: for the tests of what is true of
+    any of them (how they are installed, enabled and left alone), which a second skill would only
+    make longer to read. The tests of the others are theirs."""
+    from factotum.actions.core import Announce, CoreSkills
+
+    return CoreSkills(Announce(speech or FakeSpeech()))
 
 
 class ScriptedChat:

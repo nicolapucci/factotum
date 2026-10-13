@@ -6,9 +6,8 @@ from uuid import uuid4
 import pytest
 
 from factotum.actions.catalog import Catalog
-from factotum.actions.core import platform_skills
 from factotum.actions.rig import ActionsRig
-from factotum.actions.testing import FakeSpeech
+from factotum.actions.testing import FakeSpeech, just_announce
 from factotum.contracts.actions import SkillEnable, SkillInstall, SkillOwner
 from factotum.contracts.errors import (
     ConflictError,
@@ -529,8 +528,6 @@ class TestReadingAFolder:
             "lamp@1",
             "movie-scene@1",
             "restart-router@1",
-            "volume-change@1",
-            "volume@1",
             "weather@1",
         ]
         by_name = {s.name: s.id for s in (await catalog.list(admin)).skills}
@@ -547,7 +544,7 @@ class TestTheSkillsOfThePlatform:
 
     @staticmethod
     def with_core(rig: ActionsRig) -> Catalog:
-        return Catalog(rig.store, rig.index, core=platform_skills(FakeSpeech()), now=rig.clock)
+        return Catalog(rig.store, rig.index, core=just_announce(), now=rig.clock)
 
     async def test_what_an_administrator_first_sees_is_the_skills_of_the_platform_enabled(
         self,
@@ -625,7 +622,7 @@ class TestTheSkillsOfThePlatform:
         write_skill(tmp_path, "weather", WEATHER)
         rig = ActionsRig()
         catalog = Catalog(
-            rig.store, rig.index, folder=tmp_path, core=platform_skills(FakeSpeech()), now=rig.clock
+            rig.store, rig.index, folder=tmp_path, core=just_announce(), now=rig.clock
         )
 
         await catalog.reload(rig.principal(None))
@@ -647,7 +644,7 @@ class TestTheSkillsOfThePlatform:
     async def test_two_tenants_are_each_given_their_own_and_see_no_other(self) -> None:
         one, two = ActionsRig(), ActionsRig()
         speech = FakeSpeech()
-        core = platform_skills(speech)
+        core = just_announce(speech)
         mine = Catalog(one.store, one.index, core=core, now=one.clock)
         yours = Catalog(two.store, two.index, core=core, now=two.clock)
 

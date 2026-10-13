@@ -6,11 +6,10 @@ in the sandbox as ever."""
 
 from typing import Any
 
-from factotum.actions.core import platform_skills
 from factotum.actions.execution import DryRunRunner
 from factotum.actions.rig import HOME_TEXT, ActionsRig, plan_of
 from factotum.actions.store import InMemoryStore
-from factotum.actions.testing import ANNOUNCE, START, FakeSpeech
+from factotum.actions.testing import ANNOUNCE, START, FakeSpeech, just_announce
 from factotum.contracts.actions import ActCode, ActOutcome, ActStatus
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.audit import ActionResult
@@ -53,7 +52,7 @@ def announce_plan(message: str = MESSAGE, **fields: Any) -> dict[str, Any]:
 def a_rig(**kwargs: Any) -> tuple[ActionsRig, FakeSpeech]:
     """A service given the skills of the platform, with a voice that is made up."""
     speech = FakeSpeech()
-    return ActionsRig(home_text=HOME, core=platform_skills(speech), **kwargs), speech
+    return ActionsRig(home_text=HOME, core=just_announce(speech), **kwargs), speech
 
 
 def a_message(sentences: int) -> str:
@@ -206,7 +205,7 @@ class TestWhoseVoice:
         self,
     ) -> None:
         speech, store = FakeSpeech(), InMemoryStore()
-        core = platform_skills(speech)
+        core = just_announce(speech)
         one = ActionsRig(home_text=HOME, store=store, core=core)
         two = ActionsRig(home_text=HOME, store=store, core=core)
         one.plans(announce_plan("Dinner is ready", device=DISPLAY))
@@ -391,7 +390,7 @@ class TestWhenItCannotBeDone:
 class TestWhatIsNotTheirs:
     async def test_a_skill_of_a_person_that_is_called_announce_is_run_in_the_sandbox(self) -> None:
         speech = FakeSpeech()
-        core = platform_skills(speech)
+        core = just_announce(speech)
         rig = ActionsRig(home_text=HOME, core=core)
         await core.ensure(rig.store, rig.tenant, now=START)
         theirs = ANNOUNCE.model_copy(

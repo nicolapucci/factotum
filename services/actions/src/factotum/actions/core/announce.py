@@ -71,7 +71,7 @@ class Announce(CoreSkill):
         super().__init__()
         self._speech = speech
 
-    async def run(self, request: RunRequest, principal: Principal) -> CoreResult:
+    async def run(self, request: RunRequest, principal: Principal, *, language: str) -> CoreResult:
         message = request.params.get("message")
         if not isinstance(message, str) or not message.strip():
             raise SkillRunError("there is nothing to announce")

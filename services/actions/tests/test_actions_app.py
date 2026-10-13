@@ -41,13 +41,26 @@ WEATHER = """\
 name: weather
 description: Say what the weather is like somewhere.
 examples:
-  - what is the weather in Rome
+  - weather forecast for Rome
   - will it rain tomorrow
 target: none
 parameters:
   place: {type: string}
 required: [place]
 effect: read_only
+---
+"""
+
+GREEN_LIGHT = """\
+---
+name: green-light
+description: Turn the light of the speaker that is being spoken to green.
+examples:
+  - turn the light of the speaker green
+  - make the speaker light green
+target: system
+effect: reversible
+entrypoint: scripts/run.py
 ---
 """
 
@@ -332,7 +345,7 @@ class TestAgainstARealDatabase:
             # Installed, a skill does not run; enabled by an administrator, it does.
             weather = (await http.post("/v1/skills", json={"source": WEATHER})).json()
             garage = (await http.post("/v1/skills", json={"source": GARAGE})).json()
-            asked = "what is the weather in Rome"
+            asked = "weather forecast for Rome"
             before = await http.post("/v1/act", json={"message": asked}, headers=speaker_headers)
             assert before.json()["status"] == "no_skill"
             assert model.asked == []  # nothing that runs is near it, so no model was asked
@@ -393,8 +406,8 @@ class TestAgainstARealDatabase:
         respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
         respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
         printed = {
-            "message": "Volume set to 30.",
-            "commands": [{"name": "set_volume", "level": 30}],
+            "message": "Light on.",
+            "commands": [{"name": "set_led", "pattern": "solid", "color": "#00ff00"}],
         }
         job = JobResult(exit_code=0, stdout=json.dumps(printed))
         runner = respx.post(f"{RUNNER}/v1/jobs").mock(
@@ -407,6 +420,10 @@ class TestAgainstARealDatabase:
         home.write_text(HOME_TEXT, encoding="utf-8", newline="\n")
         secrets = tmp_path / "secrets.dev.yaml"
         secrets.write_text(SECRETS, encoding="utf-8", newline="\n")
+        folder = tmp_path / "skills" / "green-light"
+        (folder / "scripts").mkdir(parents=True)
+        (folder / "SKILL.md").write_text(GREEN_LIGHT, encoding="utf-8", newline="\n")
+        (folder / "scripts" / "run.py").write_text("print(1)\n", encoding="utf-8", newline="\n")
         parsed = parse_home(HOME_TEXT, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
         speaker = next(r for r, _ in parsed.system if r.name == "Kitchen speaker")
         app = build_app(
@@ -414,7 +431,7 @@ class TestAgainstARealDatabase:
                 database_settings,
                 actions_devices_file=home,
                 actions_secrets_file=secrets,
-                actions_skills_dir=EXAMPLES,
+                actions_skills_dir=tmp_path / "skills",
                 actions_enable_skills_dir=True,
                 actions_runner_url=AnyHttpUrl(RUNNER),
                 actions_edge_url=AnyHttpUrl(EDGE),
@@ -428,26 +445,26 @@ class TestAgainstARealDatabase:
             ) as http,
         ):
             reloaded = await http.post("/v1/skills/reload")
-            assert "volume@1" in reloaded.json()["enabled"]
-            model.plans.append(plan_of("volume", parameters={"level": 30}))
+            assert "green-light@1" in reloaded.json()["enabled"]
+            model.plans.append(plan_of("green-light"))
 
             done = await http.post(
                 "/v1/act",
-                json={"message": "set the volume to 30"},
+                json={"message": "turn the light of the speaker green"},
                 headers=dev_headers(principal_of_device(speaker)),
             )
 
         assert done.json()["status"] == "done"
-        assert done.json()["reply"] == "Volume set to 30."
+        assert done.json()["reply"] == "Light on."
         assert runner.call_count == 1
         sent = json.loads(runner.calls[0].request.content)
-        assert sent["label"] == "volume"
+        assert sent["label"] == "green-light"
         assert sent["entrypoint"] == "scripts/run.py"
         assert [file["path"] for file in sent["files"]] == ["scripts/run.py"]
         assert (sent["env"], sent["hosts"]) == ({}, [])
         assert edge.call_count == 1
         command = json.loads(edge.calls[0].request.content)
-        assert command == {"command": {"name": "set_volume", "level": 30}}
+        assert command == {"command": {"name": "set_led", "pattern": "solid", "color": "#00ff00"}}
         assert edge.calls[0].request.url.path == f"/v1/devices/{speaker.id}/commands"
 
     @respx.mock

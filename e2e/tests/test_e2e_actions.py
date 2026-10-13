@@ -89,9 +89,8 @@ class TestDoingWhatIsAsked:
             # said so; the other device, which was not spoken to, was left as it was.
             assert speaker.hardware.state.volume == 20
             assert display.hardware.state.volume == 50
-            assert speaker.spoken() == ["Volume set to 20."]
-            [job] = house.runner.jobs
-            assert (job.label, job.hosts, job.env) == ("volume", (), {})  # nothing to reach
+            assert speaker.spoken() == ["Volume at 20 percent."]
+            assert house.runner.jobs == []  # the volume is a skill of the platform: no sandbox
             assert house.home_assistant.seen == []
 
     async def test_a_home_assistant_that_fails_is_said_and_the_next_message_is_not_affected(

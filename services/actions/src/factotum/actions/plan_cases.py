@@ -153,6 +153,15 @@ PLAN_CASES: tuple[PlanCase, ...] = (
         direction="down",
         amount=15,
     ),
+    # ---- the sound muted or brought back (the device keeps the level)
+    _action("mute the sound", KITCHEN, "mute", _DONE, muted=True),
+    _action("unmute", DISPLAY, "mute", _DONE, muted=False),
+    _action("metti in muto", KITCHEN, "mute", _DONE, muted=True),
+    _action("togli il muto", DISPLAY, "mute", _DONE, muted=False),
+    # ---- how the device is: asked of the device, and said from what it answered
+    _action("what is the volume", KITCHEN, "volume-status", _DONE),
+    _action("is it muted", DISPLAY, "volume-status", _DONE),
+    _action("che volume c'è", KITCHEN, "volume-status", _DONE),
     # ---- what is missing is asked for, never made up
     _action("change the volume", KITCHEN, "volume-change", _MORE),
     _action("cambia il volume", DISPLAY, "volume-change", _MORE),

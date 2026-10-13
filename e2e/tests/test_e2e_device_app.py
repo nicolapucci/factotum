@@ -192,9 +192,8 @@ class TestAPersonAtTheDevice:
 
             assert person.speaker.volume == 20  # the command went through the edge to this device
             assert "volume 20" in person.shown.of("event")
-            assert person.shown.of("speech") == ["Volume set to 20."]
-            [job] = house.runner.jobs
-            assert job.label == "volume"
+            assert person.shown.of("speech") == ["Volume at 20 percent."]
+            assert house.runner.jobs == []  # the volume is a skill of the platform: no sandbox
 
     async def test_an_announcement_is_clips_that_the_device_plays_besides_what_it_answers(
         self,

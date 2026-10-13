@@ -182,7 +182,7 @@ class TestWhatADeviceIsGiven:
         tenant, speech = make_tenant_id(), FakeSpeech()
 
         done = await Announce(speech).run(
-            request_of(tenant, "Dinner is ready"), shared_device(tenant)
+            request_of(tenant, "Dinner is ready"), shared_device(tenant), language="en"
         )
 
         assert said(done.commands) == ["Dinner is ready"]
@@ -194,14 +194,18 @@ class TestWhatADeviceIsGiven:
     async def test_what_is_said_to_the_person_who_asked_is_left_to_the_usual_word(self) -> None:
         tenant = make_tenant_id()
 
-        done = await Announce(FakeSpeech()).run(request_of(tenant, "Dinner"), shared_device(tenant))
+        done = await Announce(FakeSpeech()).run(
+            request_of(tenant, "Dinner"), shared_device(tenant), language="en"
+        )
 
         assert done.message is None  # "Done.", in the language of the person
 
     async def test_a_long_message_is_given_in_clips_that_say_all_of_it_in_order(self) -> None:
         tenant, message = make_tenant_id(), a_message(12)
 
-        done = await Announce(FakeSpeech()).run(request_of(tenant, message), shared_device(tenant))
+        done = await Announce(FakeSpeech()).run(
+            request_of(tenant, message), shared_device(tenant), language="en"
+        )
 
         assert len(done.commands) > 1
         assert " ".join(said(done.commands)) == message
@@ -211,7 +215,9 @@ class TestWhatADeviceIsGiven:
         tenant, speech = make_tenant_id(), FakeSpeech()
         message = "**Dinner** is [ready](http://example.com/menu)"
 
-        done = await Announce(speech).run(request_of(tenant, message), shared_device(tenant))
+        done = await Announce(speech).run(
+            request_of(tenant, message), shared_device(tenant), language="en"
+        )
 
         assert said(done.commands) == ["Dinner is ready"]
         assert [text for _, text in speech.asked] == ["Dinner is ready"]
@@ -223,7 +229,7 @@ class TestWhatADeviceIsGiven:
         ) * 19 + "x" * 100  # 2000 characters of words, no full stop in them
         request = request_of(tenant, message)
 
-        done = await Announce(speech).run(request, shared_device(tenant))
+        done = await Announce(speech).run(request, shared_device(tenant), language="en")
 
         assert len(message) == MAX_SPOKEN_CHARS
         assert request.params["message"] == message  # nothing was taken from the ends of it
@@ -233,9 +239,11 @@ class TestWhatADeviceIsGiven:
     async def test_the_trail_says_what_was_said_and_in_how_many_clips(self) -> None:
         tenant = make_tenant_id()
 
-        one = await Announce(FakeSpeech()).run(request_of(tenant, "Dinner"), shared_device(tenant))
+        one = await Announce(FakeSpeech()).run(
+            request_of(tenant, "Dinner"), shared_device(tenant), language="en"
+        )
         many = await Announce(FakeSpeech()).run(
-            request_of(tenant, a_message(12)), shared_device(tenant)
+            request_of(tenant, a_message(12)), shared_device(tenant), language="en"
         )
 
         assert one.audit == "said 'Dinner' in 1 clip"
@@ -257,7 +265,9 @@ class TestWhoseVoice:
     async def test_the_voice_of_a_household_device_is_the_tenants(self) -> None:
         tenant, speech = make_tenant_id(), FakeSpeech()
 
-        await Announce(speech).run(request_of(tenant, "Dinner"), shared_device(tenant))
+        await Announce(speech).run(
+            request_of(tenant, "Dinner"), shared_device(tenant), language="en"
+        )
 
         assert speech.asked == [(Owner.of_subject(Subject.tenant(tenant)), "Dinner")]
 
@@ -265,7 +275,7 @@ class TestWhoseVoice:
         tenant, speech = make_tenant_id(), FakeSpeech()
         principal = personal_device(tenant)
 
-        await Announce(speech).run(request_of(tenant, "Dinner"), principal)
+        await Announce(speech).run(request_of(tenant, "Dinner"), principal, language="en")
 
         assert speech.asked == [(Owner.of_subject(principal.acts_as), "Dinner")]
 
@@ -275,8 +285,8 @@ class TestWhoseVoice:
         one, two, speech = make_tenant_id(), make_tenant_id(), FakeSpeech()
         announce = Announce(speech)
 
-        await announce.run(request_of(one, "Dinner"), shared_device(one))
-        await announce.run(request_of(two, "Lunch"), shared_device(two))
+        await announce.run(request_of(one, "Dinner"), shared_device(one), language="en")
+        await announce.run(request_of(two, "Lunch"), shared_device(two), language="en")
 
         assert speech.asked == [
             (Owner.of_subject(Subject.tenant(one)), "Dinner"),
@@ -292,7 +302,9 @@ class TestAtOnce:
         speech = AllAtOnce(len(blocks))
 
         async with asyncio.timeout(5):  # a voice that is asked for one at a time never gets there
-            done = await Announce(speech).run(request_of(tenant, message), shared_device(tenant))
+            done = await Announce(speech).run(
+                request_of(tenant, message), shared_device(tenant), language="en"
+            )
 
         assert said(done.commands) == blocks
 
@@ -314,7 +326,9 @@ class TestAtOnce:
         blocks = blocks_of(message)
 
         speech = Backwards(len(blocks))
-        done = await Announce(speech).run(request_of(tenant, message), shared_device(tenant))
+        done = await Announce(speech).run(
+            request_of(tenant, message), shared_device(tenant), language="en"
+        )
 
         assert [text for _, text in speech.asked] == blocks[::-1]  # made in the other order
         assert said(done.commands) == blocks  # and given in the order of the message
@@ -328,7 +342,9 @@ class TestWhatIsNotAnnounced:
         tenant, speech = make_tenant_id(), FakeSpeech()
 
         with pytest.raises(SkillRunError, match="there is nothing to announce"):
-            await Announce(speech).run(request_of(tenant, message), shared_device(tenant))
+            await Announce(speech).run(
+                request_of(tenant, message), shared_device(tenant), language="en"
+            )
 
         assert speech.asked == []  # a voice costs a model's time: it is not made for nothing
 
@@ -339,7 +355,9 @@ class TestWhatIsNotAnnounced:
         tenant, speech = make_tenant_id(), FakeSpeech()
 
         with pytest.raises(SkillRunError, match="there is nothing to say"):
-            await Announce(speech).run(request_of(tenant, marks), shared_device(tenant))
+            await Announce(speech).run(
+                request_of(tenant, marks), shared_device(tenant), language="en"
+            )
 
         assert speech.asked == []
 
@@ -347,7 +365,9 @@ class TestWhatIsNotAnnounced:
         tenant, speech = make_tenant_id(), FakeSpeech()
 
         with pytest.raises(SkillRunError, match="at most 2000 characters"):
-            await Announce(speech).run(request_of(tenant, "word " * 401), shared_device(tenant))
+            await Announce(speech).run(
+                request_of(tenant, "word " * 401), shared_device(tenant), language="en"
+            )
 
         assert speech.asked == []
 
@@ -358,7 +378,9 @@ class TestWhenAVoiceCannotBeMade:
         speech.failures = [None, GatewayUnavailableError("the voice is not there"), None]
 
         with pytest.raises(SkillRunError) as raised:
-            await Announce(speech).run(request_of(tenant, a_message(30)), shared_device(tenant))
+            await Announce(speech).run(
+                request_of(tenant, a_message(30)), shared_device(tenant), language="en"
+            )
 
         assert raised.value.message == "the voice could not be made (gateway_unavailable)"
         assert isinstance(raised.value.__cause__, GatewayUnavailableError)
@@ -368,7 +390,9 @@ class TestWhenAVoiceCannotBeMade:
         speech.failures = [GatewayUnavailableError("http://10.0.0.7:8080 refused, key sk-abc")]
 
         with pytest.raises(SkillRunError) as raised:
-            await Announce(speech).run(request_of(tenant, "Dinner"), shared_device(tenant))
+            await Announce(speech).run(
+                request_of(tenant, "Dinner"), shared_device(tenant), language="en"
+            )
 
         assert "10.0.0.7" not in raised.value.message
         assert "sk-abc" not in raised.value.message
@@ -380,7 +404,9 @@ class TestWhenAVoiceCannotBeMade:
         speech.failures = [KeyError("tts")]
 
         with pytest.raises(KeyError):  # as it is, and not in a group
-            await Announce(speech).run(request_of(tenant, "Dinner"), shared_device(tenant))
+            await Announce(speech).run(
+                request_of(tenant, "Dinner"), shared_device(tenant), language="en"
+            )
 
     async def test_what_could_not_be_made_leaves_the_device_nothing_to_say(self) -> None:
         tenant, speech = make_tenant_id(), FakeSpeech()
@@ -388,8 +414,12 @@ class TestWhenAVoiceCannotBeMade:
         announce = Announce(speech)
 
         with pytest.raises(SkillRunError):
-            await announce.run(request_of(tenant, a_message(30)), shared_device(tenant))
-        done = await announce.run(request_of(tenant, "Dinner"), shared_device(tenant))
+            await announce.run(
+                request_of(tenant, a_message(30)), shared_device(tenant), language="en"
+            )
+        done = await announce.run(
+            request_of(tenant, "Dinner"), shared_device(tenant), language="en"
+        )
 
         assert said(done.commands) == ["Dinner"]  # and the failure did not outlive the message
 
@@ -398,7 +428,9 @@ class TestWhenAVoiceCannotBeMade:
         blocks = blocks_of(a_message(30))
 
         with pytest.raises(SkillRunError):
-            await Announce(speech).run(request_of(tenant, a_message(30)), shared_device(tenant))
+            await Announce(speech).run(
+                request_of(tenant, a_message(30)), shared_device(tenant), language="en"
+            )
 
         assert speech.started == len(blocks)
         assert speech.let_go == len(blocks) - 1
@@ -420,7 +452,7 @@ class TestWhenAVoiceCannotBeMade:
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.05):
                 await Announce(Waits()).run(
-                    request_of(tenant, a_message(30)), shared_device(tenant)
+                    request_of(tenant, a_message(30)), shared_device(tenant), language="en"
                 )
 
         assert Waits.let_go == len(blocks)

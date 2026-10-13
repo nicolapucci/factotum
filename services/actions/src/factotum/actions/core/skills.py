@@ -16,6 +16,7 @@ it ships.
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar, Protocol
@@ -23,7 +24,7 @@ from typing import ClassVar, Protocol
 from factotum.actions.skills import LoadedSkill, parse_skill
 from factotum.actions.store import ActionsStore, StoredSkill
 from factotum.contracts.audio import AudioPayload
-from factotum.contracts.commands import DeviceCommand
+from factotum.contracts.commands import CommandResult, DeviceCommand
 from factotum.contracts.identity import Owner, Principal, Subject
 from factotum.contracts.ids import TenantId
 from factotum.contracts.runner import RunRequest
@@ -52,6 +53,14 @@ class CoreResult:
     audit: str | None = None
     """What the audit trail says was done, for a person to read: a clip is opaque, a text is not."""
 
+    after: Callable[[Sequence[CommandResult]], str | None] | None = None
+    """What to say once the device has done the commands, when what there is to say is what the
+    device answered (the level the volume came to, how it is; ADR 0029). It is given what each
+    command answered, in order, and the words it returns replace ``message``; nothing returned is
+    the usual word for a thing that was done. It raises ``SkillRunError`` for an answer that is not
+    one, and the skill has failed. What the device answered is read here, in code: a model never
+    reads it."""
+
 
 class CoreSkill(ABC):
     """A skill of the platform. It is called with what a message said (``request.params``), and
@@ -71,10 +80,11 @@ class CoreSkill(ABC):
         return self.loaded.content_sha256
 
     @abstractmethod
-    async def run(self, request: RunRequest, principal: Principal) -> CoreResult:
-        """Do what the skill is for, for the principal that asked. Raises ``SkillRunError`` for what
-        it cannot do, in words that a person may read: when a service it asks for fails it says what
-        kind of failure it was (the code of the error) and never what the service said."""
+    async def run(self, request: RunRequest, principal: Principal, *, language: str) -> CoreResult:
+        """Do what the skill is for, for the principal that asked, who spoke ``language`` (what it
+        says of what it did is in it). Raises ``SkillRunError`` for what it cannot do, in words that
+        a person may read: when a service it asks for fails it says what kind of failure it was (the
+        code of the error) and never what the service said."""
 
 
 class CoreSkills:
