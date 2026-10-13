@@ -56,11 +56,16 @@ digits or in words, or the end or the middle of the range the skill declares, sa
 or *a metà*), and a text has to be made of words that the message has. A choice from a list is the
 model's reading and is not looked for. A value that is not there is not one: if the skill requires
 it the person is asked, and if it does not the skill is called without it. So **a default belongs to
-the skill**: `volume-change` is called with `direction: up` and no `amount` when the person says
-*alza il volume*, and its script turns it up by its usual step. Do not ask a model for a number
-that nobody said, and do not make an optional value required to get one. A manifest cannot say
-that one of two values is required (a level, or a direction), so a skill that would take either is
-two skills, as `volume` and `volume-change` are.
+whoever has the function**: `volume-change` is called with `direction: up` and no `amount` when the
+person says *alza il volume*, passes exactly that to the device, and the device turns it up by its own
+step. Do not ask a model for a number that nobody said, and do not make an optional value required to
+get one. A manifest cannot say that one of two values is required (a level, or a direction), so a
+skill that would take either is two skills, as `volume` and `volume-change` are.
+
+**A skill for what a device does is the interface between the model and the device** (ADR 0028). The
+function lives on the device (the volume, a timer); the skill says to the model what can be asked, and
+to the device what was asked, as a command of the vocabulary, and has no logic of the device's own. It
+does not choose a step, a sound or a time that nobody said: that is the device's to know.
 
 Then the body. For a script it is notes for people. **For instructions it is what the model follows**,
 read whole every time the skill runs: at most 8000 characters.

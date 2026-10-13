@@ -191,7 +191,7 @@ nothing on the network, and is granted nothing. What it says is not the reply to
    (*al massimo*, *at full*, *a metà*), and a text is made of words that the message has. One that
    is not there is *left out*: a value that the skill does not require is not passed on, so the
    skill, or the device, applies its own default (*alza il volume* turns it up by the step of the
-   skill; a level of 100 that a model thought of is never run), and one that it requires is asked
+   device; a level of 100 that a model thought of is never run), and one that it requires is asked
    for. A choice from a list (`on`, `off`) is the model's reading of the words and is not searched
    for. The names of what was left out are in the log, never the values. A sentence the model wrote
    to be spoken must be one printable line of moderate length or it is not said, and the question
@@ -737,8 +737,8 @@ languages) and a *why* that is a question and not a request.
 
 * *Turn it up*, *make the volume a bit lower* and *alza il volume*, which the model had answered with
   a level of its own (twice, in two measurements), are `volume-change` with a direction and no amount,
-  and the skill turns the volume by its step. *Turn the volume down a lot* came with an amount of 100
-  that nobody said; the check left it out and the step was used. *Metti il volume al massimo* is 100
+  and the device turns the volume by its own step. *Turn the volume down a lot* came with an amount of
+  100 that nobody said; the check left it out and the step of the device was used. *Metti il volume al massimo* is 100
   and *a metà* is 50, *di quindici* is 15, and *set the lamp to forty* is 40: said in words, or as the
   end or the middle of the range of the parameter.
 * *Dì che è ora di andare* came with the message *it's time to go*: a translation, which is not what

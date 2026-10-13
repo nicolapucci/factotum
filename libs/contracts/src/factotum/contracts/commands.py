@@ -38,6 +38,11 @@ class LedPattern(StrEnum):
     PULSE = "pulse"
 
 
+class VolumeDirection(StrEnum):
+    UP = "up"
+    DOWN = "down"
+
+
 class BaseCommand(Contract):
     """A command; ``requires`` is the capability the target device must have declared."""
 
@@ -102,18 +107,20 @@ class SetVolume(BaseCommand):
 
 
 class AdjustVolume(BaseCommand):
-    """Make the volume louder or quieter than it is, by a number of points of the volume (ADR 0028).
+    """Make the volume louder or quieter than it is (ADR 0028).
 
-    A ``set_volume`` says which level; this says how much more or less, which is what "turn it up"
-    means and needs no knowledge of where the volume is. A positive ``delta`` raises it, a negative
-    one lowers it, and the level that results stays between 0 and 100. How much a person means
-    when they do not say is the skill's to decide, and it gives the number: a device does what it
-    is told and has no step of its own."""
+    A ``set_volume`` says which level; this says which way, which is what "turn it up" means and
+    needs no knowledge of where the volume is. ``amount`` is how many points of the volume, when a
+    person said it. When they did not, the device turns it by its own step: a speaker is not a
+    television, and what a step is belongs to the device that has the volume. The skill that gives
+    the command is the interface between a model and the device, and has no step to tell. The level
+    that results stays between 0 and 100."""
 
     requires: ClassVar[Capability] = Capability.AUDIO_OUT
 
     name: Literal["adjust_volume"] = "adjust_volume"
-    delta: int = Field(ge=-100, le=100)
+    direction: VolumeDirection
+    amount: int | None = Field(default=None, ge=1, le=100)
 
 
 class ShowCard(BaseCommand):

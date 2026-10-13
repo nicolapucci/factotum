@@ -34,6 +34,7 @@ from factotum.contracts.commands import (
     ShowCard,
     Speak,
     Stop,
+    VolumeDirection,
 )
 from factotum.contracts.errors import CapabilityNotSupportedError
 from factotum.contracts.ids import DeviceId
@@ -99,8 +100,10 @@ class SystemDevice(ABC):
     async def set_volume(self, level: int) -> CommandResult:
         return await self.execute(SetVolume(level=level))
 
-    async def adjust_volume(self, delta: int) -> CommandResult:
-        return await self.execute(AdjustVolume(delta=delta))
+    async def adjust_volume(
+        self, direction: VolumeDirection, amount: int | None = None
+    ) -> CommandResult:
+        return await self.execute(AdjustVolume(direction=direction, amount=amount))
 
     async def show_card(self, card: Card) -> CommandResult:
         return await self.execute(ShowCard(card=card))

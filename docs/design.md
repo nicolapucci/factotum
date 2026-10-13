@@ -149,8 +149,8 @@ with a credential issued at pairing, declare **capabilities**, and are driven th
 The **command vocabulary** (version 2) is the single definition every other piece derives from. Each
 command requires one capability: `speak`, `play_audio` (a clip, which the platform's own skills give:
 [ADR 0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)),
-`play_url`, `pause`, `resume`, `stop`, `set_volume` (to a level), `adjust_volume` (by some points,
-which is what *turn it up* is: ADR 0028), `show_card`, `clear_display`, `set_led`. What a
+`play_url`, `pause`, `resume`, `stop`, `set_volume` (to a level), `adjust_volume` (a direction and,
+if a person said it, an amount; the step of the device otherwise: ADR 0028), `show_card`, `clear_display`, `set_led`. What a
 skill, a script or a plan may give is that vocabulary but for `play_audio` (`SkillCommand`), and a
 `speak` is made a voice by the edge for a device that takes clips. `SystemDevice` has one ready-made
 method per command; a method refuses

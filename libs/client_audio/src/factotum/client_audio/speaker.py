@@ -9,6 +9,7 @@ gets: the sound ends where it was, and not where the device had got to in what i
 The volume is the speaker's and not the system's: a ``set_volume`` or an ``adjust_volume`` command
 scales the samples before they are played, so that the same device does it on a PC, on a Raspberry
 Pi and on whatever has no mixer, and a person's own setting of the system's volume is left alone.
+How far "turn it up" goes when nobody says is the speaker's own step (ADR 0028).
 """
 
 import asyncio
@@ -20,9 +21,14 @@ from factotum.client_audio.backend import (
     OutputStream,
 )
 from factotum.contracts.audio import AudioPayload, pcm_of
+from factotum.contracts.commands import VolumeDirection
 
 FULL_VOLUME = 100
 """The level of a speaker that changes nothing of what it is given."""
+
+DEFAULT_VOLUME_STEP = 10
+"""How far a speaker turns the volume when nobody says by how much: the step of the device, which
+its settings may change (``audio.volume_step`` of the device application)."""
 
 CLIP_CHUNK_MS = 100
 """A clip is written a tenth of a second at a time, so that stopping it does not wait for the
@@ -42,11 +48,17 @@ class Speaker:
     arrives) and a ``MarkedSink`` (told which sentence it is saying)."""
 
     def __init__(
-        self, backend: AudioBackend, *, device: DeviceChoice = None, volume: int = FULL_VOLUME
+        self,
+        backend: AudioBackend,
+        *,
+        device: DeviceChoice = None,
+        volume: int = FULL_VOLUME,
+        step: int = DEFAULT_VOLUME_STEP,
     ) -> None:
         self._backend = backend
         self._device = device
         self._volume = max(0, min(volume, FULL_VOLUME))
+        self._step = max(1, min(step, FULL_VOLUME))
         self._stream: OutputStream | None = None
         self.sentence: int | None = None
         """The ``seq`` of the sentence that is being said, as the last ``mark`` told it."""
@@ -55,13 +67,19 @@ class Speaker:
     def volume(self) -> int:
         return self._volume
 
+    @property
+    def step(self) -> int:
+        """How far this speaker turns the volume when nobody says by how much."""
+        return self._step
+
     def set_volume(self, level: int) -> None:
         self._volume = max(0, min(level, FULL_VOLUME))
 
-    def adjust_volume(self, delta: int) -> int:
-        """Louder or quieter by ``delta`` points of the volume, and never past either end. Returns
-        the level that results."""
-        self.set_volume(self._volume + delta)
+    def adjust_volume(self, direction: VolumeDirection, amount: int | None = None) -> int:
+        """Louder or quieter by ``amount`` points of the volume, or by the step of this speaker when
+        there is none, and never past either end. Returns the level that results."""
+        points = self._step if amount is None else amount
+        self.set_volume(self._volume + (points if direction is VolumeDirection.UP else -points))
         return self._volume
 
     def scaled(self, pcm: bytes) -> bytes:

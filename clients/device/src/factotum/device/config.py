@@ -19,6 +19,7 @@ from pydantic import Field, SecretStr, ValidationError, field_validator, model_v
 
 from factotum.client_audio import (
     ACCESS_KEY_VARIABLE,
+    DEFAULT_VOLUME_STEP,
     THRESHOLD,
     WAKE_WORDS,
     DeviceChoice,
@@ -89,6 +90,10 @@ class AudioSettings(Contract):
     volume: int = Field(default=100, ge=0, le=100)
     """How loud it speaks at first, in percent of what the voice makes: a ``set_volume`` of a
     skill changes it, and the volume of the system is left alone."""
+
+    volume_step: int = Field(default=DEFAULT_VOLUME_STEP, ge=1, le=100)
+    """How far "turn it up" goes, in percent, when a person does not say by how much (ADR 0028):
+    the step of this device, which a skill does not know."""
 
 
 class ListeningSettings(Contract):

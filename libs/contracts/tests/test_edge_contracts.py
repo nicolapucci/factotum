@@ -35,6 +35,7 @@ from factotum.contracts.commands import (
     ShowCard,
     Speak,
     Stop,
+    VolumeDirection,
 )
 from factotum.contracts.conversation import MAX_MESSAGE_CHARS
 from factotum.contracts.edge import (
@@ -145,7 +146,8 @@ COMMANDS: tuple[DeviceCommand, ...] = (
     Resume(),
     Stop(),
     SetVolume(level=0),
-    AdjustVolume(delta=-15),
+    AdjustVolume(direction=VolumeDirection.DOWN, amount=15),
+    AdjustVolume(direction=VolumeDirection.UP),
     ShowCard(card=CARD),
     ClearDisplay(),
     SetLed(pattern=LedPattern.SOLID, color="#00ff00"),

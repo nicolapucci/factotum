@@ -121,9 +121,11 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   Italian up to 999, or the end or the middle of the range the skill declares: *al massimo*), a text
   has to be made of its words, and a choice from a list is the model's reading and is not searched
   for. What was not said is not a value: a required one is asked for, in the language of the message,
-  and an optional one is left out so that the skill applies its default (*alza il volume* is
-  `volume-change` with a direction and no amount, and the script turns it up by its step of 10; a
-  device does what it is told, `adjust_volume` carries a number). A model is never asked to quote the
+  and an optional one is left out so that the device or the skill applies its default (*alza il
+  volume* is `volume-change` with a direction and no amount, and the device turns it up by its own
+  step: **a skill for what a device does is the interface between the model and the device**, it
+  passes on what was said as a command and has no step, sound or time of its own to tell; each
+  device has its own, `audio.volume_step` for the speaker). A model is never asked to quote the
   words a value came from: the check is in code. Several skills in one request are not built, and
   nothing may assume that there is exactly one.
 - **A script runs in a container of its own and reaches only what its grant lists** (ADR 0015). The

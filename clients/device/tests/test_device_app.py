@@ -97,8 +97,20 @@ class TestWhatItIsMadeOf:
         assert isinstance(hardware.voice_input, PushToTalk)
         assert isinstance(hardware.speaker, Speaker)
         assert hardware.speaker.volume == 40
+        assert hardware.speaker.step == 10  # how far "turn it up" goes unless the settings say
         assert backend.inputs == []  # nothing is opened to be built
         assert backend.outputs == []
+
+    def test_a_speaker_turns_the_volume_by_the_step_the_settings_give_it(self) -> None:
+        hardware = build_hardware(
+            a_config(audio={"volume": 40, "volume_step": 5}),
+            FakeBackend(),
+            RecordingRenderer(),
+            presses=KeyPresses(),
+        )
+
+        assert isinstance(hardware.speaker, Speaker)
+        assert hardware.speaker.step == 5
 
     def test_with_a_word_it_is_a_wake_word_that_listens_for_it(self) -> None:
         hardware = build_hardware(

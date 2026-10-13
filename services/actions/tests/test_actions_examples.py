@@ -23,7 +23,7 @@ from factotum.actions.runner_client import hosts_of, read_output
 from factotum.actions.skills import LoadedSkill, load_folder
 from factotum.actions.testing import FakeSpeech
 from factotum.common.hosts import match_host
-from factotum.contracts.commands import AdjustVolume, SetVolume
+from factotum.contracts.commands import AdjustVolume, SetVolume, VolumeDirection
 from factotum.contracts.effects import Effect
 from factotum.contracts.errors import SkillFailedError
 from factotum.contracts.instructions import InstructionPlan
@@ -301,18 +301,34 @@ class TestTheScriptsDoWhatTheirSkillsSay:
         assert result.commands == (SetVolume(level=35),)
 
     @pytest.mark.parametrize(
-        ("params", "delta", "message"),
+        ("params", "command", "message"),
         [
-            ({"direction": "up"}, 10, "Volume up by 10."),
-            ({"direction": "down"}, -10, "Volume down by 10."),
-            ({"direction": "up", "amount": 25}, 25, "Volume up by 25."),
-            ({"direction": "down", "amount": 5}, -5, "Volume down by 5."),
+            (
+                {"direction": "up"},
+                AdjustVolume(direction=VolumeDirection.UP),
+                "Volume up.",
+            ),
+            (
+                {"direction": "down"},
+                AdjustVolume(direction=VolumeDirection.DOWN),
+                "Volume down.",
+            ),
+            (
+                {"direction": "up", "amount": 25},
+                AdjustVolume(direction=VolumeDirection.UP, amount=25),
+                "Volume up by 25.",
+            ),
+            (
+                {"direction": "down", "amount": 5},
+                AdjustVolume(direction=VolumeDirection.DOWN, amount=5),
+                "Volume down by 5.",
+            ),
         ],
     )
-    def test_the_volume_is_turned_up_or_down_by_what_is_said_and_by_a_step_when_it_is_not(
+    def test_the_volume_is_turned_by_what_is_said_and_the_step_of_the_device_is_not_the_skills(
         self,
         params: dict[str, object],
-        delta: int,
+        command: AdjustVolume,
         message: str,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
@@ -323,7 +339,7 @@ class TestTheScriptsDoWhatTheirSkillsSay:
 
         assert calls == []
         assert result.message == message
-        assert result.commands == (AdjustVolume(delta=delta),)
+        assert result.commands == (command,)
 
     def test_only_the_direction_of_the_volume_is_asked_for_and_how_much_is_left_to_the_skill(
         self,

@@ -44,6 +44,7 @@ from factotum.e2e.devices import Device, connected
 from factotum.e2e.house import House
 from factotum.e2e.models import is_italian
 from factotum.e2e.wiring import HA_TOKEN
+from factotum.terminal.device import VOLUME_STEP
 
 PROFILES = {KITCHEN: "speaker", DISPLAY: "smart-display", PHONE: "phone"}
 """The profile of the terminal that stands for each device that the messages are said to."""
@@ -76,10 +77,6 @@ AIR_SAID = "The air quality index in ${value.place} is ${step.air.json.current.e
 
 PLACE_LATITUDE, PLACE_LONGITUDE, AIR_INDEX = 45.07, 7.69, 21
 """What the stand-in of Open-Meteo answers (``house.OPEN_METEO``)."""
-
-VOLUME_STEP = 10
-"""How far "turn it up" goes when nobody says: the usual step of the ``volume-change`` skill (the
-skill decides it, ADR 0028; a device does what it is told)."""
 
 YES = {"en": "Yes.", "it": "Sì."}
 NO = {"en": "No.", "it": "No."}
@@ -550,9 +547,10 @@ def _done(case: PlanCase, window: Window) -> list[str]:
 
 
 def _volume_turned(case: PlanCase, window: Window) -> list[str]:
-    """A volume turned up or down goes by what was said, or by the step of the skill when nothing
-    was, from where the device had it and never past either end. Only the device that was spoken to
-    is touched, and the skill is run once with nothing to reach."""
+    """A volume turned up or down goes by what was said, or by the step of the device when nothing
+    was (ADR 0028: the skill passes on what was said and the device knows its step), from where the
+    device had it and never past either end. Only the device that was spoken to is touched, and the
+    skill is run once with nothing to reach."""
     step = int(case.params.get("amount", VOLUME_STEP))
     delta = step if case.params["direction"] == "up" else -step
     before = window.volumes_before[case.speaker]

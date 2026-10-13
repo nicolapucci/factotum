@@ -15,6 +15,7 @@ from factotum.contracts.commands import (
     SetLed,
     SetVolume,
     Speak,
+    VolumeDirection,
 )
 from factotum.device.hands import DeviceHands
 
@@ -58,13 +59,24 @@ class TestTheVolume:
         speaker = Speaker(FakeBackend(), volume=50)
         hands, shown = hands_with(speaker)
 
-        up = await hands.execute(AdjustVolume(delta=10))
-        down = await hands.execute(AdjustVolume(delta=-30))
+        up = await hands.execute(AdjustVolume(direction=VolumeDirection.UP, amount=10))
+        down = await hands.execute(AdjustVolume(direction=VolumeDirection.DOWN, amount=30))
 
         assert up.succeeded
         assert down.succeeded
         assert speaker.volume == 30
         assert shown.of("event") == ["volume 60", "volume 30"]
+
+    async def test_when_nobody_said_by_how_much_it_is_the_step_of_this_speaker(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=50, step=4)
+        hands, shown = hands_with(speaker)
+
+        await hands.execute(AdjustVolume(direction=VolumeDirection.UP))
+        await hands.execute(AdjustVolume(direction=VolumeDirection.DOWN))
+        await hands.execute(AdjustVolume(direction=VolumeDirection.DOWN))
+
+        assert speaker.volume == 46
+        assert shown.of("event") == ["volume 54", "volume 50", "volume 46"]
 
     async def test_a_change_never_takes_the_volume_past_either_end_and_the_level_said_is_real(
         self,
@@ -72,8 +84,8 @@ class TestTheVolume:
         speaker = Speaker(FakeBackend(), volume=95)
         hands, shown = hands_with(speaker)
 
-        await hands.execute(AdjustVolume(delta=20))
-        await hands.execute(AdjustVolume(delta=-100))
+        await hands.execute(AdjustVolume(direction=VolumeDirection.UP, amount=20))
+        await hands.execute(AdjustVolume(direction=VolumeDirection.DOWN, amount=100))
 
         assert speaker.volume == 0
         assert shown.of("event") == ["volume 100", "volume 0"]
@@ -81,7 +93,7 @@ class TestTheVolume:
     async def test_a_device_with_no_speaker_has_no_volume_to_change_either(self) -> None:
         hands, shown = hands_with(None)
 
-        result = await hands.execute(AdjustVolume(delta=10))
+        result = await hands.execute(AdjustVolume(direction=VolumeDirection.UP))
 
         assert result.status is CommandStatus.UNSUPPORTED
         assert "adjust_volume" in (result.detail or "")

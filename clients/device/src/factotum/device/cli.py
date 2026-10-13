@@ -81,6 +81,8 @@ audio:
   output_device: null                      # surest: the same hardware is listed by each host API)
                                            # or a part of the name; null is the system's default
   volume: 100                              # how loud, in percent (a skill can change it)
+  volume_step: 10                          # how far "turn it up" goes, in percent, when nobody
+                                           # says by how much: the step of this device
 
 listening:
   mode: push_to_talk                       # Enter begins, being quiet ends it (or Enter again);

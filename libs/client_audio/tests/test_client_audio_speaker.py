@@ -12,12 +12,20 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from factotum.client_audio.backend import AudioUnavailableError
-from factotum.client_audio.speaker import CLIP_CHUNK_MS, FULL_VOLUME, Speaker, gain_of
+from factotum.client_audio.speaker import (
+    CLIP_CHUNK_MS,
+    DEFAULT_VOLUME_STEP,
+    FULL_VOLUME,
+    Speaker,
+    gain_of,
+)
 from factotum.client_audio.testing import FakeBackend
 from factotum.client_core.audio import MarkedSink, VoiceOutput, VoiceSink
 from factotum.contracts.audio import wav_of
+from factotum.contracts.commands import VolumeDirection
 
 RATE = 22_050
+UP, DOWN = VolumeDirection.UP, VolumeDirection.DOWN
 
 
 def samples(*values: int) -> bytes:
@@ -73,35 +81,59 @@ class TestWhatAVolumeDoes:
 
         assert speaker.scaled(samples(1000, -1000)) == samples(0, 0)
 
-    def test_the_volume_goes_up_and_down_by_some_points_and_the_new_level_is_given(self) -> None:
+    def test_the_volume_goes_up_and_down_by_what_was_said_and_the_new_level_is_given(self) -> None:
         speaker = Speaker(FakeBackend(), volume=50)
 
-        assert speaker.adjust_volume(10) == 60
-        assert speaker.volume == 60
-        assert speaker.adjust_volume(-25) == 35
-        assert speaker.volume == 35
+        assert speaker.adjust_volume(UP, 15) == 65
+        assert speaker.volume == 65
+        assert speaker.adjust_volume(DOWN, 25) == 40
+        assert speaker.volume == 40
+
+    def test_when_nobody_said_by_how_much_it_is_by_the_step_of_the_speaker(self) -> None:
+        assert Speaker(FakeBackend()).step == DEFAULT_VOLUME_STEP == 10
+        speaker = Speaker(FakeBackend(), volume=50)
+        assert speaker.adjust_volume(UP) == 60
+        assert speaker.adjust_volume(DOWN) == 50
+
+    def test_a_speaker_has_the_step_it_was_given_and_it_is_its_own(self) -> None:
+        small = Speaker(FakeBackend(), volume=50, step=2)
+        large = Speaker(FakeBackend(), volume=50, step=25)
+
+        assert (small.adjust_volume(UP), large.adjust_volume(UP)) == (52, 75)
+        assert (small.adjust_volume(DOWN, 5), large.adjust_volume(DOWN, 5)) == (47, 70)
+
+    @pytest.mark.parametrize(("step", "kept"), [(0, 1), (-4, 1), (1, 1), (100, 100), (500, 100)])
+    def test_a_step_is_from_one_point_to_the_whole_volume(self, step: int, kept: int) -> None:
+        assert Speaker(FakeBackend(), step=step).step == kept
 
     def test_it_is_never_taken_past_either_end(self) -> None:
         speaker = Speaker(FakeBackend(), volume=95)
 
-        assert speaker.adjust_volume(10) == FULL_VOLUME
-        assert speaker.adjust_volume(100) == FULL_VOLUME
+        assert speaker.adjust_volume(UP) == FULL_VOLUME
+        assert speaker.adjust_volume(UP, 100) == FULL_VOLUME
         speaker.set_volume(5)
-        assert speaker.adjust_volume(-10) == 0
-        assert speaker.adjust_volume(-100) == 0
+        assert speaker.adjust_volume(DOWN) == 0
+        assert speaker.adjust_volume(DOWN, 100) == 0
 
-    @given(st.integers(0, 100), st.integers(-100, 100))
+    @given(
+        st.integers(0, 100),
+        st.sampled_from([UP, DOWN]),
+        st.one_of(st.none(), st.integers(1, 100)),
+        st.integers(1, 100),
+    )
     def test_the_level_that_results_is_the_sum_kept_between_nothing_and_the_full(
-        self, level: int, delta: int
+        self, level: int, direction: VolumeDirection, amount: int | None, step: int
     ) -> None:
-        speaker = Speaker(FakeBackend(), volume=level)
+        speaker = Speaker(FakeBackend(), volume=level, step=step)
+        points = step if amount is None else amount
+        moved = points if direction is UP else -points
 
-        assert speaker.adjust_volume(delta) == max(0, min(level + delta, FULL_VOLUME))
+        assert speaker.adjust_volume(direction, amount) == max(0, min(level + moved, FULL_VOLUME))
 
     def test_what_is_played_after_it_is_at_the_new_level(self) -> None:
         speaker = Speaker(FakeBackend(), volume=100)
 
-        speaker.adjust_volume(-50)
+        speaker.adjust_volume(DOWN, 50)
 
         assert np.frombuffer(speaker.scaled(samples(1000, -1000)), "<i2").tolist() == [250, -250]
 

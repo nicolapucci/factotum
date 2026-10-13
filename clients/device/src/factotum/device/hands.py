@@ -49,7 +49,8 @@ class DeviceHands:
                 self._renderer.event(f"volume {command.level}")
                 return CommandResult.ok()
             case AdjustVolume() if self._speaker is not None:
-                self._renderer.event(f"volume {self._speaker.adjust_volume(command.delta)}")
+                level = self._speaker.adjust_volume(command.direction, command.amount)
+                self._renderer.event(f"volume {level}")
                 return CommandResult.ok()
         return CommandResult(
             status=CommandStatus.UNSUPPORTED,

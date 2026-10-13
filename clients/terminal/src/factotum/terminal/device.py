@@ -26,7 +26,12 @@ from factotum.contracts.commands import (
     ShowCard,
     Speak,
     Stop,
+    VolumeDirection,
 )
+
+VOLUME_STEP = 10
+"""How far this hardware turns the volume when nobody says by how much: the step of the device it
+pretends to be (ADR 0028). The series of ``e2e`` judges a volume that was turned up by it."""
 
 
 @dataclass
@@ -53,9 +58,16 @@ class DeviceState:
 class TerminalDevice:
     """The hands of a device in a terminal: a ``factotum.client_core.CommandDriver``."""
 
-    def __init__(self, capabilities: frozenset[Capability], renderer: Renderer) -> None:
+    def __init__(
+        self,
+        capabilities: frozenset[Capability],
+        renderer: Renderer,
+        *,
+        volume_step: int = VOLUME_STEP,
+    ) -> None:
         self._capabilities = capabilities
         self._renderer = renderer
+        self._volume_step = volume_step
         self.state = DeviceState()
 
     @property
@@ -94,7 +106,9 @@ class TerminalDevice:
                 state.volume = command.level
                 self._renderer.event(f"volume {command.level}")
             case AdjustVolume():
-                state.volume = max(0, min(state.volume + command.delta, 100))
+                points = self._volume_step if command.amount is None else command.amount
+                moved = points if command.direction is VolumeDirection.UP else -points
+                state.volume = max(0, min(state.volume + moved, 100))
                 self._renderer.event(f"volume {state.volume}")
             case ShowCard():
                 state.card = command.card

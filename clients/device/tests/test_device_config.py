@@ -33,6 +33,7 @@ class TestWhatTheDefaultsAre:
         assert config.device.hardware_id == "kitchen-01"
         assert config.device.capabilities == {Capability.AUDIO_IN, Capability.AUDIO_OUT}
         assert (config.listening.mode, config.audio.volume) == (Mode.PUSH_TO_TALK, 100)
+        assert config.audio.volume_step == 10
         assert (config.audio.input_device, config.audio.output_device) == (None, None)
         assert config.listening.listen_while_answering is False
         assert (config.reconnect.first_s, config.reconnect.max_s) == (1.0, 30.0)
@@ -233,6 +234,8 @@ class TestWhatCannotBe:
         [
             (MINIMAL + "audio:\n  volum: 5\n", "audio.volum"),
             (MINIMAL + "audio:\n  volume: 150\n", "audio.volume"),
+            (MINIMAL + "audio:\n  volume_step: 0\n", "audio.volume_step"),
+            (MINIMAL + "audio:\n  volume_step: 101\n", "audio.volume_step"),
             (MINIMAL + "edge:\n  url: http://edge\n", "edge.url"),
             (MINIMAL + "listening:\n  mode: shouting\n", "listening.mode"),
             (MINIMAL + "listening:\n  silence_seconds: 0\n", "listening.silence_seconds"),

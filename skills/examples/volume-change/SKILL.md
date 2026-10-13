@@ -20,6 +20,9 @@ entrypoint: scripts/run.py
 Turns the volume of a system device up or down. The script does not reach the device: it answers
 with a command (`adjust_volume`), and the platform runs it on the device once the checks are made.
 
-A person who does not say by how much ("alza il volume") gets the usual step, 10 points of the volume:
-the model is not asked for a number and makes none up, and the skill decides what "a bit" is. To
-set the volume to a level that is said ("set the volume to 30"), see the `volume` skill.
+This skill is the interface between a model and the device. Toward the model it says what can be
+asked (a direction, and by how much if the person said it); toward the device it passes exactly that
+on. A person who does not say by how much ("alza il volume") gets the step of the device, which is
+the device's to know (a speaker and a television do not turn it by the same amount): the model is not
+asked for a number and makes none up, and the skill does not tell the device one. To set the volume
+to a level that is said ("set the volume to 30"), see the `volume` skill.

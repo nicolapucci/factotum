@@ -99,7 +99,12 @@ def build_hardware(
     ``backend`` is. ``presses`` stands in for the keyboard, and ``engine`` for what watches for the
     word, for a test."""
     speaker = (
-        Speaker(backend, device=config.output_device, volume=config.audio.volume)
+        Speaker(
+            backend,
+            device=config.output_device,
+            volume=config.audio.volume,
+            step=config.audio.volume_step,
+        )
         if config.can_speak
         else None
     )

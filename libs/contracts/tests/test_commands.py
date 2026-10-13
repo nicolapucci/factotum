@@ -31,6 +31,7 @@ from factotum.contracts.commands import (
     SkillCommand,
     Speak,
     Stop,
+    VolumeDirection,
 )
 from factotum.contracts.runner import SkillOutput
 
@@ -48,7 +49,7 @@ EXAMPLES: list[tuple[BaseCommand, Capability]] = [
     (Resume(), Capability.MEDIA_PLAYER),
     (Stop(), Capability.MEDIA_PLAYER),
     (SetVolume(level=30), Capability.AUDIO_OUT),
-    (AdjustVolume(delta=-10), Capability.AUDIO_OUT),
+    (AdjustVolume(direction=VolumeDirection.DOWN, amount=10), Capability.AUDIO_OUT),
     (ShowCard(card=CARD), Capability.DISPLAY),
     (ClearDisplay(), Capability.DISPLAY),
     (SetLed(pattern=LedPattern.PULSE, color="#00ff00"), Capability.LED),
@@ -167,42 +168,63 @@ class TestValidation:
     def test_the_volume_bounds_are_inclusive(self, level: int) -> None:
         assert SetVolume(level=level).level == level
 
-    @pytest.mark.parametrize("delta", [-101, 101, 1000])
-    def test_a_change_of_the_volume_is_at_most_all_of_it(self, delta: int) -> None:
+    @pytest.mark.parametrize("amount", [0, -5, 101, 1000])
+    def test_an_amount_of_the_volume_is_from_1_to_100_points(self, amount: int) -> None:
         with pytest.raises(ValidationError):
-            AdjustVolume(delta=delta)
+            AdjustVolume(direction=VolumeDirection.UP, amount=amount)
 
-    @pytest.mark.parametrize("delta", [-100, -10, 1, 10, 100])
-    def test_the_bounds_of_a_change_of_the_volume_are_inclusive(self, delta: int) -> None:
-        assert AdjustVolume(delta=delta).delta == delta
+    @pytest.mark.parametrize("amount", [1, 10, 100])
+    def test_the_bounds_of_an_amount_of_the_volume_are_inclusive(self, amount: int) -> None:
+        assert AdjustVolume(direction=VolumeDirection.DOWN, amount=amount).amount == amount
 
     @given(st.integers())
-    def test_a_change_of_the_volume_is_a_whole_number_of_points_from_minus_100_to_100(
-        self, delta: int
+    def test_an_amount_of_the_volume_is_a_whole_number_of_points_from_1_to_100(
+        self, amount: int
     ) -> None:
-        if -100 <= delta <= 100:
-            assert AdjustVolume(delta=delta).delta == delta
+        if 1 <= amount <= 100:
+            assert AdjustVolume(direction=VolumeDirection.UP, amount=amount).amount == amount
         else:
             with pytest.raises(ValidationError):
-                AdjustVolume(delta=delta)
+                AdjustVolume(direction=VolumeDirection.UP, amount=amount)
 
-    @pytest.mark.parametrize("delta", [0.5, None])
-    def test_a_change_of_the_volume_is_a_whole_number_of_points(self, delta: object) -> None:
+    @pytest.mark.parametrize("amount", [0.5, "much"])
+    def test_an_amount_of_the_volume_is_a_whole_number(self, amount: object) -> None:
         with pytest.raises(ValidationError):
-            AdjustVolume.model_validate({"name": "adjust_volume", "delta": delta})
+            AdjustVolume.model_validate(
+                {"name": "adjust_volume", "direction": "up", "amount": amount}
+            )
 
-    def test_a_change_of_the_volume_says_by_how_much(self) -> None:
+    def test_an_amount_that_nobody_said_is_not_there_and_the_device_has_its_own_step(self) -> None:
+        assert AdjustVolume(direction=VolumeDirection.UP).amount is None
+        said = command_adapter.validate_python({"name": "adjust_volume", "direction": "down"})
+        assert said == AdjustVolume(direction=VolumeDirection.DOWN)
+        assert "amount" in said.model_dump()  # an unsaid amount travels as null, not as a number
+
+    @pytest.mark.parametrize("direction", ["", "louder", "UP", None])
+    def test_the_direction_is_up_or_down_and_nothing_else(self, direction: object) -> None:
+        with pytest.raises(ValidationError):
+            AdjustVolume.model_validate({"name": "adjust_volume", "direction": direction})
+
+    def test_a_change_of_the_volume_says_which_way(self) -> None:
         with pytest.raises(ValidationError):
             AdjustVolume.model_validate({"name": "adjust_volume"})
+        with pytest.raises(ValidationError):
+            AdjustVolume.model_validate({"name": "adjust_volume", "amount": 10})
 
     def test_the_name_selects_it_and_a_skill_may_give_it(self) -> None:
-        said = {"name": "adjust_volume", "delta": -20}
+        said = {"name": "adjust_volume", "direction": "down", "amount": 20}
+        wanted = AdjustVolume(direction=VolumeDirection.DOWN, amount=20)
 
-        assert command_adapter.validate_python(said) == AdjustVolume(delta=-20)
-        assert skill_command_adapter.validate_python(said) == AdjustVolume(delta=-20)
+        assert command_adapter.validate_python(said) == wanted
+        assert skill_command_adapter.validate_python(said) == wanted
         assert SkillOutput.model_validate({"message": "Done.", "commands": [said]}).commands == (
-            AdjustVolume(delta=-20),
+            wanted,
         )
+
+    def test_it_has_no_number_of_points_that_a_skill_could_have_to_know(self) -> None:
+        """The skill is the interface to the device and has no step to give (ADR 0028): there is
+        no field for one other than the amount a person said."""
+        assert set(AdjustVolume.model_fields) == {"name", "direction", "amount"}
 
     def test_speech_cannot_be_empty(self) -> None:
         with pytest.raises(ValidationError):

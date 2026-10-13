@@ -14,7 +14,7 @@ runs them is in [`docs/actions.md`](../docs/actions.md).
 | `garage-door` | an action on a sensitive device: a shared speaker may not, one that may asks for a yes |
 | `weather` | a read-only action with no device, that reaches a service on the network it declared |
 | `volume` | an action on the device that was spoken to, answered with a command for it: the volume set to a level that is said |
-| `volume-change` | the same turned up or down: the person says by how much, or does not and the skill's step is used; a value that nobody said is never passed on |
+| `volume-change` | the same turned up or down: the person says by how much, or does not and the device's own step is used; a value that nobody said is never passed on |
 | `restart-router` | an action that asks for an approval, which fails closed until there is a way to give one |
 | `movie-scene` | *instructions*: two calls to Home Assistant with a token, in order, and what to say |
 | `air-quality` | *instructions*: read-only, two calls where the second uses what the first answered |

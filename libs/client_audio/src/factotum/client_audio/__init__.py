@@ -16,7 +16,7 @@ from factotum.client_audio.endpoint import capture_speech
 from factotum.client_audio.inputs import PushToTalk, WakeWord
 from factotum.client_audio.keys import EnterKey
 from factotum.client_audio.microphone import Microphone
-from factotum.client_audio.speaker import Speaker, gain_of
+from factotum.client_audio.speaker import DEFAULT_VOLUME_STEP, Speaker, gain_of
 from factotum.client_audio.wakeword import (
     ACCESS_KEY_VARIABLE,
     DEFAULT_OPENWAKEWORD,
@@ -41,6 +41,7 @@ from factotum.client_audio.wakeword import (
 __all__ = [
     "ACCESS_KEY_VARIABLE",
     "DEFAULT_OPENWAKEWORD",
+    "DEFAULT_VOLUME_STEP",
     "DEFAULT_WAKE_WORD",
     "THRESHOLD",
     "WAKE_WORDS",

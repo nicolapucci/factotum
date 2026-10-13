@@ -26,6 +26,7 @@ from factotum.contracts.commands import (
     ShowCard,
     Speak,
     Stop,
+    VolumeDirection,
 )
 from factotum.contracts.errors import CapabilityNotSupportedError
 from factotum.devices.system_device import SystemDevice
@@ -56,7 +57,11 @@ CALLS: list[tuple[str, Call, DeviceCommand]] = [
     ("resume", lambda d: d.resume(), Resume()),
     ("stop", lambda d: d.stop(), Stop()),
     ("set_volume", lambda d: d.set_volume(30), SetVolume(level=30)),
-    ("adjust_volume", lambda d: d.adjust_volume(-10), AdjustVolume(delta=-10)),
+    (
+        "adjust_volume",
+        lambda d: d.adjust_volume(VolumeDirection.DOWN, 10),
+        AdjustVolume(direction=VolumeDirection.DOWN, amount=10),
+    ),
     ("show_card", lambda d: d.show_card(CARD), ShowCard(card=CARD)),
     ("clear_display", lambda d: d.clear_display(), ClearDisplay()),
     (

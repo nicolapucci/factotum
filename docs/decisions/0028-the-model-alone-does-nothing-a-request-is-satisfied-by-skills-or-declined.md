@@ -86,9 +86,15 @@ opposite: the model by itself can do nothing, and what the assistant can do is i
   rule in code can search for it: it is left to the checks of the choices and, where an action has an effect,
   to the person's yes. Because a manifest cannot say that one of two values is required, setting the volume
   to a level and turning it up or down are two skills (`volume` and `volume-change`), each of which asks for
-  what it cannot do without. The default step belongs to the skill (the script of `volume-change` turns it
-  up by 10) and the command that reaches a device says how much (`adjust_volume`, a number of points): a
-  device does what it is told and has no step of its own.
+  what it cannot do without.
+- **A skill for what a device does is the interface between the model and the device.** Where a function
+  lives on the device (the volume, and later a timer), the skill that manages it is the contract in
+  between: toward the model it says what can be asked (the manifest, checked in code), toward the device it
+  passes on exactly what was said as a command of the vocabulary, and the model never speaks to the device
+  nor learns what the device did. So the default of an optional value that was not said belongs to the
+  device and not to the skill: *alza il volume* is `adjust_volume` with a direction and no amount, and each
+  device turns it by its own step (the speaker of the device application has one, 10 points unless its
+  settings say another), which a speaker and a television do not share. The skill has no number to tell.
 - **One or more skills, though one at a time for now.** The rule is stated for any number of them: a
   request is satisfied when every part of it has a skill that ran; a part that has none is declined, a part
   whose skill failed is said to have failed, and what was done is still said. Today a message chooses one
@@ -183,10 +189,11 @@ What the measurements found (`docs/knowledge.md`, `docs/conversation.md`):
 ### The second slice (B)
 
 A value is one that the person said, and the volume can be turned up or down. `adjust_volume` is a
-command of the vocabulary (a `delta` from -100 to 100, version 3), run by the system device, the speaker
-(which keeps the level between 0 and 100), the hands of the device application and the terminal.
-`volume-change` is a skill with a direction (required) and an amount (optional): its script turns the volume
-by the amount if there is one and by 10 if there is not. `factotum.actions.grounding` finds out whether a
+command of the vocabulary (a direction and, if a person said it, an amount of 1 to 100 points; version
+3), run by the system device, the speaker (which keeps the level between 0 and 100 and turns it by its own
+step when there is no amount: `audio.volume_step` in the settings of the device application), the hands of
+the device application and the terminal. `volume-change` is a skill with a direction (required) and an
+amount (optional) that passes on what was said and nothing more. `factotum.actions.grounding` finds out whether a
 message says a value; `check_values` leaves out what it does not say (`Checked.unsaid`: an optional value is
 not passed on and a required one is asked for), the service logs the names of what was left out and never
 the values, and the question that asks for a value that is missing is replaced by the sentence of the code
@@ -197,7 +204,7 @@ said to the three devices, in English and Italian):
 
 * **The check works with the real model.** *Metti il volume al massimo* is a level of 100 and *a metà* one of
   50 (the ends of the range), *di quindici* is an amount of 15, and *turn the volume down a lot* came with
-  an amount of 100 that nobody said, which was left out, so the skill turned it down by its step. *Turn it
+  an amount of 100 that nobody said, which was left out, so the device turned it down by its own step. *Turn it
   up* and *make the volume a bit lower*, which the model had answered with a level of its own in two
   earlier measurements, are done by `volume-change` with a direction and no amount: 8 of 8, and the
   volume 7 of 7 (it was 6 of 8).

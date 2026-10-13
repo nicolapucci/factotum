@@ -20,8 +20,9 @@ from factotum.contracts.commands import (
     ShowCard,
     Speak,
     Stop,
+    VolumeDirection,
 )
-from factotum.terminal.device import TerminalDevice
+from factotum.terminal.device import VOLUME_STEP, TerminalDevice
 
 EVERYTHING = frozenset(Capability)
 RADIO = AnyHttpUrl("https://radio.example.org/stream")
@@ -53,23 +54,42 @@ class TestWhatTheHardwareDoes:
         assert hardware.state.volume == 30
         assert shown.of("event") == ["volume 30"]
 
-    async def test_it_turns_the_volume_up_and_down_by_some_points(self) -> None:
+    async def test_it_turns_the_volume_up_and_down_by_what_was_said(self) -> None:
         hardware, shown = device()  # the volume starts at 50
 
-        up = await hardware.execute(AdjustVolume(delta=10))
-        down = await hardware.execute(AdjustVolume(delta=-30))
+        up = await hardware.execute(AdjustVolume(direction=VolumeDirection.UP, amount=10))
+        down = await hardware.execute(AdjustVolume(direction=VolumeDirection.DOWN, amount=30))
 
         assert up.succeeded
         assert down.succeeded
         assert hardware.state.volume == 30
         assert shown.of("event") == ["volume 60", "volume 30"]
 
+    async def test_and_by_its_own_step_when_nobody_said(self) -> None:
+        hardware, shown = device()
+
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.UP))
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.DOWN))
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.DOWN))
+
+        assert VOLUME_STEP == 10
+        assert hardware.state.volume == 40
+        assert shown.of("event") == ["volume 60", "volume 50", "volume 40"]
+
+    async def test_a_device_made_with_another_step_turns_it_by_that(self) -> None:
+        hardware = TerminalDevice(EVERYTHING, RecordingRenderer(), volume_step=3)
+
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.UP))
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.DOWN, amount=20))
+
+        assert hardware.state.volume == 33
+
     async def test_a_change_of_the_volume_stops_at_either_end(self) -> None:
         hardware, shown = device()
 
-        await hardware.execute(AdjustVolume(delta=100))
-        await hardware.execute(AdjustVolume(delta=-100))
-        await hardware.execute(AdjustVolume(delta=-5))
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.UP, amount=100))
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.DOWN, amount=100))
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.DOWN))
 
         assert hardware.state.volume == 0
         assert shown.of("event") == ["volume 100", "volume 0", "volume 0"]
@@ -137,7 +157,7 @@ class TestWhenItCannotDoIt:
         [
             (Speak(text="hello"), "audio_out"),
             (SetVolume(level=10), "audio_out"),
-            (AdjustVolume(delta=10), "audio_out"),
+            (AdjustVolume(direction=VolumeDirection.UP), "audio_out"),
             (SetLed(pattern=LedPattern.SOLID), "led"),
             (ShowCard(card=Card(title="x")), "display"),
             (PlayUrl(url=RADIO), "media_player"),
