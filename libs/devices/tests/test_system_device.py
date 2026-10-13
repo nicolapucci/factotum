@@ -11,6 +11,9 @@ from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
     COMMAND_MODELS,
     AdjustVolume,
+    AlarmDay,
+    CancelAlarm,
+    CancelTimer,
     ClearDisplay,
     CommandResult,
     CommandStatus,
@@ -22,13 +25,16 @@ from factotum.contracts.commands import (
     PlayAudio,
     PlayUrl,
     Resume,
+    SetAlarm,
     SetLed,
     SetMute,
+    SetTimer,
     SetVolume,
     ShowCard,
     Speak,
     Stop,
     VolumeDirection,
+    Weekday,
 )
 from factotum.contracts.errors import CapabilityNotSupportedError
 from factotum.devices.system_device import SystemDevice
@@ -66,6 +72,18 @@ CALLS: list[tuple[str, Call, DeviceCommand]] = [
     ),
     ("set_mute", lambda d: d.set_mute(True), SetMute(muted=True)),
     ("get_state", lambda d: d.get_state(), GetState()),
+    (
+        "set_timer",
+        lambda d: d.set_timer(300, "Done.", CLIP),
+        SetTimer(seconds=300, text="Done.", audio=CLIP),
+    ),
+    ("cancel_timer", lambda d: d.cancel_timer(300), CancelTimer(seconds=300)),
+    (
+        "set_alarm",
+        lambda d: d.set_alarm(7, 30, "Up.", CLIP, day=AlarmDay(weekday=Weekday.MONDAY)),
+        SetAlarm(hour=7, minute=30, day=AlarmDay(weekday=Weekday.MONDAY), text="Up.", audio=CLIP),
+    ),
+    ("cancel_alarm", lambda d: d.cancel_alarm(7, 30), CancelAlarm(hour=7, minute=30)),
     ("show_card", lambda d: d.show_card(CARD), ShowCard(card=CARD)),
     ("clear_display", lambda d: d.clear_display(), ClearDisplay()),
     (
@@ -204,6 +222,32 @@ class TestInvalidArguments:
     async def test_a_media_url_must_be_a_valid_http_url(self) -> None:
         with pytest.raises(ValidationError):
             await FakeSystemDevice(ALL_CAPABILITIES).play_url("not a url")
+
+    async def test_a_timer_and_an_alarm_are_asked_for_with_nothing_the_person_did_not_say(
+        self,
+    ) -> None:
+        device = FakeSystemDevice(ALL_CAPABILITIES)
+
+        await device.cancel_timer()
+        await device.cancel_alarm()
+        await device.set_alarm(6, 45, "Up.", CLIP)
+
+        assert device.sent == [
+            CancelTimer(),
+            CancelAlarm(),
+            SetAlarm(hour=6, minute=45, text="Up.", audio=CLIP),
+        ]
+
+    @pytest.mark.parametrize("seconds", [0, 86_401])
+    async def test_a_timer_out_of_range_is_rejected_before_anything_is_sent(
+        self, seconds: int
+    ) -> None:
+        device = FakeSystemDevice(ALL_CAPABILITIES)
+
+        with pytest.raises(ValidationError):
+            await device.set_timer(seconds, "Done.", CLIP)
+
+        assert device.sent == []
 
 
 def test_the_interface_cannot_be_instantiated_without_a_way_to_send() -> None:

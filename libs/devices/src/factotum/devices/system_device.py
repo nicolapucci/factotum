@@ -20,6 +20,9 @@ from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 from factotum.contracts.commands import (
     AdjustVolume,
+    AlarmDay,
+    CancelAlarm,
+    CancelTimer,
     ClearDisplay,
     CommandResult,
     DeviceCommand,
@@ -30,8 +33,10 @@ from factotum.contracts.commands import (
     PlayAudio,
     PlayUrl,
     Resume,
+    SetAlarm,
     SetLed,
     SetMute,
+    SetTimer,
     SetVolume,
     ShowCard,
     Speak,
@@ -113,6 +118,39 @@ class SystemDevice(ABC):
     async def get_state(self) -> CommandResult:
         """Ask the device how it is: the answer is in the ``data`` of the result."""
         return await self.execute(GetState())
+
+    async def set_timer(self, seconds: int, text: str, audio: AudioPayload) -> CommandResult:
+        """Have the device ring after ``seconds`` with a clip of ``text`` (ADR 0029): the device
+        keeps the time, and answers with the timer it set."""
+        return await self.execute(SetTimer(seconds=seconds, text=text, audio=audio))
+
+    async def cancel_timer(self, seconds: int | None = None) -> CommandResult:
+        """Stop a timer of the device: the one of that length, else the one that is ringing, else
+        the next to ring."""
+        return await self.execute(CancelTimer(seconds=seconds))
+
+    async def set_alarm(
+        self,
+        hour: int,
+        minute: int,
+        text: str,
+        audio: AudioPayload,
+        *,
+        day: AlarmDay | None = None,
+    ) -> CommandResult:
+        """Have the device ring at ``hour`` and ``minute`` on ``day`` (the next time they come, when
+        there is none): the device works out the moment from its own clock and calendar, and answers
+        with the one it chose."""
+        return await self.execute(
+            SetAlarm(hour=hour, minute=minute, day=day or AlarmDay(), text=text, audio=audio)
+        )
+
+    async def cancel_alarm(
+        self, hour: int | None = None, minute: int | None = None
+    ) -> CommandResult:
+        """Stop an alarm of the device: the one at that hour and minute, else the one that is
+        ringing, else the next to ring."""
+        return await self.execute(CancelAlarm(hour=hour, minute=minute))
 
     async def show_card(self, card: Card) -> CommandResult:
         return await self.execute(ShowCard(card=card))

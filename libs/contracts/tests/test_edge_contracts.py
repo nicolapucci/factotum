@@ -21,6 +21,9 @@ from factotum.contracts.capabilities import Capability, DisplayInfo
 from factotum.contracts.cards import Card, CardItem
 from factotum.contracts.commands import (
     AdjustVolume,
+    AlarmDay,
+    CancelAlarm,
+    CancelTimer,
     ClearDisplay,
     CommandResult,
     CommandStatus,
@@ -31,13 +34,16 @@ from factotum.contracts.commands import (
     PlayAudio,
     PlayUrl,
     Resume,
+    SetAlarm,
     SetLed,
     SetMute,
+    SetTimer,
     SetVolume,
     ShowCard,
     Speak,
     Stop,
     VolumeDirection,
+    Weekday,
 )
 from factotum.contracts.conversation import MAX_MESSAGE_CHARS
 from factotum.contracts.edge import (
@@ -153,6 +159,17 @@ COMMANDS: tuple[DeviceCommand, ...] = (
     AdjustVolume(direction=VolumeDirection.UP),
     SetMute(muted=True),
     GetState(),
+    SetTimer(seconds=90, text="Time is up.", audio=wav_of(b"\x01\x00" * 40, 22_050)),
+    CancelTimer(),
+    CancelTimer(seconds=90),
+    SetAlarm(
+        hour=6,
+        minute=45,
+        day=AlarmDay(weekday=Weekday.TUESDAY),
+        text="Wake up.",
+        audio=wav_of(b"\x01\x00" * 40, 22_050),
+    ),
+    CancelAlarm(hour=6, minute=45),
     ShowCard(card=CARD),
     ClearDisplay(),
     SetLed(pattern=LedPattern.SOLID, color="#00ff00"),

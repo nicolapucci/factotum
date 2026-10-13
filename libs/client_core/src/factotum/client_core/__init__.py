@@ -23,6 +23,7 @@ from factotum.client_core.connection import (
     WebSocketConnection,
 )
 from factotum.client_core.loop import VoiceLoop
+from factotum.client_core.moments import next_moment
 from factotum.client_core.playback import VoicePlayer
 from factotum.client_core.ports import (
     CommandDriver,
@@ -33,6 +34,7 @@ from factotum.client_core.ports import (
     Renderer,
 )
 from factotum.client_core.reconnect import Backoff, Ending, Outcome, stay_connected
+from factotum.client_core.timekeeping import Clock, Ring, SystemClock, Timekeeper
 
 __all__ = [
     "CLIENT",
@@ -40,6 +42,7 @@ __all__ = [
     "AudioStream",
     "Backoff",
     "CannotConverse",
+    "Clock",
     "CommandDriver",
     "CommandHandler",
     "CommandRouter",
@@ -53,11 +56,15 @@ __all__ = [
     "Outcome",
     "Refused",
     "Renderer",
+    "Ring",
+    "SystemClock",
+    "Timekeeper",
     "VoiceInput",
     "VoiceLoop",
     "VoiceOutput",
     "VoicePlayer",
     "VoiceSink",
     "WebSocketConnection",
+    "next_moment",
     "stay_connected",
 ]

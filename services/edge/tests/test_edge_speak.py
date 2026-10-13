@@ -8,9 +8,15 @@ from typing import Any
 from factotum.contracts.audio import AudioPayload, wav_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.commands import (
+    CancelAlarm,
+    CancelTimer,
     CommandResult,
     CommandStatus,
+    DeviceCommand,
+    GetState,
     PlayAudio,
+    SetAlarm,
+    SetTimer,
     SetVolume,
     Speak,
 )
@@ -305,3 +311,48 @@ class TestAClipAndAFeature:
 
             assert await asked == CommandResult.ok()
             assert sent.command == SetVolume(level=30)
+
+
+class TestARingAndAFeature:
+    """A timer or an alarm rings with a clip (ADR 0029), and there is no way to say it in words."""
+
+    async def test_it_goes_to_a_device_that_plays_clips_as_it_is(self) -> None:
+        async with Rig(speech=FakeSpeech()) as rig:
+            connected = await rig.connect(features=PLAYS)
+            commands: list[DeviceCommand] = [
+                SetTimer(seconds=60, text="Done.", audio=clip(5)),
+                SetAlarm(hour=7, minute=0, text="Up.", audio=clip(6)),
+            ]
+
+            for number, command in enumerate(commands, 1):
+                asked = asyncio.create_task(connected.session.command(command))
+                [*_, sent] = await accepting(connected, number)
+                assert await asked == CommandResult.ok()
+                assert sent.command == command
+
+    async def test_it_does_not_go_to_a_device_that_did_not_say_it_plays_clips(self) -> None:
+        async with Rig(speech=FakeSpeech()) as rig:
+            connected = await rig.connect()  # no feature: the device has no clip to ring with
+
+            rings: list[DeviceCommand] = [
+                SetTimer(seconds=60, text="Done.", audio=clip(5)),
+                SetAlarm(hour=7, minute=0, text="Up.", audio=clip(6)),
+            ]
+            for command in rings:
+                result = await connected.session.command(command)
+
+                assert result.status is CommandStatus.UNSUPPORTED
+                assert result.detail == "the device did not say it plays clips, so it cannot ring"
+            assert connected.wire.frames("command") == []  # nothing was sent
+
+    async def test_what_stops_a_ring_or_asks_about_one_goes_to_any_device(self) -> None:
+        async with Rig(speech=FakeSpeech()) as rig:
+            connected = await rig.connect()
+
+            others: list[DeviceCommand] = [CancelTimer(), CancelAlarm(), GetState()]
+            for number, command in enumerate(others, 1):
+                asked = asyncio.create_task(connected.session.command(command))
+                [*_, sent] = await accepting(connected, number)
+
+                assert await asked == CommandResult.ok()
+                assert sent.command == command

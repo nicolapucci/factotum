@@ -27,6 +27,7 @@ from factotum.client_audio import (
 from factotum.client_audio.inputs import Presses
 from factotum.client_core import (
     Backoff,
+    Clock,
     CommandRouter,
     Connection,
     ConnectionLost,
@@ -34,6 +35,7 @@ from factotum.client_core import (
     DeviceIdentity,
     Outcome,
     Renderer,
+    Timekeeper,
     VoiceInput,
     VoiceLoop,
     WebSocketConnection,
@@ -143,10 +145,12 @@ async def open_client(
     hardware: Hardware,
     renderer: Renderer,
     opening: OpenConnection = WebSocketConnection.open,
+    timekeeper: Timekeeper | None = None,
 ) -> DeviceClient:
     """A client for the device, connected to the edge and told it is ready. Raises
     ``CouldNotConnect`` when the edge cannot be reached and ``Refused`` when it does not accept the
-    device."""
+    device. The timers and the alarms are the device's and not a connection's: ``timekeeper`` is the
+    one that outlives it (a client with none keeps its own, which goes with it)."""
     connection = await opening(config.edge.url)
     hands = DeviceHands(config.device.capabilities, hardware.speaker, renderer)
     client = DeviceClient(
@@ -156,6 +160,7 @@ async def open_client(
         CommandRouter(hands),
         voice_output=hardware.speaker,
         voice_sink=hardware.speaker,
+        timekeeper=timekeeper,
     )
     try:
         await client.connect()
@@ -173,10 +178,15 @@ async def run_device(
     opening: OpenConnection = WebSocketConnection.open,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     chance: Callable[[], float] = random.random,
+    clock: Clock | None = None,
 ) -> Outcome:
     """Be the device until the person leaves, or the edge makes clear that it is no use asking
     again. Cancelling this is how it is stopped: what is playing is cut and the edge is said
-    goodbye."""
+    goodbye.
+
+    The timers and the alarms of the device (ADR 0029) are kept here, once, on ``clock`` (the
+    machine's, unless a test gives another): they go on when the connection is lost, ring on the
+    speaker when nobody is connected, and are lost when this ends."""
     loop = (
         VoiceLoop(
             hardware.voice_input, listen_while_answering=config.listening.listen_while_answering
@@ -185,8 +195,14 @@ async def run_device(
         else None
     )
 
+    keeper = (
+        Timekeeper(renderer, clock=clock, output=hardware.speaker)
+        if hardware.speaker is not None
+        else None
+    )
+
     async def connect() -> DeviceClient:
-        return await open_client(config, hardware, renderer, opening)
+        return await open_client(config, hardware, renderer, opening, keeper)
 
     async def serve(client: DeviceClient) -> ConnectionLost | None:
         if loop is not None:
@@ -198,11 +214,15 @@ async def run_device(
 
     if not config.can_hear:
         renderer.notice("this device has no microphone: it is spoken through")
-    return await stay_connected(
-        connect,
-        serve,
-        renderer,
-        backoff=Backoff(first_s=config.reconnect.first_s, max_s=config.reconnect.max_s),
-        sleep=sleep,
-        chance=chance,
-    )
+    try:
+        return await stay_connected(
+            connect,
+            serve,
+            renderer,
+            backoff=Backoff(first_s=config.reconnect.first_s, max_s=config.reconnect.max_s),
+            sleep=sleep,
+            chance=chance,
+        )
+    finally:
+        if keeper is not None:
+            await keeper.close()

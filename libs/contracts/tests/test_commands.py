@@ -13,10 +13,14 @@ from factotum.contracts.commands import (
     COMMAND_MODELS,
     COMMAND_VOCABULARY_VERSION,
     MAX_RESULT_DATA_CHARS,
+    MAX_TIMER_SECONDS,
     PLATFORM_COMMAND_MODELS,
     SKILL_COMMAND_MODELS,
     AdjustVolume,
+    AlarmDay,
     BaseCommand,
+    CancelAlarm,
+    CancelTimer,
     ClearDisplay,
     CommandResult,
     CommandStatus,
@@ -28,14 +32,17 @@ from factotum.contracts.commands import (
     PlayAudio,
     PlayUrl,
     Resume,
+    SetAlarm,
     SetLed,
     SetMute,
+    SetTimer,
     SetVolume,
     ShowCard,
     SkillCommand,
     Speak,
     Stop,
     VolumeDirection,
+    Weekday,
 )
 from factotum.contracts.runner import SkillOutput
 
@@ -56,6 +63,19 @@ EXAMPLES: list[tuple[BaseCommand, Capability]] = [
     (AdjustVolume(direction=VolumeDirection.DOWN, amount=10), Capability.AUDIO_OUT),
     (SetMute(muted=True), Capability.AUDIO_OUT),
     (GetState(), Capability.AUDIO_OUT),
+    (SetTimer(seconds=300, text="Il timer è scaduto.", audio=CLIP), Capability.AUDIO_OUT),
+    (CancelTimer(seconds=300), Capability.AUDIO_OUT),
+    (
+        SetAlarm(
+            hour=7,
+            minute=30,
+            day=AlarmDay(weekday=Weekday.MONDAY),
+            text="Sveglia!",
+            audio=CLIP,
+        ),
+        Capability.AUDIO_OUT,
+    ),
+    (CancelAlarm(hour=7, minute=30), Capability.AUDIO_OUT),
     (ShowCard(card=CARD), Capability.DISPLAY),
     (ClearDisplay(), Capability.DISPLAY),
     (SetLed(pattern=LedPattern.PULSE, color="#00ff00"), Capability.LED),
@@ -87,9 +107,9 @@ def test_command_names_are_unique_snake_case_identifiers() -> None:
 
 
 def test_the_vocabulary_is_versioned() -> None:
-    # play_audio is what version 2 added, adjust_volume what version 3 did, and set_mute,
-    # get_state and the data of a result what version 4 did
-    assert COMMAND_VOCABULARY_VERSION == 4
+    # play_audio is what version 2 added, adjust_volume what version 3 did, set_mute, get_state and
+    # the data of a result what version 4 did, and the timers and the alarms version 5
+    assert COMMAND_VOCABULARY_VERSION == 5
 
 
 @pytest.mark.parametrize(("command", "_"), EXAMPLES, ids=lambda x: type(x).__name__)
@@ -117,9 +137,11 @@ class TestWhatASkillMayGive:
     def test_it_is_the_vocabulary_but_for_what_only_the_platform_makes(self) -> None:
         union = get_args(SkillCommand)[0]
 
+        platform = {PlayAudio, GetState, SetTimer, CancelTimer, SetAlarm, CancelAlarm}
+
         assert set(get_args(union)) == set(SKILL_COMMAND_MODELS)
-        assert set(COMMAND_MODELS) - set(SKILL_COMMAND_MODELS) == {PlayAudio, GetState}
-        assert set(PLATFORM_COMMAND_MODELS) == {PlayAudio, GetState}
+        assert set(COMMAND_MODELS) - set(SKILL_COMMAND_MODELS) == platform
+        assert set(PLATFORM_COMMAND_MODELS) == platform
 
     def test_a_clip_to_play_is_not_one_of_them(self) -> None:
         clip = PlayAudio(text="Hi.", audio=CLIP).model_dump(mode="json")
@@ -157,6 +179,135 @@ class TestWhatASkillMayGive:
         said = {"name": "set_mute", "muted": True}
 
         assert skill_command_adapter.validate_python(said) == SetMute(muted=True)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            SetTimer(seconds=60, text="Done.", audio=CLIP),
+            CancelTimer(),
+            SetAlarm(hour=7, minute=0, text="Up.", audio=CLIP),
+            CancelAlarm(),
+        ],
+        ids=lambda command: command.name,
+    )
+    def test_the_timers_and_the_alarms_of_a_device_are_the_platforms(
+        self, command: BaseCommand
+    ) -> None:
+        """A ring is a clip that nobody but the platform makes, and what a device says of its timers
+        is never given to a script: so no skill of a person can set, cancel or ask for one."""
+        said = command.model_dump(mode="json")
+
+        with pytest.raises(ValidationError):
+            skill_command_adapter.validate_python(said)
+        with pytest.raises(ValidationError):
+            SkillOutput.model_validate({"message": "Done.", "commands": [said]})
+        assert type(command_adapter.validate_python(said)) is type(command)
+
+
+class TestTimersAndAlarms:
+    @pytest.mark.parametrize("seconds", [0, -1, MAX_TIMER_SECONDS + 1])
+    def test_a_timer_lasts_from_a_second_to_a_day(self, seconds: int) -> None:
+        with pytest.raises(ValidationError):
+            SetTimer(seconds=seconds, text="Done.", audio=CLIP)
+        with pytest.raises(ValidationError):
+            CancelTimer(seconds=seconds)
+
+    @pytest.mark.parametrize("seconds", [1, 300, MAX_TIMER_SECONDS])
+    def test_the_bounds_of_a_timer_are_inclusive(self, seconds: int) -> None:
+        assert SetTimer(seconds=seconds, text="Done.", audio=CLIP).seconds == seconds
+        assert CancelTimer(seconds=seconds).seconds == seconds
+
+    def test_a_timer_rings_with_words_and_a_clip_of_them(self) -> None:
+        with pytest.raises(ValidationError):
+            SetTimer.model_validate(
+                {"name": "set_timer", "seconds": 60, "audio": CLIP.model_dump()}
+            )
+        with pytest.raises(ValidationError):
+            SetTimer(seconds=60, text="", audio=CLIP)
+        with pytest.raises(ValidationError):
+            SetTimer.model_validate({"name": "set_timer", "seconds": 60, "text": "Done."})
+
+    def test_a_timer_to_cancel_is_named_by_its_length_if_a_person_said_it(self) -> None:
+        assert CancelTimer().seconds is None
+        assert command_adapter.validate_python({"name": "cancel_timer"}) == CancelTimer()
+
+    def test_an_alarm_is_at_an_hour_and_a_minute_of_the_day(self) -> None:
+        for hour, minute in [(0, 0), (23, 59), (7, 30)]:
+            assert SetAlarm(hour=hour, minute=minute, text="Up.", audio=CLIP).hour == hour
+        for hour, minute in [(24, 0), (-1, 0), (7, 60), (7, -1)]:
+            with pytest.raises(ValidationError):
+                SetAlarm(hour=hour, minute=minute, text="Up.", audio=CLIP)
+
+    def test_an_alarm_that_names_no_day_is_for_the_next_time_the_hour_comes(self) -> None:
+        alarm = SetAlarm(hour=7, minute=0, text="Up.", audio=CLIP)
+
+        assert alarm.day == AlarmDay()
+        assert alarm.day.model_dump() == {
+            "in_days": None,
+            "weekday": None,
+            "day": None,
+            "month": None,
+        }
+
+    def test_a_day_is_said_in_one_way_and_never_as_a_date_that_the_platform_worked_out(
+        self,
+    ) -> None:
+        assert AlarmDay(in_days=1).in_days == 1
+        assert AlarmDay(weekday=Weekday.FRIDAY).weekday is Weekday.FRIDAY
+        assert AlarmDay(day=15, month=10).month == 10
+        assert AlarmDay(day=15).month is None
+        assert set(AlarmDay.model_fields) == {"in_days", "weekday", "day", "month"}
+
+    @pytest.mark.parametrize(
+        "said",
+        [
+            {"in_days": 1, "weekday": "monday"},
+            {"in_days": 1, "day": 15},
+            {"weekday": "monday", "day": 15},
+            {"month": 10},
+            {"in_days": -1},
+            {"in_days": 367},
+            {"day": 0},
+            {"day": 32},
+            {"day": 15, "month": 13},
+            {"day": 15, "month": 0},
+            {"weekday": "someday"},
+        ],
+    )
+    def test_a_day_that_is_said_two_ways_or_in_none_is_not_a_day(
+        self, said: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValidationError):
+            AlarmDay.model_validate(said)
+
+    def test_the_weekdays_go_from_monday_as_the_calendar_does(self) -> None:
+        assert [day.value for day in Weekday] == [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ]
+
+    def test_an_alarm_to_cancel_is_named_by_its_hour_and_its_minute_together(self) -> None:
+        assert CancelAlarm().hour is None
+        assert CancelAlarm(hour=7, minute=0).minute == 0
+        for said in [
+            {"hour": 7},
+            {"minute": 30},
+            {"hour": 24, "minute": 0},
+            {"hour": 7, "minute": 60},
+        ]:
+            with pytest.raises(ValidationError):
+                CancelAlarm.model_validate({"name": "cancel_alarm", **said})
+
+    def test_a_ring_travels_as_base64_in_json_like_any_clip(self) -> None:
+        said = SetAlarm(hour=6, minute=45, text="Up.", audio=CLIP).model_dump(mode="json")
+
+        assert isinstance(said["audio"]["data"], str)
+        assert command_adapter.validate_python(said).audio.data == CLIP.data
 
 
 class TestAClipToPlay:

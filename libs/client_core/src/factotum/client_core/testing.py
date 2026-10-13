@@ -6,6 +6,7 @@ speakers that remember what they were made to play."""
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from factotum.client_core.audio import AudioStream, VoiceOutput, VoiceSink
 from factotum.client_core.client import DeviceClient
 from factotum.client_core.connection import ConnectionLost
 from factotum.client_core.ports import CommandRouter, DeviceIdentity
+from factotum.client_core.timekeeping import Timekeeper
 from factotum.contracts.audio import AudioPayload, wav_of
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability, DisplayInfo
@@ -314,9 +316,76 @@ def chunks_of(pcm: bytes, size: int) -> Sequence[bytes]:
     return [pcm[start : start + size] for start in range(0, len(pcm), size)]
 
 
+async def settle() -> None:
+    """Let the tasks that are ready do what they do, and the ones they make ready after them."""
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+class FakeClock:
+    """The clock of a device, moved by a test: the wall (civil time) and the clock that only goes
+    forward move together when time ``advance``s, whoever sleeps is woken in the order of when they
+    were to wake, and each gets to do what it does before the next is woken. The wall alone can be
+    set to another hour (``set_wall``), as it is when summer time begins or a device is moved."""
+
+    def __init__(self, wall: datetime | None = None) -> None:
+        self._wall = wall or datetime(2026, 10, 13, 22, 0, 0)  # noqa: DTZ001 - civil time
+        self._monotonic = 1000.0
+        self._sleepers: list[tuple[float, asyncio.Future[None]]] = []
+
+    def wall(self) -> datetime:
+        return self._wall
+
+    def monotonic(self) -> float:
+        return self._monotonic
+
+    async def sleep(self, seconds: float) -> None:
+        entry = (
+            self._monotonic + max(0.0, seconds),
+            asyncio.get_running_loop().create_future(),
+        )
+        self._sleepers.append(entry)
+        try:
+            await entry[1]
+        finally:
+            if entry in self._sleepers:
+                self._sleepers.remove(entry)
+
+    def set_wall(self, wall: datetime) -> None:
+        self._wall = wall
+
+    @property
+    def sleepers(self) -> int:
+        """How many are asleep, waiting for time to pass."""
+        return len(self._sleepers)
+
+    async def advance(self, seconds: float) -> None:
+        """Time passes. What was just made to wait is first given the chance to begin to, so that a
+        task that is yet to look at the clock does not find the time already gone."""
+        await settle()
+        target = self._monotonic + seconds
+        while True:
+            due = [entry for entry in self._sleepers if entry[0] <= target]
+            if not due:
+                break
+            entry = min(due, key=lambda sleeper: sleeper[0])
+            self._sleepers.remove(entry)
+            self._move(entry[0] - self._monotonic)
+            if not entry[1].done():
+                entry[1].set_result(None)
+            await settle()
+        self._move(target - self._monotonic)
+        await settle()
+
+    def _move(self, seconds: float) -> None:
+        self._monotonic += seconds
+        self._wall += timedelta(seconds=seconds)
+
+
 class ClientRig:
     """A client with a fake for everything it is plugged into, and an edge that a test plays by
-    saying frames on ``connection``."""
+    saying frames on ``connection``. Its device has a clock that the test moves (``clock``) and a
+    keeper of its timers and alarms (``timekeeper``), which a test may give instead."""
 
     def __init__(
         self,
@@ -326,11 +395,17 @@ class ClientRig:
         voice_sink: VoiceSink | None = None,
         hands: "RecordingCommands | None" = None,
         connection: MemoryConnection | None = None,
+        clock: FakeClock | None = None,
+        timekeeper: Timekeeper | None = None,
     ) -> None:
         self.identity = identity_of(kind)
         self.connection = connection or MemoryConnection()
         self.shown = RecordingRenderer()
         self.hands = hands or RecordingCommands(capabilities=self.identity.capabilities)
+        self.clock = clock or FakeClock()
+        self.timekeeper = timekeeper or Timekeeper(
+            self.shown, clock=self.clock, output=voice_output
+        )
         self.client = DeviceClient(
             self.connection,
             self.identity,
@@ -338,6 +413,7 @@ class ClientRig:
             CommandRouter(self.hands),
             voice_output=voice_output,
             voice_sink=voice_sink,
+            timekeeper=self.timekeeper,
         )
 
     def ready(self, **changes: Any) -> Ready:

@@ -14,7 +14,8 @@ that follow. A person who speaks while an answer plays stops it on the spot, bef
 A command can carry a clip too (``play_audio``, ADR 0026): what a skill of the platform has a
 device say. It is not played where it is read: it is accepted at once, and said once nothing else
 is, in the order it came, by a task of its own (a ping, a command and a person speaking over it
-never wait for it).
+never wait for it). The timers and the alarms of the device (ADR 0029) are kept by a ``Timekeeper``
+that outlives the connection, and ring with a clip in the same way: when nothing else is being said.
 
 It also checks the edge. A part that this device could not render, parts out of order, an
 answer that nobody asked for, sound after the end of its turn: the edge is not to do any of it, and
@@ -30,14 +31,20 @@ from factotum.client_core.audio import AudioStream, VoiceOutput, VoiceSink
 from factotum.client_core.connection import Connection, ConnectionLost
 from factotum.client_core.playback import VoicePlayer
 from factotum.client_core.ports import CommandHandler, Identity, Renderer
+from factotum.client_core.timekeeping import Ring, TimeCommand, Timekeeper
 from factotum.contracts.audio import AudioPayload, pcm_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.commands import (
+    CancelAlarm,
+    CancelTimer,
     CommandResult,
     CommandStatus,
     DeviceCommand,
+    GetState,
     PlayAudio,
     PlayUrl,
+    SetAlarm,
+    SetTimer,
 )
 from factotum.contracts.edge import (
     PROTOCOL_VERSION,
@@ -111,7 +118,7 @@ class _Track:
     next_seq: int = 0
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class _Announcement:
     """A clip that a command carried, accepted and waiting to be said."""
 
@@ -119,6 +126,9 @@ class _Announcement:
     audio: AudioPayload
     pcm: bytes
     sample_rate: int
+    done: "asyncio.Future[None] | None" = None
+    """Set when it has been said, cut, or given up on: what a ring waits for (an announcement that a
+    command carried is accepted and nobody waits for it)."""
 
 
 class DeviceClient:
@@ -133,6 +143,7 @@ class DeviceClient:
         token: str | None = None,
         voice_output: VoiceOutput | None = None,
         voice_sink: VoiceSink | None = None,
+        timekeeper: Timekeeper | None = None,
         client: ClientInfo = CLIENT,
     ) -> None:
         self._connection = connection
@@ -156,6 +167,16 @@ class DeviceClient:
         ) and Capability.AUDIO_OUT in identity.capabilities
         """Whether this device has a speaker, and so says that it plays what a command carries."""
 
+        self._timekeeper: Timekeeper | None = timekeeper
+        """What keeps the timers and the alarms: the device's, which outlives this connection, when
+        it was given one; else a device that plays clips keeps its own, which goes with this
+        client."""
+
+        self._owns_timekeeper = False
+        if self._timekeeper is None and self._plays_clips:
+            self._timekeeper = Timekeeper(renderer, output=voice_output)
+            self._owns_timekeeper = True
+
         self._announcements: deque[_Announcement] = deque()
         self._queued_bytes = 0
         self._announcer: asyncio.Task[None] | None = None
@@ -163,6 +184,9 @@ class DeviceClient:
 
         self._announcing: asyncio.Task[None] | None = None
         """What is being said now, so that a person speaking over it can cut it."""
+
+        self._being_said: _Announcement | None = None
+        """Which announcement that is."""
 
         self._said = asyncio.Event()
         self._said.set()
@@ -236,6 +260,8 @@ class DeviceClient:
                 + ", ".join(sorted(f.value for f in frame.features - self.features))
             )
         self._heartbeat = asyncio.create_task(self._keep_in_touch(frame.heartbeat_s))
+        if self._timekeeper is not None:
+            self._timekeeper.attach(self.ring)
         return frame
 
     async def _keep_in_touch(self, every_s: int) -> None:
@@ -266,6 +292,8 @@ class DeviceClient:
             for event in self._turns.values():
                 event.set()  # nobody is left waiting for an answer that will not come
             self.active = None
+            if self._timekeeper is not None:
+                self._timekeeper.detach(self.ring)  # it rings on the speaker itself from here on
             await self._drop_announcements()  # nobody is left to be told what became of them
             if self._player is not None:
                 await self._player.stop()  # what is being said is for an answer that is gone
@@ -312,7 +340,36 @@ class DeviceClient:
             return CommandResult(
                 status=CommandStatus.UNSUPPORTED, detail="this device does not play clips"
             )
+        if isinstance(command, SetTimer | CancelTimer | SetAlarm | CancelAlarm):
+            return await self._keep_time(command)
+        if isinstance(command, GetState):
+            return await self._how_it_is(command)
         return await self._commands.execute(command)
+
+    async def _keep_time(self, command: TimeCommand) -> CommandResult:
+        """A timer or an alarm is the keeper's. A device that does not play clips has nothing to
+        ring with: the edge is not to set one on it, and is told so when it does."""
+        if self._timekeeper is None or not self._plays_clips:
+            if isinstance(command, SetTimer | SetAlarm):
+                self._renderer.violation(
+                    "the edge set a timer or an alarm on a device that did not say it plays clips"
+                )
+            return CommandResult(
+                status=CommandStatus.UNSUPPORTED, detail="this device keeps no timers or alarms"
+            )
+        return await self._timekeeper.execute(command)
+
+    async def _how_it_is(self, command: GetState) -> CommandResult:
+        """How the device is: its hands say what they have (the volume), and the keeper what it
+        holds (the time on the wall, the timers, the alarms). A device that has hands for one and
+        not the other answers with the part it has."""
+        result = await self._commands.execute(command)
+        keeper = self._timekeeper if self._plays_clips else None
+        unsupported = result.status is CommandStatus.UNSUPPORTED
+        if keeper is None or not (result.succeeded or unsupported):
+            return result
+        hands = result.data if result.succeeded else None
+        return CommandResult.ok({**(hands or {}), **keeper.state()})
 
     def _end(self, ended: TurnEnded) -> None:
         identity = ended.utterance_id
@@ -511,6 +568,45 @@ class DeviceClient:
             self._announcer = asyncio.create_task(self._announce(), name="announcements")
         return CommandResult.ok()
 
+    async def ring(self, ring: Ring) -> None:
+        """Say the clip of a timer or an alarm like an announcement: when nothing else is being said
+        and after what was accepted before it, cut by a person who speaks. Returns when it has been
+        said, or cut; if what waits for it is ended, it is not said any more."""
+        try:
+            pcm, sample_rate = pcm_of(ring.audio.data)
+        except ValueError as error:
+            self._renderer.notice(f"a ring is not a clip that can be played: {error}")
+            return
+        said = _Announcement(
+            ring.text, ring.audio, pcm, sample_rate, asyncio.get_running_loop().create_future()
+        )
+        self._announcements.append(said)
+        self._queued_bytes += len(pcm)
+        self._said.clear()
+        if self._announcer is None or self._announcer.done():
+            self._announcer = asyncio.create_task(self._announce(), name="announcements")
+        assert said.done is not None  # noqa: S101 - made just above
+        try:
+            await said.done
+        except asyncio.CancelledError:
+            await self._withdraw(said)
+            raise
+
+    async def _withdraw(self, said: _Announcement) -> None:
+        """What waited to be said is not any more: it is taken off the queue, or cut if it is being
+        said."""
+        if said in self._announcements:
+            self._announcements.remove(said)
+            self._queued_bytes -= len(said.pcm)
+            if not self._announcements and self._announcing is None:
+                self._said.set()  # nothing is queued and nothing is being said
+        elif self._being_said is said and self._announcing is not None:
+            announcing = self._announcing
+            announcing.cancel()
+            await asyncio.wait({announcing})
+            if self._player is not None:
+                await self._player.stop()  # and what the speaker was given of it is dropped
+
     async def _announce(self) -> None:
         """Say what was accepted, in order, each when nothing else is being said."""
         try:
@@ -520,14 +616,17 @@ class DeviceClient:
                     return  # it was all given up on while this waited
                 said = self._announcements.popleft()
                 self._queued_bytes -= len(said.pcm)
+                self._being_said = said
                 self._announcing = asyncio.create_task(self._say(said), name="announcing")
                 try:
                     await asyncio.wait({self._announcing})
                 finally:
                     announcing, self._announcing = self._announcing, None
+                    self._being_said = None
                     if not announcing.done():  # this task was ended in the middle of it
                         announcing.cancel()
                         await asyncio.wait({announcing})
+                    _settled(said)
         finally:
             if not self._announcements:
                 self._said.set()
@@ -567,6 +666,8 @@ class DeviceClient:
 
     async def _drop_announcements(self) -> None:
         """Nothing that was accepted is said any more: the connection is gone, or the client is."""
+        for dropped in self._announcements:
+            _settled(dropped)
         self._announcements.clear()
         self._queued_bytes = 0
         announcer, self._announcer = self._announcer, None
@@ -686,6 +787,16 @@ class DeviceClient:
         if self._heartbeat is not None:
             self._heartbeat.cancel()
             await asyncio.wait({self._heartbeat})
+        if self._timekeeper is not None:
+            self._timekeeper.detach(self.ring)
+            if self._owns_timekeeper:
+                await self._timekeeper.close()
         await self._drop_announcements()
         if self._player is not None:
             await self._player.stop()
+
+
+def _settled(said: _Announcement) -> None:
+    """Whoever waits for an announcement to be said, cut or given up on is told that it is."""
+    if said.done is not None and not said.done.done():
+        said.done.set_result(None)

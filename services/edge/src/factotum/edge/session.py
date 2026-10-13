@@ -45,6 +45,8 @@ from factotum.contracts.commands import (
     CommandStatus,
     DeviceCommand,
     PlayAudio,
+    SetAlarm,
+    SetTimer,
     Speak,
 )
 from factotum.contracts.conversation import MAX_MESSAGE_CHARS, Failed
@@ -215,6 +217,13 @@ class Session:
         elif isinstance(command, PlayAudio):
             # A clip that this device cannot play is the words it says, which it may say or show.
             command = Speak(text=command.text)
+        elif isinstance(command, SetTimer | SetAlarm):
+            # A timer or an alarm rings with a clip, and there are no words to say it with in its
+            # place: the device is not sent what it cannot do, and the skill is told.
+            return CommandResult(
+                status=CommandStatus.UNSUPPORTED,
+                detail="the device did not say it plays clips, so it cannot ring",
+            )
         return await self._deliver(command, timeout_s)
 
     async def _say_aloud(self, command: Speak, timeout_s: float | None) -> CommandResult:

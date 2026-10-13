@@ -24,10 +24,10 @@ from factotum.client_audio import (
 from factotum.client_audio.testing import FakeBackend, FakeWakeWord, KeyPresses
 from factotum.client_core import Ending, Refused
 from factotum.client_core.audio import AudioStream
-from factotum.client_core.testing import MemoryConnection, RecordingRenderer
+from factotum.client_core.testing import FakeClock, MemoryConnection, RecordingRenderer
 from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability
-from factotum.contracts.commands import CommandStatus, SetVolume, Speak
+from factotum.contracts.commands import CommandStatus, GetState, SetTimer, SetVolume, Speak
 from factotum.contracts.edge import (
     CloseCode,
     CommandFrame,
@@ -512,6 +512,104 @@ class TestStayingConnected:
 
         assert outcome.ending is Ending.REPLACED
         assert len(edge.asked) == 1
+
+
+async def forever(seconds: float) -> None:
+    """What a device waits between two tries when a test wants it not to try again."""
+    await asyncio.Event().wait()
+
+
+class TestItsTimers:
+    """The timers and the alarms are the device's and not a connection's (ADR 0029): they go on when
+    the edge is lost, and ring on the speaker with nobody to hear them from."""
+
+    RING = wav_of(np.full(200, 7, dtype="<i2").tobytes(), 22_050)
+
+    async def test_a_timer_goes_on_when_the_connection_is_lost_and_rings_on_the_speaker(
+        self,
+    ) -> None:
+        backend, presses, clock = FakeBackend(), KeyPresses(), FakeClock()
+        edge, renderer = (
+            Edge(),
+            RecordingRenderer(),
+        )  # a single connection: the edge is gone after it
+        config = a_config()
+        hardware = build_hardware(config, backend, renderer, presses=presses)
+        edge.connection.say(ready(features=frozenset({Feature.PLAY_AUDIO})))
+        running = asyncio.create_task(
+            run_device(config, hardware, renderer, opening=edge.open, sleep=forever, clock=clock)
+        )
+        await edge.connection.wait_for("hello")
+        edge.connection.say(
+            CommandFrame(id="c1", command=SetTimer(seconds=60, text="Pasta.", audio=self.RING))
+        )
+        [ack] = await edge.connection.wait_for("ack")
+        assert ack.result.succeeded
+
+        edge.connection.drop(1006)  # the edge is lost, and the timer is not
+        await until(lambda: any("trying again" in what for what in renderer.of("notice")))
+        await clock.advance(60)
+        await until(lambda: backend.outputs and "stop" in backend.outputs[0].calls)
+
+        assert backend.outputs[0].sound == np.full(200, 7, dtype="<i2").tobytes()
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    async def test_the_next_connection_is_the_one_that_says_the_ring_and_the_timer_is_the_same(
+        self,
+    ) -> None:
+        backend, presses, clock = FakeBackend(), KeyPresses(), FakeClock()
+        first, second = MemoryConnection(), MemoryConnection()
+        edge, renderer = Edge(first, second), RecordingRenderer()
+        config = a_config()
+        hardware = build_hardware(config, backend, renderer, presses=presses)
+        first.say(ready(features=frozenset({Feature.PLAY_AUDIO})))
+        second.say(ready(features=frozenset({Feature.PLAY_AUDIO})))
+        running = asyncio.create_task(
+            run_device(config, hardware, renderer, opening=edge.open, sleep=no_wait, clock=clock)
+        )
+        await first.wait_for("hello")
+        first.say(CommandFrame(id="c1", command=SetTimer(seconds=60, text="Tea.", audio=self.RING)))
+        await first.wait_for("ack")
+
+        first.drop(1006)
+        await second.wait_for("hello")
+        second.say(CommandFrame(id="c2", command=GetState()))
+        [state] = await second.wait_for("ack")
+        timers = state.result.data["timers"] if state.result.data else []
+
+        assert [timer["seconds"] for timer in timers] == [
+            60
+        ]  # the same timer, on the new connection
+        await clock.advance(60)
+        await until(lambda: backend.outputs and "stop" in backend.outputs[0].calls)
+        assert renderer.of("violation") == []
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    async def test_nothing_is_kept_by_a_device_that_ended(self) -> None:
+        backend, presses, clock = FakeBackend(), KeyPresses(), FakeClock()
+        edge, renderer = Edge(), RecordingRenderer()
+        config = a_config()
+        hardware = build_hardware(config, backend, renderer, presses=presses)
+        edge.connection.say(ready(features=frozenset({Feature.PLAY_AUDIO})))
+        running = asyncio.create_task(
+            run_device(config, hardware, renderer, opening=edge.open, sleep=no_wait, clock=clock)
+        )
+        await edge.connection.wait_for("hello")
+        edge.connection.say(
+            CommandFrame(id="c1", command=SetTimer(seconds=60, text="Tea.", audio=self.RING))
+        )
+        await edge.connection.wait_for("ack")
+
+        presses.leave()
+        await asyncio.wait_for(running, 2)
+
+        await clock.advance(3600)
+        assert backend.outputs == []  # it did not ring: the program of the device was over
+        assert clock.sleepers == 0
 
 
 class TestADeviceThatIsSpokenThrough:

@@ -1,4 +1,4 @@
-"""The vocabulary of commands a system device understands (version 4).
+"""The vocabulary of commands a system device understands (version 5).
 
 This is the single definition every other piece derives from: the server-side handle
 (``factotum.devices.SystemDevice``), the command builders offered to skills and the drivers that
@@ -8,29 +8,35 @@ run on the devices. A device only ever receives commands it declared it can exec
 What a device may be sent (``DeviceCommand``) is not what a skill may give it (``SkillCommand``): a
 clip to play (``play_audio``, ADR 0026) is the platform's, and a script or a plan cannot have one;
 nor can they ask a device a question (``get_state``, ADR 0029), because the answer is for the skill
-of the platform that asked it and a script, or a model, is never given what a device answered.
+of the platform that asked it and a script, or a model, is never given what a device answered. The
+timers and the alarms of a device (ADR 0029) are the platform's too: they carry the clip that rings.
 """
 
 import json
 from enum import StrEnum
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import AnyHttpUrl, Field, JsonValue, field_validator
+from pydantic import AnyHttpUrl, Field, JsonValue, field_validator, model_validator
 
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 
-COMMAND_VOCABULARY_VERSION = 4
+COMMAND_VOCABULARY_VERSION = 5
 """Version 2 added ``play_audio``, version 3 added ``adjust_volume``, version 4 added ``set_mute``
-and ``get_state``, and the ``data`` that the result of a command may carry."""
+and ``get_state``, and the ``data`` that the result of a command may carry, and version 5 added the
+timers and the alarms of a device: ``set_timer``, ``cancel_timer``, ``set_alarm`` and
+``cancel_alarm``."""
 
 MAX_SPOKEN_CHARS = 2000
 """The most a command says: a text to speak, or the words of a clip."""
 
 MAX_RESULT_DATA_CHARS = 4000
 """The most that the answer of a device to a question may be, as the JSON that it is sent as."""
+
+MAX_TIMER_SECONDS = 24 * 60 * 60
+"""The longest a timer is set for: a day. A person who wants it for longer wants an alarm."""
 
 
 class MediaKind(StrEnum):
@@ -48,6 +54,43 @@ class LedPattern(StrEnum):
 class VolumeDirection(StrEnum):
     UP = "up"
     DOWN = "down"
+
+
+class Weekday(StrEnum):
+    """A day of the week, in the order of the calendar's week (Monday first)."""
+
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"
+
+
+class AlarmDay(Contract):
+    """A way of saying a day, as a person says it, and not a date (ADR 0029): the platform has no
+    calendar and no clock, and the device that has both (and the time zone of the place it is in)
+    turns it into the day it means.
+
+    Nothing said is the next time that the hour comes. ``in_days`` counts from today (0 is today,
+    1 is tomorrow, 2 the day after). ``weekday`` is the next such day of the week (today, when the
+    hour is still to come). ``day`` is a day of the month, in ``month`` if one was said: the next
+    time that date comes."""
+
+    in_days: int | None = Field(default=None, ge=0, le=366)
+    weekday: Weekday | None = None
+    day: int | None = Field(default=None, ge=1, le=31)
+    month: int | None = Field(default=None, ge=1, le=12)
+
+    @model_validator(mode="after")
+    def _is_said_one_way(self) -> Self:
+        said = (self.in_days is not None, self.weekday is not None, self.day is not None)
+        if sum(said) > 1:
+            raise ValueError("a day is said one way: in some days, a weekday or a date")
+        if self.month is not None and self.day is None:
+            raise ValueError("a month is a month of a day")
+        return self
 
 
 class BaseCommand(Contract):
@@ -151,6 +194,70 @@ class GetState(BaseCommand):
     name: Literal["get_state"] = "get_state"
 
 
+class SetTimer(BaseCommand):
+    """Have the device ring after ``seconds`` (ADR 0029). The device keeps the time on its own clock
+    and rings by itself when it is up, even if its connection is down then, with the clip that was
+    made when the timer was set (``text`` is the words of it, for the trail and for a device that
+    shows what it says), and goes on until it is stopped. It answers with the timer it set.
+
+    The platform's: a clip is sound that nobody but the platform makes (ADR 0026)."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["set_timer"] = "set_timer"
+    seconds: int = Field(ge=1, le=MAX_TIMER_SECONDS)
+    text: str = Field(min_length=1, max_length=MAX_SPOKEN_CHARS)
+    audio: AudioPayload
+
+
+class CancelTimer(BaseCommand):
+    """Stop a timer of the device, or the ring of one that is up (ADR 0029). The one named by its
+    length in ``seconds`` if a person said it; else the one that is ringing; else the next to ring.
+    What the device did is in its answer."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["cancel_timer"] = "cancel_timer"
+    seconds: int | None = Field(default=None, ge=1, le=MAX_TIMER_SECONDS)
+
+
+class SetAlarm(BaseCommand):
+    """Have the device ring at an hour of the day (ADR 0029): ``hour`` and ``minute`` as the person
+    said them (24 hours), on ``day`` as they said it. The device has the clock and the calendar of
+    the place it is in: it works out the next time that fits, and answers with the moment it chose
+    (``at``, with the ``now`` that it chose it from) so that the skill can say it. A moment that has
+    gone by is not an alarm: it answers that, and sets nothing. It rings, as a timer does, with a
+    clip that was made when the alarm was set.
+
+    The platform's, for the same reason as ``set_timer``."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["set_alarm"] = "set_alarm"
+    hour: int = Field(ge=0, le=23)
+    minute: int = Field(ge=0, le=59)
+    day: AlarmDay = Field(default_factory=AlarmDay)
+    text: str = Field(min_length=1, max_length=MAX_SPOKEN_CHARS)
+    audio: AudioPayload
+
+
+class CancelAlarm(BaseCommand):
+    """Stop an alarm of the device, or the ring of one that is up (ADR 0029). The one at ``hour``
+    and ``minute`` if a person said it; else the one that is ringing; else the next to ring."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["cancel_alarm"] = "cancel_alarm"
+    hour: int | None = Field(default=None, ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
+
+    @model_validator(mode="after")
+    def _is_an_hour_and_a_minute(self) -> Self:
+        if (self.hour is None) != (self.minute is None):
+            raise ValueError("an alarm is named by its hour and its minute together")
+        return self
+
+
 class ShowCard(BaseCommand):
     requires: ClassVar[Capability] = Capability.DISPLAY
 
@@ -183,6 +290,10 @@ COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
     AdjustVolume,
     SetMute,
     GetState,
+    SetTimer,
+    CancelTimer,
+    SetAlarm,
+    CancelAlarm,
     ShowCard,
     ClearDisplay,
     SetLed,
@@ -199,6 +310,10 @@ DeviceCommand = Annotated[
     | AdjustVolume
     | SetMute
     | GetState
+    | SetTimer
+    | CancelTimer
+    | SetAlarm
+    | CancelAlarm
     | ShowCard
     | ClearDisplay
     | SetLed,
@@ -206,9 +321,17 @@ DeviceCommand = Annotated[
 ]
 """What a device may be sent."""
 
-PLATFORM_COMMAND_MODELS: tuple[type[BaseCommand], ...] = (PlayAudio, GetState)
-"""What only the skills of the platform may give: a clip that nobody but the platform makes, and a
-question to a device, whose answer a script or a model is never given."""
+PLATFORM_COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
+    PlayAudio,
+    GetState,
+    SetTimer,
+    CancelTimer,
+    SetAlarm,
+    CancelAlarm,
+)
+"""What only the skills of the platform may give: a clip that nobody but the platform makes (a ring
+carries one), and what a device answers to a question or says of a timer, which a script or a model
+is never given."""
 
 SKILL_COMMAND_MODELS: tuple[type[BaseCommand], ...] = tuple(
     model for model in COMMAND_MODELS if model not in PLATFORM_COMMAND_MODELS
