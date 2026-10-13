@@ -27,7 +27,16 @@ from factotum.client_core.audio import AudioStream
 from factotum.client_core.testing import FakeClock, MemoryConnection, RecordingRenderer
 from factotum.contracts.audio import wav_of
 from factotum.contracts.capabilities import Capability
-from factotum.contracts.commands import CommandStatus, GetState, SetTimer, SetVolume, Speak
+from factotum.contracts.commands import (
+    CancelTimer,
+    CommandStatus,
+    GetState,
+    PlayAudio,
+    SetMute,
+    SetTimer,
+    SetVolume,
+    Speak,
+)
 from factotum.contracts.edge import (
     CloseCode,
     CommandFrame,
@@ -552,6 +561,45 @@ class TestItsTimers:
         await until(lambda: backend.outputs and "stop" in backend.outputs[0].calls)
 
         assert backend.outputs[0].sound == np.full(200, 7, dtype="<i2").tobytes()
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    async def test_a_ring_goes_through_a_mute_at_the_volume_but_what_is_announced_does_not(
+        self,
+    ) -> None:
+        loud_clip = wav_of(np.full(200, 8000, dtype="<i2").tobytes(), 22_050)
+        backend, presses, clock = FakeBackend(), KeyPresses(), FakeClock()
+        edge, renderer = Edge(), RecordingRenderer()
+        config = a_config()
+        hardware = build_hardware(config, backend, renderer, presses=presses)
+        edge.connection.say(ready(features=frozenset({Feature.PLAY_AUDIO})))
+        running = asyncio.create_task(
+            run_device(config, hardware, renderer, opening=edge.open, sleep=forever, clock=clock)
+        )
+        await edge.connection.wait_for("hello")
+        commands: tuple[SetVolume | SetMute | SetTimer, ...] = (
+            SetVolume(level=50),
+            SetMute(muted=True),
+            SetTimer(seconds=60, text="Pasta.", audio=loud_clip),
+        )
+        for number, command in enumerate(commands, 1):
+            edge.connection.say(CommandFrame(id=f"c{number}", command=command))
+            await edge.connection.wait_for("ack", count=number)
+        assert hardware.speaker is not None
+        assert hardware.speaker.muted  # the speaker is muted when the timer is up
+
+        await clock.advance(60)
+        await until(lambda: backend.outputs and "stop" in backend.outputs[0].calls)
+        edge.connection.say(CommandFrame(id="c4", command=CancelTimer()))
+        await edge.connection.wait_for("ack", count=4)
+        edge.connection.say(CommandFrame(id="c5", command=PlayAudio(text="Hi.", audio=loud_clip)))
+        await until(lambda: len(backend.outputs) == 2 and "stop" in backend.outputs[1].calls)
+
+        ring, announcement = (np.frombuffer(out.sound, "<i2") for out in backend.outputs)
+        assert ring.tolist() == [2000] * 200  # a quarter of the amplitude: half the volume
+        assert announcement.tolist() == [0] * 200  # it is muted, and nothing else is
+        assert hardware.speaker.muted
         running.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await running

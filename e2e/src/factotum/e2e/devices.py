@@ -89,6 +89,13 @@ class Device:
         stand-in of Piper: the words are in them)."""
         return [said_in(clip) for clip in self.sentences()]
 
+    def alerts(self) -> list[bool]:
+        """For each sound the speaker was started on, a clip or the track of an answer, whether it
+        was an alert: a sound that a mute does not silence, which is what a ring is."""
+        if isinstance(self.speaker, FakeSpeaker):
+            return [track.alert for track in self.speaker.tracks]
+        return list(self.speaker.alerts)
+
     def heard_aloud(self, listener: Callable[[AudioPayload], str]) -> list[str]:
         """What the speaker was made to say, as somebody who listens to it hears it: a real voice
         carries its words in sound, and the listener (a Whisper) is who reads them back."""

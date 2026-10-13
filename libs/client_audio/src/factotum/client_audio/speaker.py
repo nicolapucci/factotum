@@ -11,6 +11,10 @@ The volume is the speaker's and not the system's: a ``set_volume`` or an ``adjus
 same device does it on a PC, on a Raspberry Pi and on whatever has no mixer, and a person's own
 setting of the system's volume is left alone. How far "turn it up" goes when nobody says is the
 speaker's own step (ADR 0028).
+
+A mute silences what is played, except an alert: a timer or an alarm that is up (ADR 0029) rings
+through it, because a ring that nobody can hear is no ring. It is the mute that it ignores and not
+the volume, which is the speaker's for every sound: an alert at a volume of zero is silent.
 """
 
 import asyncio
@@ -61,6 +65,9 @@ class Speaker:
         self._volume = max(0, min(volume, FULL_VOLUME))
         self._step = max(1, min(step, FULL_VOLUME))
         self._muted = False
+        self._alert = False
+        """Whether the track that is being played is an alert: a mute leaves it alone."""
+
         self._stream: OutputStream | None = None
         self.sentence: int | None = None
         """The ``seq`` of the sentence that is being said, as the last ``mark`` told it."""
@@ -95,8 +102,9 @@ class Speaker:
         return self._volume
 
     def scaled(self, pcm: bytes) -> bytes:
-        """The samples at the volume of the speaker: nothing, if it is muted."""
-        if self._muted:
+        """The samples at the volume of the speaker: nothing, if it is muted and they are not an
+        alert's."""
+        if self._muted and not self._alert:
             return bytes(len(pcm))
         gain = gain_of(self._volume)
         if gain == 1.0:
@@ -108,11 +116,12 @@ class Speaker:
 
     # ---- a clip ------------------------------------------------------------------------------
 
-    async def play(self, audio: AudioPayload) -> None:
-        """Play ``audio`` and return when it has been played."""
+    async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
+        """Play ``audio`` and return when it has been played. An ``alert`` is played through a
+        mute."""
         pcm, sample_rate = pcm_of(audio.data)
         size = max(2, sample_rate * 2 * CLIP_CHUNK_MS // 1000 // 2 * 2)
-        await self.begin(sample_rate)
+        await self.begin(sample_rate, alert=alert)
         try:
             for start in range(0, len(pcm), size):
                 await self.write(pcm[start : start + size])
@@ -123,11 +132,13 @@ class Speaker:
 
     # ---- a track -----------------------------------------------------------------------------
 
-    async def begin(self, sample_rate: int) -> None:
-        """A track begins. A track that was never ended is let go of."""
+    async def begin(self, sample_rate: int, *, alert: bool = False) -> None:
+        """A track begins. A track that was never ended is let go of. A track that is an ``alert``
+        is not silenced by a mute."""
         await self.abort()
         self.sentence = None
         self._stream = await asyncio.to_thread(self._backend.open_output, self._device, sample_rate)
+        self._alert = alert
 
     async def write(self, pcm: bytes) -> None:
         """The next samples: this returns when the device has taken them."""
@@ -146,12 +157,14 @@ class Speaker:
         finally:
             await asyncio.to_thread(stream.close)
             self.sentence = None
+            self._alert = False
 
     async def abort(self) -> None:
         """Stop now: what was written and not played is dropped, and a ``write`` that is waiting
         goes."""
         stream, self._stream = self._stream, None
         self.sentence = None
+        self._alert = False
         if stream is None:
             return
         try:

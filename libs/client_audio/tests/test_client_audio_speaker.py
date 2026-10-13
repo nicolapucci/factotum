@@ -190,6 +190,93 @@ class TestMuting:
 
         assert heard_by(backend) == [0, 0]
 
+    async def test_a_clip_that_is_played_while_muted_is_silence_too(self) -> None:
+        backend = FakeBackend()
+        speaker = Speaker(backend)
+        speaker.set_muted(True)
+
+        await speaker.play(wav_of(samples(8000, -8000), RATE))
+
+        assert heard_by(backend) == [0, 0]
+
+
+class TestAnAlert:
+    """A timer or an alarm that is up rings through a mute and at the volume of the speaker."""
+
+    async def test_a_clip_that_is_an_alert_is_played_through_a_mute_at_the_volume(self) -> None:
+        backend = FakeBackend()
+        speaker = Speaker(backend, volume=50)
+        speaker.set_muted(True)
+
+        await speaker.play(wav_of(samples(8000, -8000), RATE), alert=True)
+
+        assert heard_by(backend) == [2000, -2000]  # a quarter of the amplitude: half the volume
+        assert speaker.muted  # the mute is still there: only the ring went through it
+
+    async def test_a_track_that_begins_as_an_alert_is_played_through_a_mute_too(self) -> None:
+        backend = FakeBackend()
+        speaker = Speaker(backend, volume=100)
+        speaker.set_muted(True)
+
+        await speaker.begin(RATE, alert=True)
+        await speaker.write(samples(1000, -1000))
+        await speaker.finish()
+
+        assert heard_by(backend) == [1000, -1000]
+
+    async def test_it_is_the_mute_that_it_ignores_and_not_the_volume(self) -> None:
+        backend = FakeBackend()
+        speaker = Speaker(backend, volume=0)
+        speaker.set_muted(True)
+
+        await speaker.play(wav_of(samples(8000, -8000), RATE), alert=True)
+
+        assert heard_by(backend) == [0, 0]
+
+    async def test_with_no_mute_it_is_what_any_clip_is(self) -> None:
+        backend = FakeBackend()
+        speaker = Speaker(backend, volume=50)
+
+        await speaker.play(wav_of(samples(8000, -8000), RATE), alert=True)
+        await speaker.play(wav_of(samples(8000, -8000), RATE))
+
+        assert [np.frombuffer(out.sound, "<i2").tolist() for out in backend.outputs] == [
+            [2000, -2000],
+            [2000, -2000],
+        ]
+
+    async def test_what_follows_an_alert_is_muted_again(self) -> None:
+        backend = FakeBackend()
+        speaker = Speaker(backend, volume=100)
+        speaker.set_muted(True)
+
+        await speaker.play(wav_of(samples(8000, -8000), RATE), alert=True)
+        await speaker.play(wav_of(samples(8000, -8000), RATE))
+
+        assert [np.frombuffer(out.sound, "<i2").tolist() for out in backend.outputs] == [
+            [8000, -8000],
+            [0, 0],
+        ]
+
+    async def test_a_track_that_ended_is_not_an_alert_any_more(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=100)
+        speaker.set_muted(True)
+        await speaker.begin(RATE, alert=True)
+        assert speaker.scaled(samples(1000)) == samples(1000)
+
+        await speaker.finish()
+
+        assert speaker.scaled(samples(1000)) == samples(0)
+
+    async def test_nor_is_one_that_was_given_up_on(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=100)
+        speaker.set_muted(True)
+        await speaker.begin(RATE, alert=True)
+
+        await speaker.abort()  # a person spoke over it
+
+        assert speaker.scaled(samples(1000)) == samples(0)
+
 
 class TestPlayingATrack:
     async def test_what_is_written_is_played_in_order_and_the_track_is_finished(self) -> None:

@@ -73,7 +73,7 @@ class SlowOutput(FakeVoiceOutput):
         self.release = asyncio.Event()
         self.cut = False
 
-    async def play(self, audio: AudioPayload) -> None:
+    async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
         self.started.set()
         try:
             await self.release.wait()
@@ -81,6 +81,7 @@ class SlowOutput(FakeVoiceOutput):
             self.cut = True
             raise
         self.played.append(audio)
+        self.alerts.append(alert)
 
 
 class BrokenOutput(FakeVoiceOutput):
@@ -90,11 +91,11 @@ class BrokenOutput(FakeVoiceOutput):
         super().__init__()
         self.failed = False
 
-    async def play(self, audio: AudioPayload) -> None:
+    async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
         if not self.failed:
             self.failed = True
             raise OSError("the speaker is unplugged")
-        await super().play(audio)
+        await super().play(audio, alert=alert)
 
 
 class TestWhatADeviceSaysItTakes:
@@ -190,6 +191,24 @@ class TestSayingIt:
         assert [clip_.data for clip_ in output.played] == [clip(fill=7).data]
         rig.connection.drop()
         await running
+
+    async def test_a_clip_that_a_command_carried_is_not_an_alert_so_a_mute_silences_it(
+        self,
+    ) -> None:
+        sink, output = FakeVoiceSink(), FakeVoiceOutput()
+        for speaker in ({"voice_sink": sink}, {"voice_output": output}):
+            rig = ClientRig("speaker", **speaker)
+            running = await rig.running(features=PLAYING)
+
+            rig.connection.say(say_aloud("c1", fill=7))
+            await acked(rig, "c1")
+            await rig.client.wait_until_played()
+
+            rig.connection.drop()
+            await running
+
+        assert [track.alert for track in sink.tracks] == [False]
+        assert output.alerts == [False]
 
     async def test_what_is_said_is_written_down_as_an_announcement(self) -> None:
         rig = ClientRig("speaker", voice_sink=FakeVoiceSink())

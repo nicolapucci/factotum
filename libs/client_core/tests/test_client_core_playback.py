@@ -44,6 +44,22 @@ class TestPlayingATrack:
             True,
         )
 
+    async def test_a_track_is_not_an_alert_unless_it_is_begun_as_one(self) -> None:
+        player, sink, _ = a_player()
+
+        player.begin(22050)
+        player.write(b"\x01\x00")
+        player.end()
+        player.begin(22050, alert=True)
+        player.write(b"\x02\x00")
+        player.end()
+        player.begin(22050)
+        player.write(b"\x03\x00")
+        player.end()
+        await player.idle()
+
+        assert [track.alert for track in sink.tracks] == [False, True, False]
+
     async def test_two_tracks_one_after_the_other_are_two_tracks_of_the_speaker(self) -> None:
         player, sink, _ = a_player()
 

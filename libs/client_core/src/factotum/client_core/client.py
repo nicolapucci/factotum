@@ -130,6 +130,9 @@ class _Announcement:
     """Set when it has been said, cut, or given up on: what a ring waits for (an announcement that a
     command carried is accepted and nobody waits for it)."""
 
+    alert: bool = False
+    """Whether a mute leaves it alone: a ring is an alert, the clip of a command is not."""
+
 
 class DeviceClient:
     def __init__(
@@ -570,15 +573,21 @@ class DeviceClient:
 
     async def ring(self, ring: Ring) -> None:
         """Say the clip of a timer or an alarm like an announcement: when nothing else is being said
-        and after what was accepted before it, cut by a person who speaks. Returns when it has been
-        said, or cut; if what waits for it is ended, it is not said any more."""
+        and after what was accepted before it, cut by a person who speaks, and through a mute (at
+        the volume of the speaker, which a mute does not change). Returns when it has been said, or
+        cut; if what waits for it is ended, it is not said any more."""
         try:
             pcm, sample_rate = pcm_of(ring.audio.data)
         except ValueError as error:
             self._renderer.notice(f"a ring is not a clip that can be played: {error}")
             return
         said = _Announcement(
-            ring.text, ring.audio, pcm, sample_rate, asyncio.get_running_loop().create_future()
+            ring.text,
+            ring.audio,
+            pcm,
+            sample_rate,
+            asyncio.get_running_loop().create_future(),
+            alert=True,
         )
         self._announcements.append(said)
         self._queued_bytes += len(pcm)
@@ -647,12 +656,12 @@ class DeviceClient:
         self._renderer.event(f"announcement: {said.text}")
         try:
             if self._player is not None:
-                self._player.begin(said.sample_rate)
+                self._player.begin(said.sample_rate, alert=said.alert)
                 self._player.write(said.pcm)
                 self._player.end()
                 await self._player.idle()
             elif self._voice_output is not None:
-                await self._voice_output.play(said.audio)
+                await self._voice_output.play(said.audio, alert=said.alert)
         except Exception as error:  # noqa: BLE001 - whatever a speaker fails with, the next is tried
             self._renderer.notice(f"the speaker could not say an announcement: {error}")
 

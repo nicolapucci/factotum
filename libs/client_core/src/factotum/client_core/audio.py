@@ -70,9 +70,13 @@ class VoiceInput(Protocol):
 
 class VoiceOutput(Protocol):
     """A speaker that plays a clip whole: what a device that does not take a voice as a stream is
-    sent in each ``speech`` part."""
+    sent in each ``speech`` part.
 
-    async def play(self, audio: AudioPayload) -> None:
+    An ``alert`` is a sound that a mute does not silence: a timer or an alarm that is up (ADR 0029),
+    which is no use to anybody if the person who set it had muted the speaker. Its volume is the
+    speaker's, as any sound's is: an alert at a volume of zero is not heard either."""
+
+    async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
         """Play ``audio`` and return when it has been played."""
         ...
 
@@ -88,8 +92,9 @@ class VoiceSink(Protocol):
     may be called while a ``write`` is waiting.
     """
 
-    async def begin(self, sample_rate: int) -> None:
-        """A track begins: 16-bit little-endian samples, one channel, at ``sample_rate``."""
+    async def begin(self, sample_rate: int, *, alert: bool = False) -> None:
+        """A track begins: 16-bit little-endian samples, one channel, at ``sample_rate``. A track
+        that is an ``alert`` is not silenced by a mute (see ``VoiceOutput``)."""
         ...
 
     async def write(self, pcm: bytes) -> None:

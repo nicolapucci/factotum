@@ -191,9 +191,11 @@ lent to each client the device makes after a lost connection, and it is lost whe
 runs on the clock that only goes forward; an alarm is for a time on the wall of the place (the clock
 and the time zone of the machine), so an alarm for seven rings at seven. It rings like an
 announcement, when nothing else is being said, and again every eight seconds until a person says to
-stop it (*ferma il timer*, *spegni la sveglia*) or for three minutes; a muted speaker rings in
-silence. Up to eight of each are held. The console shows `timer t1 set for 300 s`, `timer t1 is up`
-and `alarm a1 set for 2026-10-14 07:00`.
+stop it (*ferma il timer*, *spegni la sveglia*) or for three minutes. A ring goes through a mute but
+not through the volume: the speaker plays it as an *alert* (`alert` of `VoiceOutput.play` and of
+`VoiceSink.begin`), which a mute does not silence, at the level the volume is at; a speaker whose
+volume is zero is silent, because that is the volume and not the mute. Up to eight of each are held.
+The console shows `timer t1 set for 300 s`, `timer t1 is up` and `alarm a1 set for 2026-10-14 07:00`.
 
 A device is its hands, and what the hands of `audio_out` do is set the volume. Saying is not the
 hands' work: the client core plays a clip, and a text never reaches a device that takes clips, because

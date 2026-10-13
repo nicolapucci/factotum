@@ -6,7 +6,8 @@ to the edge is down then, and it is the one place that knows what time it is whe
 platform has no clock, and nothing in it works one out). What rings is a clip that the platform made
 when the timer was set, in the voice of its tenant; the device says it when nothing else is being
 said, and says it again every few seconds until a person stops it, or for as long as
-``ring_for_s``.
+``ring_for_s``. A ring is an alert: a mute does not silence it (a timer that is muted when it is up
+rings for nobody), but the volume is the speaker's, as it is for every sound.
 
 A timer is kept on the clock that only goes forward (the wall may be set to another hour while it
 runs) and an alarm on the wall (``moments``: it rings at seven on the clock of the place, whatever
@@ -366,7 +367,7 @@ class Timekeeper:
             if self._sayer is not None:
                 await self._sayer(item.ring)
             elif self._output is not None:
-                await self._output.play(item.ring.audio)
+                await self._output.play(item.ring.audio, alert=True)
             else:
                 self._renderer.speech(item.ring.text)
         except Exception as error:  # noqa: BLE001 - whatever a speaker fails with, it is tried again

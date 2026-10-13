@@ -18,6 +18,7 @@ from factotum.client_core.audio import MarkedSink, VoiceSink
 @dataclass(frozen=True, slots=True)
 class _Begin:
     sample_rate: int
+    alert: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +69,9 @@ class VoicePlayer:
         begun and has not ended is being played, even when what was given of it has been taken."""
         return not self._idle.is_set()
 
-    def begin(self, sample_rate: int) -> None:
-        """A track of sound begins."""
-        self._give(_Begin(sample_rate))
+    def begin(self, sample_rate: int, *, alert: bool = False) -> None:
+        """A track of sound begins; an ``alert`` is one that a mute does not silence."""
+        self._give(_Begin(sample_rate, alert))
 
     def write(self, pcm: bytes, part_seq: int = 0) -> None:
         """The next samples of the track, of the sentence whose ``seq`` is ``part_seq``."""
@@ -131,7 +132,7 @@ class VoicePlayer:
         try:
             match item:
                 case _Begin():
-                    await self._sink.begin(item.sample_rate)
+                    await self._sink.begin(item.sample_rate, alert=item.alert)
                 case _Write():
                     if item.part_seq != self._part and isinstance(self._sink, MarkedSink):
                         self._part = item.part_seq

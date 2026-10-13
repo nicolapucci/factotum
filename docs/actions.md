@@ -196,6 +196,8 @@ rings is made a voice by the gateway when the timer or the alarm is set, and tra
 * **Which one a cancel stops** is the device's: the one named by its length or its hour, else the ones
   that ring, else the next to ring. A device holds up to eight of each, and loses them when its
   program stops.
+* **A ring goes through a mute, not through the volume.** The device plays it as an alert: a muted
+  speaker rings, at the level its volume is at (and a volume of zero is silent).
 
 ## Choosing a skill
 

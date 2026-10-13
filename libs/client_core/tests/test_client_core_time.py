@@ -268,6 +268,34 @@ class TestWhenItRings:
         rig.connection.drop()
         await running
 
+    async def test_every_ring_is_an_alert_so_that_a_mute_does_not_silence_it(self) -> None:
+        sink = FakeVoiceSink()
+        rig = ClientRig("speaker", voice_sink=sink)
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetTimer(seconds=60, text="Pasta is ready.", audio=clip(7)))
+
+        await rig.clock.advance(60)
+        await until(lambda: len(sink.tracks) == 1)
+        await rig.clock.advance(RING_EVERY_S + 2)
+        await until(lambda: len(sink.tracks) == 2)
+
+        assert [track.alert for track in sink.tracks] == [True, True]
+        rig.connection.drop()
+        await running
+
+    async def test_so_is_the_ring_of_a_speaker_that_only_plays_clips(self) -> None:
+        output = FakeVoiceOutput()
+        rig = ClientRig("speaker", voice_output=output)
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetAlarm(hour=7, minute=0, text="Wake up.", audio=clip(7)))
+
+        await rig.clock.advance(9 * 3600)  # it is ten at night: seven comes nine hours later
+        await until(lambda: len(output.played) == 1)
+
+        assert output.alerts == [True]
+        rig.connection.drop()
+        await running
+
     async def test_it_rings_again_until_it_is_cancelled(self) -> None:
         sink = FakeVoiceSink()
         rig = ClientRig("speaker", voice_sink=sink)

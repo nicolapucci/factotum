@@ -71,7 +71,11 @@ default belongs to the device and not to the skill.
     seconds until the timer or the alarm is cancelled, or for three minutes: a device in an empty
     house does not ring for ever. A timer is kept on the clock that only goes forward and an alarm
     on the wall (*civil time*, no zone), so that an alarm for seven rings at seven whatever the
-    clock did in between.
+    clock did in between. **A ring is an alert** (decided with the maintainer on 2026-10-13: *sveglie
+    e timer rispettano il volume audio ma ignorano il muto*): the speaker plays it through a mute,
+    since a ring that nobody can hear is no ring, and at the level the volume is at, as any sound.
+    The ports of the sound say it (`alert` in `VoiceOutput.play` and `VoiceSink.begin`), and what
+    a mute silences is still every other sound, an announcement included.
   - *What a device holds is lost when its program stops* in the first version (it is held in memory),
     and a repeating alarm (every morning) is not in it: both are for a decision of their own.
 

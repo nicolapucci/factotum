@@ -210,9 +210,12 @@ class FakeVoiceOutput:
 
     def __init__(self) -> None:
         self.played: list[AudioPayload] = []
+        self.alerts: list[bool] = []
+        """For each clip of ``played``: whether it was an alert, which a mute does not silence."""
 
-    async def play(self, audio: AudioPayload) -> None:
+    async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
         self.played.append(audio)
+        self.alerts.append(alert)
 
 
 @dataclass
@@ -223,6 +226,9 @@ class Track:
     pcm: bytearray = field(default_factory=bytearray)
     finished: bool = False
     aborted: bool = False
+    alert: bool = False
+    """Whether it began as an alert: a track that a mute leaves alone."""
+
     sentences: list[tuple[int, bytearray]] = field(default_factory=list)
     """What it was given of each sentence, as ``(part_seq, samples)`` in the order they came."""
 
@@ -257,10 +263,10 @@ class FakeVoiceSink:
         if call in self.fails:
             raise self.fails.pop(call)
 
-    async def begin(self, sample_rate: int) -> None:
+    async def begin(self, sample_rate: int, *, alert: bool = False) -> None:
         self.calls.append("begin")
         self._fail("begin")
-        self.tracks.append(Track(sample_rate))
+        self.tracks.append(Track(sample_rate, alert=alert))
 
     async def write(self, pcm: bytes) -> None:
         self.calls.append("write")

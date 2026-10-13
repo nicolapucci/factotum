@@ -74,6 +74,7 @@ class TestATimer:
             await rung(speaker, 2)
 
             assert speaker.spoken()[1:] == ["Your timer for 5 minutes is done."]
+            assert speaker.alerts() == [False, True]  # the answer is muted by a mute; the ring not
             assert speaker.shown.of("violation") == []
 
     async def test_it_goes_on_ringing_until_it_is_stopped(self) -> None:

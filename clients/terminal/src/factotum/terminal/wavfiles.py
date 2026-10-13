@@ -76,15 +76,15 @@ class WavFileOutput:
             wav_file.setframerate(self._rate)
             wav_file.writeframes(bytes(self._pcm))
 
-    # a clip, whole
-    async def play(self, audio: AudioPayload) -> None:
+    # a clip, whole (a file has no mute, so an alert is a clip like any other)
+    async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
         pcm, rate = pcm_of(audio.data)
         self._one_rate(rate, "clip")
         self._pcm.extend(pcm)
         self._write()
 
     # a track, as it arrives
-    async def begin(self, sample_rate: int) -> None:
+    async def begin(self, sample_rate: int, *, alert: bool = False) -> None:
         self._one_rate(sample_rate, "track")
 
     async def write(self, pcm: bytes) -> None:

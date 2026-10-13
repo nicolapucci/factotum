@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-from factotum.client_core.testing import FakeClock, RecordingRenderer, settle
+from factotum.client_core.testing import FakeClock, FakeVoiceOutput, RecordingRenderer, settle
 from factotum.client_core.timekeeping import (
     RING_EVERY_S,
     RING_FOR_S,
@@ -553,7 +553,7 @@ class TestWhoSaysIt:
         said: list[AudioPayload] = []
 
         class Output:
-            async def play(self, audio: AudioPayload) -> None:
+            async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
                 said.append(audio)
 
         clock = FakeClock(EVENING)
@@ -565,11 +565,34 @@ class TestWhoSaysIt:
         assert said == [clip(3)]
         await keeper.close()
 
+    async def test_on_the_speaker_of_the_device_a_timer_rings_as_an_alert_every_time(self) -> None:
+        output, clock = FakeVoiceOutput(), FakeClock(EVENING)
+        keeper = Timekeeper(RecordingRenderer(), clock=clock, output=output)
+        await keeper.execute(SetTimer(seconds=30, text="Done.", audio=clip(3)))
+
+        await clock.advance(30)
+        await clock.advance(RING_EVERY_S + 2)  # nobody stopped it: it rings again
+
+        assert output.played == [clip(3), clip(3)]
+        assert output.alerts == [True, True]  # a mute does not silence a ring
+        await keeper.close()
+
+    async def test_on_the_speaker_of_the_device_an_alarm_rings_as_an_alert_too(self) -> None:
+        output, clock = FakeVoiceOutput(), FakeClock(EVENING)
+        keeper = Timekeeper(RecordingRenderer(), clock=clock, output=output)
+        await keeper.execute(SetAlarm(hour=22, minute=1, text="Up.", audio=clip(4)))
+
+        await clock.advance(61)
+
+        assert output.played == [clip(4)]  # the clip that the alarm was set with
+        assert output.alerts == [True]
+        await keeper.close()
+
     async def test_a_client_that_is_connected_says_it_and_one_that_is_gone_does_not(self) -> None:
         said: list[AudioPayload] = []
 
         class Output:
-            async def play(self, audio: AudioPayload) -> None:
+            async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
                 said.append(audio)
 
         shown, clock, sayer = RecordingRenderer(), FakeClock(EVENING), Sayer()
@@ -625,7 +648,7 @@ class TestWhoSaysIt:
             def __init__(self) -> None:
                 self.calls = 0
 
-            async def play(self, audio: AudioPayload) -> None:
+            async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
                 self.calls += 1
                 if self.calls == 1:
                     raise failure

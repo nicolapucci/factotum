@@ -132,7 +132,8 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   own, never by a model. **The time of a device is the device's too** (`timer`, `alarm` and their
   cancels and statuses): the device keeps it on a clock of its own (`factotum.client_core.Timekeeper`,
   the device's and not a connection's, lost when the program stops) and rings by itself with a clip
-  that the platform made when it was set; the platform has **no clock**, so a skill passes on the
+  that the platform made when it was set (an *alert*: it goes through a mute, and at the volume of
+  the speaker); the platform has **no clock**, so a skill passes on the
   hour and the *way a day was said* (`AlarmDay`: tomorrow, Monday, the 15th), never a date, and the
   device works out which day that is; the words of a length, an hour and a day are read by code
   (`core/when.py`), because a number of seconds that a model wrote is one nobody said. A model is
