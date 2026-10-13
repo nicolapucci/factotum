@@ -12,6 +12,8 @@ from factotum.contracts.cards import Card, CardItem
 from factotum.contracts.commands import (
     COMMAND_MODELS,
     COMMAND_VOCABULARY_VERSION,
+    MAX_RESULT_DATA_CHARS,
+    PLATFORM_COMMAND_MODELS,
     SKILL_COMMAND_MODELS,
     AdjustVolume,
     BaseCommand,
@@ -19,6 +21,7 @@ from factotum.contracts.commands import (
     CommandResult,
     CommandStatus,
     DeviceCommand,
+    GetState,
     LedPattern,
     MediaKind,
     Pause,
@@ -26,6 +29,7 @@ from factotum.contracts.commands import (
     PlayUrl,
     Resume,
     SetLed,
+    SetMute,
     SetVolume,
     ShowCard,
     SkillCommand,
@@ -50,6 +54,8 @@ EXAMPLES: list[tuple[BaseCommand, Capability]] = [
     (Stop(), Capability.MEDIA_PLAYER),
     (SetVolume(level=30), Capability.AUDIO_OUT),
     (AdjustVolume(direction=VolumeDirection.DOWN, amount=10), Capability.AUDIO_OUT),
+    (SetMute(muted=True), Capability.AUDIO_OUT),
+    (GetState(), Capability.AUDIO_OUT),
     (ShowCard(card=CARD), Capability.DISPLAY),
     (ClearDisplay(), Capability.DISPLAY),
     (SetLed(pattern=LedPattern.PULSE, color="#00ff00"), Capability.LED),
@@ -81,8 +87,9 @@ def test_command_names_are_unique_snake_case_identifiers() -> None:
 
 
 def test_the_vocabulary_is_versioned() -> None:
-    # play_audio is what version 2 added, and adjust_volume what version 3 did
-    assert COMMAND_VOCABULARY_VERSION == 3
+    # play_audio is what version 2 added, adjust_volume what version 3 did, and set_mute,
+    # get_state and the data of a result what version 4 did
+    assert COMMAND_VOCABULARY_VERSION == 4
 
 
 @pytest.mark.parametrize(("command", "_"), EXAMPLES, ids=lambda x: type(x).__name__)
@@ -111,7 +118,8 @@ class TestWhatASkillMayGive:
         union = get_args(SkillCommand)[0]
 
         assert set(get_args(union)) == set(SKILL_COMMAND_MODELS)
-        assert set(COMMAND_MODELS) - set(SKILL_COMMAND_MODELS) == {PlayAudio}
+        assert set(COMMAND_MODELS) - set(SKILL_COMMAND_MODELS) == {PlayAudio, GetState}
+        assert set(PLATFORM_COMMAND_MODELS) == {PlayAudio, GetState}
 
     def test_a_clip_to_play_is_not_one_of_them(self) -> None:
         clip = PlayAudio(text="Hi.", audio=CLIP).model_dump(mode="json")
@@ -133,6 +141,22 @@ class TestWhatASkillMayGive:
         printed = {"message": "Done.", "commands": [{"name": "speak", "text": "Hi."}]}
 
         assert SkillOutput.model_validate(printed).commands == (Speak(text="Hi."),)
+
+    def test_a_question_to_a_device_is_not_one_of_them(self) -> None:
+        """The answer is for the skill of the platform that asked: a script, or a plan, is never
+        given what a device answered, so there is nothing for it to ask for."""
+        question = {"name": "get_state"}
+
+        with pytest.raises(ValidationError):
+            skill_command_adapter.validate_python(question)
+        with pytest.raises(ValidationError):
+            SkillOutput.model_validate({"message": "Done.", "commands": [question]})
+        assert isinstance(command_adapter.validate_python(question), GetState)
+
+    def test_the_sound_may_be_muted_by_a_skill(self) -> None:
+        said = {"name": "set_mute", "muted": True}
+
+        assert skill_command_adapter.validate_python(said) == SetMute(muted=True)
 
 
 class TestAClipToPlay:
@@ -221,6 +245,14 @@ class TestValidation:
             wanted,
         )
 
+    def test_muting_says_whether_the_sound_is_to_be_muted_or_brought_back(self) -> None:
+        assert SetMute(muted=True).muted is True
+        assert SetMute(muted=False).muted is False
+        with pytest.raises(ValidationError):
+            SetMute.model_validate({"name": "set_mute"})
+        with pytest.raises(ValidationError):
+            SetMute.model_validate({"name": "set_mute", "muted": "maybe"})
+
     def test_it_has_no_number_of_points_that_a_skill_could_have_to_know(self) -> None:
         """The skill is the interface to the device and has no step to give (ADR 0028): there is
         no field for one other than the amount a person said."""
@@ -277,6 +309,28 @@ class TestCard:
 class TestCommandResult:
     def test_ok_is_a_success(self) -> None:
         assert CommandResult.ok().succeeded
+
+    def test_a_result_has_no_data_unless_a_device_answers_something(self) -> None:
+        assert CommandResult.ok().data is None
+        assert CommandResult(status=CommandStatus.FAILED, detail="why").data is None
+
+    def test_a_device_may_answer_with_a_little_data(self) -> None:
+        answered = CommandResult.ok({"volume": 40, "muted": False, "timers": [{"left_s": 90}]})
+
+        assert answered.succeeded
+        assert answered.data == {"volume": 40, "muted": False, "timers": [{"left_s": 90}]}
+        assert CommandResult.model_validate_json(answered.model_dump_json()) == answered
+
+    def test_what_is_answered_is_not_more_than_a_device_would_say(self) -> None:
+        with pytest.raises(ValidationError, match="at most"):
+            CommandResult.ok({"x": "y" * MAX_RESULT_DATA_CHARS})
+        assert CommandResult.ok({"x": "y" * (MAX_RESULT_DATA_CHARS - 20)}).data is not None
+
+    def test_what_is_answered_is_data_and_not_a_thing(self) -> None:
+        with pytest.raises(ValidationError):
+            CommandResult.model_validate({"status": "ok", "data": {"x": {1, 2}}})
+        with pytest.raises(ValidationError):
+            CommandResult.model_validate({"status": "ok", "data": ["not", "a", "mapping"]})
 
     @pytest.mark.parametrize("status", [s for s in CommandStatus if s is not CommandStatus.OK])
     def test_every_other_status_is_a_failure(self, status: CommandStatus) -> None:

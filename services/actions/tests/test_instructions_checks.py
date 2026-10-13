@@ -496,6 +496,7 @@ class TestCommands:
             "stop",
             "set_volume",
             "adjust_volume",
+            "set_mute",
             "show_card",
             "clear_display",
             "set_led",

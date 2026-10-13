@@ -17,11 +17,13 @@ from factotum.contracts.commands import (
     CommandResult,
     CommandStatus,
     DeviceCommand,
+    GetState,
     LedPattern,
     Pause,
     PlayUrl,
     Resume,
     SetLed,
+    SetMute,
     SetVolume,
     ShowCard,
     Speak,
@@ -39,6 +41,7 @@ class DeviceState:
     """What the hardware is doing."""
 
     volume: int = 50
+    muted: bool = False
     led_pattern: LedPattern = LedPattern.OFF
     led_color: str | None = None
     media: str = "stopped"
@@ -52,7 +55,8 @@ class DeviceState:
         light = self.led_pattern.value + (f" {self.led_color}" if self.led_color else "")
         media = self.media + (f" ({self.media_title})" if self.media_title else "")
         card = f"a card: {self.card.title}" if self.card else "nothing"
-        return f"volume {self.volume}; light {light}; music {media}; screen: {card}"
+        sound = "muted" if self.muted else f"volume {self.volume}"
+        return f"{sound}; light {light}; music {media}; screen: {card}"
 
 
 class TerminalDevice:
@@ -103,13 +107,22 @@ class TerminalDevice:
                 state.media, state.media_title = "stopped", None
                 self._renderer.event("music stopped")
             case SetVolume():
-                state.volume = command.level
+                state.volume, state.muted = command.level, False
                 self._renderer.event(f"volume {command.level}")
+                return CommandResult.ok({"volume": state.volume})
             case AdjustVolume():
                 points = self._volume_step if command.amount is None else command.amount
                 moved = points if command.direction is VolumeDirection.UP else -points
                 state.volume = max(0, min(state.volume + moved, 100))
+                state.muted = False
                 self._renderer.event(f"volume {state.volume}")
+                return CommandResult.ok({"volume": state.volume})
+            case SetMute():
+                state.muted = command.muted
+                self._renderer.event("muted" if command.muted else "unmuted")
+                return CommandResult.ok({"muted": state.muted})
+            case GetState():
+                return CommandResult.ok({"volume": state.volume, "muted": state.muted})
             case ShowCard():
                 state.card = command.card
                 self._renderer.card(command.card)

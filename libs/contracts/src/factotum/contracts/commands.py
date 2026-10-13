@@ -1,4 +1,4 @@
-"""The vocabulary of commands a system device understands (version 3).
+"""The vocabulary of commands a system device understands (version 4).
 
 This is the single definition every other piece derives from: the server-side handle
 (``factotum.devices.SystemDevice``), the command builders offered to skills and the drivers that
@@ -6,24 +6,31 @@ run on the devices. A device only ever receives commands it declared it can exec
 ``BaseCommand.requires``) and never receives code.
 
 What a device may be sent (``DeviceCommand``) is not what a skill may give it (``SkillCommand``): a
-clip to play (``play_audio``, ADR 0026) is the platform's, and a script or a plan cannot have one.
+clip to play (``play_audio``, ADR 0026) is the platform's, and a script or a plan cannot have one;
+nor can they ask a device a question (``get_state``, ADR 0029), because the answer is for the skill
+of the platform that asked it and a script, or a model, is never given what a device answered.
 """
 
+import json
 from enum import StrEnum
 from typing import Annotated, ClassVar, Literal
 
-from pydantic import AnyHttpUrl, Field
+from pydantic import AnyHttpUrl, Field, JsonValue, field_validator
 
 from factotum.contracts.audio import AudioPayload
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 
-COMMAND_VOCABULARY_VERSION = 3
-"""Version 2 added ``play_audio``, version 3 added ``adjust_volume``."""
+COMMAND_VOCABULARY_VERSION = 4
+"""Version 2 added ``play_audio``, version 3 added ``adjust_volume``, version 4 added ``set_mute``
+and ``get_state``, and the ``data`` that the result of a command may carry."""
 
 MAX_SPOKEN_CHARS = 2000
 """The most a command says: a text to speak, or the words of a clip."""
+
+MAX_RESULT_DATA_CHARS = 4000
+"""The most that the answer of a device to a question may be, as the JSON that it is sent as."""
 
 
 class MediaKind(StrEnum):
@@ -123,6 +130,27 @@ class AdjustVolume(BaseCommand):
     amount: int | None = Field(default=None, ge=1, le=100)
 
 
+class SetMute(BaseCommand):
+    """Mute the sound of the device, or bring it back (ADR 0029). The device keeps the level that
+    the volume was at, so that unmuting brings back what it was; setting or turning the volume
+    brings the sound back too, as it does on a television."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["set_mute"] = "set_mute"
+    muted: bool
+
+
+class GetState(BaseCommand):
+    """Ask a device how it is (ADR 0029): the answer is in the ``data`` of the result, for the skill
+    of the platform that asked. A device that has a volume says ``volume`` (0 to 100) and
+    ``muted``, and what it keeps for later (timers, alarms) is there too. It changes nothing."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["get_state"] = "get_state"
+
+
 class ShowCard(BaseCommand):
     requires: ClassVar[Capability] = Capability.DISPLAY
 
@@ -153,6 +181,8 @@ COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
     Stop,
     SetVolume,
     AdjustVolume,
+    SetMute,
+    GetState,
     ShowCard,
     ClearDisplay,
     SetLed,
@@ -167,6 +197,8 @@ DeviceCommand = Annotated[
     | Stop
     | SetVolume
     | AdjustVolume
+    | SetMute
+    | GetState
     | ShowCard
     | ClearDisplay
     | SetLed,
@@ -174,8 +206,12 @@ DeviceCommand = Annotated[
 ]
 """What a device may be sent."""
 
+PLATFORM_COMMAND_MODELS: tuple[type[BaseCommand], ...] = (PlayAudio, GetState)
+"""What only the skills of the platform may give: a clip that nobody but the platform makes, and a
+question to a device, whose answer a script or a model is never given."""
+
 SKILL_COMMAND_MODELS: tuple[type[BaseCommand], ...] = tuple(
-    model for model in COMMAND_MODELS if model is not PlayAudio
+    model for model in COMMAND_MODELS if model not in PLATFORM_COMMAND_MODELS
 )
 
 SkillCommand = Annotated[
@@ -186,6 +222,7 @@ SkillCommand = Annotated[
     | Stop
     | SetVolume
     | AdjustVolume
+    | SetMute
     | ShowCard
     | ClearDisplay
     | SetLed,
@@ -208,9 +245,23 @@ class CommandResult(Contract):
     status: CommandStatus
     detail: str | None = Field(default=None, max_length=500)
 
+    data: dict[str, JsonValue] | None = None
+    """What a device answers to a question, or says of what it did (the level the volume came to):
+    small, and for the skill of the platform that gave the command (ADR 0029). A model never reads
+    it, and a script never gets it."""
+
+    @field_validator("data")
     @classmethod
-    def ok(cls) -> "CommandResult":
-        return cls(status=CommandStatus.OK)
+    def _is_small(cls, data: dict[str, JsonValue] | None) -> dict[str, JsonValue] | None:
+        if data is not None and len(json.dumps(data)) > MAX_RESULT_DATA_CHARS:
+            raise ValueError(
+                f"the answer of a device is at most {MAX_RESULT_DATA_CHARS} characters"
+            )
+        return data
+
+    @classmethod
+    def ok(cls, data: dict[str, JsonValue] | None = None) -> "CommandResult":
+        return cls(status=CommandStatus.OK, data=data)
 
     @property
     def succeeded(self) -> bool:

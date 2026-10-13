@@ -7,9 +7,10 @@ reading the connection while this waits, never waits for the sound. Telling a sp
 gets: the sound ends where it was, and not where the device had got to in what it had been given.
 
 The volume is the speaker's and not the system's: a ``set_volume`` or an ``adjust_volume`` command
-scales the samples before they are played, so that the same device does it on a PC, on a Raspberry
-Pi and on whatever has no mixer, and a person's own setting of the system's volume is left alone.
-How far "turn it up" goes when nobody says is the speaker's own step (ADR 0028).
+(or a ``set_mute``, which keeps the level) scales the samples before they are played, so that the
+same device does it on a PC, on a Raspberry Pi and on whatever has no mixer, and a person's own
+setting of the system's volume is left alone. How far "turn it up" goes when nobody says is the
+speaker's own step (ADR 0028).
 """
 
 import asyncio
@@ -59,6 +60,7 @@ class Speaker:
         self._device = device
         self._volume = max(0, min(volume, FULL_VOLUME))
         self._step = max(1, min(step, FULL_VOLUME))
+        self._muted = False
         self._stream: OutputStream | None = None
         self.sentence: int | None = None
         """The ``seq`` of the sentence that is being said, as the last ``mark`` told it."""
@@ -72,8 +74,18 @@ class Speaker:
         """How far this speaker turns the volume when nobody says by how much."""
         return self._step
 
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
+    def set_muted(self, muted: bool) -> None:
+        """Mute the sound, or bring it back at the level it was: the level is kept."""
+        self._muted = muted
+
     def set_volume(self, level: int) -> None:
+        """Set the level. The sound comes back if it was muted, as it does on a television."""
         self._volume = max(0, min(level, FULL_VOLUME))
+        self._muted = False
 
     def adjust_volume(self, direction: VolumeDirection, amount: int | None = None) -> int:
         """Louder or quieter by ``amount`` points of the volume, or by the step of this speaker when
@@ -83,7 +95,9 @@ class Speaker:
         return self._volume
 
     def scaled(self, pcm: bytes) -> bytes:
-        """The samples at the volume of the speaker."""
+        """The samples at the volume of the speaker: nothing, if it is muted."""
+        if self._muted:
+            return bytes(len(pcm))
         gain = gain_of(self._volume)
         if gain == 1.0:
             return pcm

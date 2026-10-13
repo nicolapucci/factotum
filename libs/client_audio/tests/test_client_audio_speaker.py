@@ -138,6 +138,59 @@ class TestWhatAVolumeDoes:
         assert np.frombuffer(speaker.scaled(samples(1000, -1000)), "<i2").tolist() == [250, -250]
 
 
+class TestMuting:
+    def test_a_speaker_is_not_muted_until_it_is_told_to_be(self) -> None:
+        assert Speaker(FakeBackend()).muted is False
+
+    def test_what_is_muted_is_played_as_silence_of_the_same_length(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=80)
+        speaker.set_muted(True)
+
+        assert speaker.muted
+        assert speaker.scaled(samples(1000, -1000, 20000)) == samples(0, 0, 0)
+
+    def test_the_level_is_kept_and_the_sound_comes_back_as_it_was(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=50)
+        before = speaker.scaled(samples(1000, -1000))
+
+        speaker.set_muted(True)
+        assert speaker.volume == 50
+        speaker.set_muted(False)
+
+        assert speaker.volume == 50
+        assert speaker.scaled(samples(1000, -1000)) == before
+
+    def test_setting_the_volume_brings_the_sound_back_as_it_does_on_a_television(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=50)
+        speaker.set_muted(True)
+
+        speaker.set_volume(30)
+
+        assert (speaker.muted, speaker.volume) == (False, 30)
+
+    @pytest.mark.parametrize("direction", [UP, DOWN])
+    def test_so_does_turning_it_up_or_down(self, direction: VolumeDirection) -> None:
+        speaker = Speaker(FakeBackend(), volume=50)
+        speaker.set_muted(True)
+
+        speaker.adjust_volume(direction)
+
+        assert speaker.muted is False
+
+    async def test_a_track_that_is_played_while_muted_is_given_to_the_device_as_silence(
+        self,
+    ) -> None:
+        backend = FakeBackend()
+        speaker = Speaker(backend, volume=100)
+        speaker.set_muted(True)
+
+        await speaker.begin(RATE)
+        await speaker.write(samples(1000, -1000))
+        await speaker.finish()
+
+        assert heard_by(backend) == [0, 0]
+
+
 class TestPlayingATrack:
     async def test_what_is_written_is_played_in_order_and_the_track_is_finished(self) -> None:
         backend = FakeBackend()

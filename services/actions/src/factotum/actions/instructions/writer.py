@@ -125,8 +125,8 @@ https address), "headers" (an object, {} when there are none) and, unless the me
 DELETE, "body" (a JSON value, which is sent as JSON, or a string, which is sent as text, or null).
 - "kind": "command" is something a device is to do: "name" and "args" (an object). The commands \
 are: set_volume(level 0 to 100), adjust_volume(direction up or down, and amount 1 to 100 only if \
-the person said it), speak(text), play_url(url, kind, title), pause, resume, stop, show_card, \
-clear_display, set_led(pattern, color).
+the person said it), set_mute(muted true or false), speak(text), play_url(url, kind, title), \
+pause, resume, stop, show_card, clear_display, set_led(pattern, color).
 
 "say" is what to tell the person when everything is done: a short sentence in the language of the \
 message, or null.

@@ -2,9 +2,9 @@
 
 A command that the edge sends is one that this device declared it can run (ADR 0013): a speaker with
 a microphone declares ``audio_in`` and ``audio_out``, and what the hands of ``audio_out`` do in the
-vocabulary of commands is set the volume, or change it by some points. The volume is the speaker's
-own (the samples are scaled before they are played: ``factotum.client_audio.Speaker``), and so it is
-the same on a PC and on a Raspberry Pi.
+vocabulary of commands is set the volume, change it, mute it and say how it is. The volume is the
+speaker's own (the samples are scaled before they are played: ``factotum.client_audio.Speaker``),
+and so it is the same on a PC and on a Raspberry Pi.
 
 What is said is not the hands' work. A clip (``play_audio``, which the ``announce`` skill of the
 platform answers with) is played by the client core, which has the speaker and the sound of what is
@@ -23,6 +23,8 @@ from factotum.contracts.commands import (
     CommandResult,
     CommandStatus,
     DeviceCommand,
+    GetState,
+    SetMute,
     SetVolume,
 )
 
@@ -47,11 +49,19 @@ class DeviceHands:
             case SetVolume() if self._speaker is not None:
                 self._speaker.set_volume(command.level)
                 self._renderer.event(f"volume {command.level}")
-                return CommandResult.ok()
+                return CommandResult.ok({"volume": command.level})
             case AdjustVolume() if self._speaker is not None:
                 level = self._speaker.adjust_volume(command.direction, command.amount)
                 self._renderer.event(f"volume {level}")
-                return CommandResult.ok()
+                return CommandResult.ok({"volume": level})
+            case SetMute() if self._speaker is not None:
+                self._speaker.set_muted(command.muted)
+                self._renderer.event("muted" if command.muted else "unmuted")
+                return CommandResult.ok({"muted": command.muted})
+            case GetState() if self._speaker is not None:
+                return CommandResult.ok(
+                    {"volume": self._speaker.volume, "muted": self._speaker.muted}
+                )
         return CommandResult(
             status=CommandStatus.UNSUPPORTED,
             detail=f"this device has no hands for {command.name!r}",

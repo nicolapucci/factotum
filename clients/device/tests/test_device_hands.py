@@ -9,10 +9,12 @@ from factotum.contracts.capabilities import Capability
 from factotum.contracts.commands import (
     AdjustVolume,
     CommandStatus,
+    GetState,
     LedPattern,
     Pause,
     PlayAudio,
     SetLed,
+    SetMute,
     SetVolume,
     Speak,
     VolumeDirection,
@@ -98,6 +100,70 @@ class TestTheVolume:
         assert result.status is CommandStatus.UNSUPPORTED
         assert "adjust_volume" in (result.detail or "")
         assert shown.of("event") == []
+
+
+class TestWhatItSaysOfWhatItDid:
+    """A device says the level that the volume came to (ADR 0029), for the skill that asked."""
+
+    async def test_setting_the_volume_says_the_level(self) -> None:
+        hands, _ = hands_with(Speaker(FakeBackend(), volume=100))
+
+        result = await hands.execute(SetVolume(level=30))
+
+        assert result.data == {"volume": 30}
+
+    async def test_turning_it_says_where_it_came_to(self) -> None:
+        hands, _ = hands_with(Speaker(FakeBackend(), volume=95))
+
+        up = await hands.execute(AdjustVolume(direction=VolumeDirection.UP))
+        down = await hands.execute(AdjustVolume(direction=VolumeDirection.DOWN, amount=40))
+
+        assert (up.data, down.data) == ({"volume": 100}, {"volume": 60})
+
+
+class TestMuting:
+    async def test_the_sound_is_muted_and_brought_back_and_it_is_said(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=60)
+        hands, shown = hands_with(speaker)
+
+        muted = await hands.execute(SetMute(muted=True))
+        assert (speaker.muted, speaker.volume, muted.data) == (True, 60, {"muted": True})
+        unmuted = await hands.execute(SetMute(muted=False))
+
+        assert (speaker.muted, speaker.volume, unmuted.data) == (False, 60, {"muted": False})
+        assert shown.of("event") == ["muted", "unmuted"]
+
+    async def test_a_device_with_no_speaker_cannot_be_muted(self) -> None:
+        hands, shown = hands_with(None)
+
+        result = await hands.execute(SetMute(muted=True))
+
+        assert result.status is CommandStatus.UNSUPPORTED
+        assert "set_mute" in (result.detail or "")
+        assert shown.of("event") == []
+
+
+class TestSayingHowItIs:
+    async def test_it_says_the_volume_and_whether_it_is_muted_and_changes_nothing(self) -> None:
+        speaker = Speaker(FakeBackend(), volume=70)
+        hands, shown = hands_with(speaker)
+
+        loud = await hands.execute(GetState())
+        speaker.set_muted(True)
+        quiet = await hands.execute(GetState())
+
+        assert loud.data == {"volume": 70, "muted": False}
+        assert quiet.data == {"volume": 70, "muted": True}
+        assert (speaker.volume, speaker.muted) == (70, True)
+        assert shown.of("event") == []
+
+    async def test_a_device_with_no_speaker_has_nothing_to_say_of_it(self) -> None:
+        hands, _ = hands_with(None)
+
+        result = await hands.execute(GetState())
+
+        assert result.status is CommandStatus.UNSUPPORTED
+        assert result.data is None
 
 
 class TestWhatItCannotDo:

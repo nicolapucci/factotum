@@ -23,6 +23,7 @@ from factotum.contracts.commands import (
     ClearDisplay,
     CommandResult,
     DeviceCommand,
+    GetState,
     LedPattern,
     MediaKind,
     Pause,
@@ -30,6 +31,7 @@ from factotum.contracts.commands import (
     PlayUrl,
     Resume,
     SetLed,
+    SetMute,
     SetVolume,
     ShowCard,
     Speak,
@@ -104,6 +106,13 @@ class SystemDevice(ABC):
         self, direction: VolumeDirection, amount: int | None = None
     ) -> CommandResult:
         return await self.execute(AdjustVolume(direction=direction, amount=amount))
+
+    async def set_mute(self, muted: bool) -> CommandResult:
+        return await self.execute(SetMute(muted=muted))
+
+    async def get_state(self) -> CommandResult:
+        """Ask the device how it is: the answer is in the ``data`` of the result."""
+        return await self.execute(GetState())
 
     async def show_card(self, card: Card) -> CommandResult:
         return await self.execute(ShowCard(card=card))

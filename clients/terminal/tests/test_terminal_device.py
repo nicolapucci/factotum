@@ -10,12 +10,14 @@ from factotum.contracts.commands import (
     ClearDisplay,
     CommandStatus,
     DeviceCommand,
+    GetState,
     LedPattern,
     Pause,
     PlayAudio,
     PlayUrl,
     Resume,
     SetLed,
+    SetMute,
     SetVolume,
     ShowCard,
     Speak,
@@ -94,6 +96,53 @@ class TestWhatTheHardwareDoes:
         assert hardware.state.volume == 0
         assert shown.of("event") == ["volume 100", "volume 0", "volume 0"]
 
+    async def test_it_says_the_level_the_volume_came_to(self) -> None:
+        hardware, _ = device()
+
+        set_to = await hardware.execute(SetVolume(level=30))
+        turned = await hardware.execute(AdjustVolume(direction=VolumeDirection.UP))
+
+        assert (set_to.data, turned.data) == ({"volume": 30}, {"volume": 40})
+
+    async def test_it_mutes_the_sound_and_keeps_the_level(self) -> None:
+        hardware, shown = device()
+
+        muted = await hardware.execute(SetMute(muted=True))
+        assert (hardware.state.muted, hardware.state.volume, muted.data) == (
+            True,
+            50,
+            {"muted": True},
+        )
+        await hardware.execute(SetMute(muted=False))
+
+        assert (hardware.state.muted, hardware.state.volume) == (False, 50)
+        assert shown.of("event") == ["muted", "unmuted"]
+        assert "muted" not in hardware.state.describe()
+
+    async def test_setting_or_turning_the_volume_brings_the_sound_back(self) -> None:
+        hardware, _ = device()
+        await hardware.execute(SetMute(muted=True))
+        assert "muted" in hardware.state.describe()
+
+        await hardware.execute(SetVolume(level=20))
+        assert hardware.state.muted is False
+        await hardware.execute(SetMute(muted=True))
+        await hardware.execute(AdjustVolume(direction=VolumeDirection.DOWN))
+
+        assert (hardware.state.muted, hardware.state.volume) == (False, 10)
+
+    async def test_it_says_how_it_is_and_changes_nothing(self) -> None:
+        hardware, shown = device()
+        await hardware.execute(SetVolume(level=35))
+        await hardware.execute(SetMute(muted=True))
+        before, events = hardware.state.describe(), list(shown.of("event"))
+
+        result = await hardware.execute(GetState())
+
+        assert result.data == {"volume": 35, "muted": True}
+        assert hardware.state.describe() == before
+        assert shown.of("event") == events
+
     async def test_it_lights_a_light(self) -> None:
         hardware, shown = device()
 
@@ -158,6 +207,8 @@ class TestWhenItCannotDoIt:
             (Speak(text="hello"), "audio_out"),
             (SetVolume(level=10), "audio_out"),
             (AdjustVolume(direction=VolumeDirection.UP), "audio_out"),
+            (SetMute(muted=True), "audio_out"),
+            (GetState(), "audio_out"),
             (SetLed(pattern=LedPattern.SOLID), "led"),
             (ShowCard(card=Card(title="x")), "display"),
             (PlayUrl(url=RADIO), "media_player"),
