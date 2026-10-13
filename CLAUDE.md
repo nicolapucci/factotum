@@ -125,7 +125,11 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   volume* is `volume-change` with a direction and no amount, and the device turns it up by its own
   step: **a skill for what a device does is the interface between the model and the device**, it
   passes on what was said as a command and has no step, sound or time of its own to tell; each
-  device has its own, `audio.volume_step` for the speaker). A model is never asked to quote the
+  device has its own, `audio.volume_step` for the speaker); the skills of the platform for the sound
+  of a device (`volume`, `volume-change`, `mute`, `volume-status`, ADR 0029) are code that really runs
+  (no sandbox, no runner), and what a device answers (the `data` of a `CommandResult`, asked with
+  `get_state`, which only the platform may give) is read by that code and said in a sentence of its
+  own, never by a model. A model is never asked to quote the
   words a value came from: the check is in code. Several skills in one request are not built, and
   nothing may assume that there is exactly one.
 - **A script runs in a container of its own and reaches only what its grant lists** (ADR 0015). The

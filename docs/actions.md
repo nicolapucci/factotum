@@ -61,10 +61,9 @@ A skill is a folder with a `SKILL.md` and, if it runs code, the scripts. The `SK
 frontmatter (the manifest of [ADR 0006](decisions/0006-skills-and-sandboxed-execution.md): name,
 description, examples, target, parameters, required, device parameters, permissions, effect, confirm,
 approval, entrypoint) between two lines of three dashes, then instructions or notes in markdown.
-[`skills/`](../skills/README.md) has eight worked examples: a lamp, a garage door, a volume that is
-set to a level and one that is turned up or down, the weather and a router restart, each showing a
-different way an action is decided, and two that are only instructions (a scene for a movie, the air
-quality). How to write one is in
+[`skills/`](../skills/README.md) has six worked examples: a lamp, a garage door, the weather and a
+router restart, each showing a different way an action is decided, and two that are only
+instructions (a scene for a movie, the air quality). How to write one is in
 [`skills.md`](skills.md). What the platform itself does (an announcement) is not an example but a
 skill of the platform, [below](#skills-of-the-platform).
 
@@ -160,6 +159,21 @@ nothing on the network, and is granted nothing. What it says is not the reply to
   the sound. `FACTOTUM_ACTIONS_SPEECH_TIMEOUT_S` is how long the gateway is waited for each block (the
   first voice after a start is loaded when it is asked for: seconds on a processor), and the skill's
   own limit is 60 seconds, which is what the whole of it is given.
+
+**The sound of a device** ([ADR 0029](decisions/0029-the-skills-for-what-a-device-does-are-the-interface-between-the-model-and-the-device.md)): `volume` (*set the volume to 30*, *al massimo*), `volume-change`
+(*alza il volume*, *abbassa di venti*), `mute` (*metti in muto*, *togli il muto*) and `volume-status`
+(*che volume c'è?*, *sei in muto?*). Each is the interface between a model and the speaker of a device:
+it passes on what was said as a command (`set_volume`, `adjust_volume`, `set_mute`, `get_state`) and
+tells the device no number of its own, so that how far *turn it up* goes is the step of the device.
+They are `reversible` (`volume-status` is `read_only`), act on the device that was named or spoken
+to, and run here, in this process, with no sandbox and no runner: they really do it.
+
+* **What the device answers is read here, in code.** A result may carry `data` (the level the volume
+  came to, how the device is), and the skill says it in a sentence of `core/phrases.py` in the
+  language of the person (`CoreResult.after`): *Volume al 60 per cento*, *L'audio è in muto. Il
+  volume è al 40 per cento*. A device that does not answer what the skill needs is a skill that
+  failed (*The volume-status skill failed*), not a guess; a model never reads the answer.
+* **Mute keeps the level.** Setting or turning the volume brings the sound back, as on a television.
 
 ## Choosing a skill
 

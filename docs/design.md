@@ -150,7 +150,8 @@ The **command vocabulary** (version 2) is the single definition every other piec
 command requires one capability: `speak`, `play_audio` (a clip, which the platform's own skills give:
 [ADR 0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)),
 `play_url`, `pause`, `resume`, `stop`, `set_volume` (to a level), `adjust_volume` (a direction and,
-if a person said it, an amount; the step of the device otherwise: ADR 0028), `show_card`, `clear_display`, `set_led`. What a
+if a person said it, an amount; the step of the device otherwise: ADR 0028), `set_mute`, `get_state`
+(a question to the device, whose answer is the `data` of the result: ADR 0029), `show_card`, `clear_display`, `set_led`. What a
 skill, a script or a plan may give is that vocabulary but for `play_audio` (`SkillCommand`), and a
 `speak` is made a voice by the edge for a device that takes clips. `SystemDevice` has one ready-made
 method per command; a method refuses

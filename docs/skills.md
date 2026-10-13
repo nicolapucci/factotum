@@ -138,7 +138,7 @@ A step is one of:
   address), `headers` (an object), and, except for `GET` and `DELETE`, `body`: a JSON value, which is
   sent as JSON, or a string, which is sent as text (`text/plain`), or `null`;
 * **a command for a device**: `name` and `args`, one of the vocabulary of the edge (`set_volume`,
-  `adjust_volume` (a `delta` of points of the volume, positive for louder), `speak`, `play_url`, `pause`, `resume`, `stop`, `show_card`, `clear_display`, `set_led`), which
+  `adjust_volume` (a direction and, if said, an amount), `set_mute`, `speak`, `play_url`, `pause`, `resume`, `stop`, `show_card`, `clear_display`, `set_led`), which
   the actions service gives to the device that was spoken to (or that the skill acts on) if it
   declared it can. `play_audio`, which carries a clip, is **not** among them: a clip is what a skill of
   the platform gives, and a script or a plan that says `speak` has the edge make the voice of it.

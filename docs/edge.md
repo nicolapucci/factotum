@@ -67,7 +67,7 @@ it.
 | `audio_chunk` | `id`, `seq` (0, 1, 2... with no gap), `data` (the samples, base64, at most 64 KiB: two seconds at 16 kHz; a device sends 100 to 200 ms at a time) |
 | `audio_end` | `id`: the person has stopped talking. The edge puts what it was sent in a WAV file, has it transcribed and runs the result through the same turn an `utterance` would |
 | `cancel` | `id`: stop answering that utterance, or end that stream |
-| `ack` | `id`, `result`: what became of a command |
+| `ack` | `id`, `result`: what became of a command (`status`, a `detail`, and `data`: what a device answers to a question, such as `get_state`, or says of what it did, such as the level the volume came to; small, and for the skill of the platform that asked) |
 | `ping` | I am here |
 | `bye` | I am going on purpose |
 
@@ -82,7 +82,7 @@ it.
 | `voice_chunk` | `utterance_id`, `seq` (0, 1, 2... with no gap, in a track), `part_seq` (the `seq` of the `speech` part whose sound this is), `data` (whole samples, base64, at most 64 KiB; about a tenth of a second is what is sent) |
 | `voice_end` | `utterance_id`: the sound is all sent |
 | `turn_ended` | `utterance_id`, `status` (`finished`, `failed`, `cancelled`) and, for a failure, a stable `code` and a `message` |
-| `command` | `id`, `command`: something to do (the command vocabulary of the design: `speak`, `play_audio`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `adjust_volume`, `show_card`, `clear_display`, `set_led`). The device answers with an `ack`. A `play_audio` carries a clip, and is sent only to a device that declared `play_audio` (below) |
+| `command` | `id`, `command`: something to do (the command vocabulary of the design: `speak`, `play_audio`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `adjust_volume`, `set_mute`, `get_state`, `show_card`, `clear_display`, `set_led`). The device answers with an `ack`. A `play_audio` carries a clip, and is sent only to a device that declared `play_audio` (below) |
 | `pong` | Me too |
 | `error` | `code`, `message`, `fatal` (the connection is closed after it), `ref` (the utterance, stream or command it is about) |
 

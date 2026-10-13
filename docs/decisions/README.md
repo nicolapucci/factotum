@@ -34,3 +34,4 @@ the old one instead of rewriting history.
 | [0026](0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md) | Saying something on a device: `play_audio`, `speak` through the edge, and core skills |
 | [0027](0027-the-wake-word-without-a-key-openwakeword-behind-the-same-port.md) | The wake word without a key: openWakeWord behind the same port, its models fetched by a command |
 | [0028](0028-the-model-alone-does-nothing-a-request-is-satisfied-by-skills-or-declined.md) | The model alone does nothing: a request is satisfied by skills, or it is declined |
+| [0029](0029-the-skills-for-what-a-device-does-are-the-interface-between-the-model-and-the-device.md) | The skills for what a device does are the interface between the model and the device |

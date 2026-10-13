@@ -165,7 +165,7 @@ the sound that plays is cut before the edge is told ([ADR 0024](decisions/0024-t
 ## What it says, and what it does
 
 The voice of an answer arrives as a stream and is played as it arrives, a sentence at a time, at the
-**volume of the speaker**: a `set_volume` or an `adjust_volume` command from a skill (to a level,
+**volume of the speaker**: a `set_volume`, `adjust_volume` or `set_mute` command from a skill (to a level,
 or up or down by an amount that was said, or by the step of the speaker, `audio.volume_step`, 10
 points unless the settings say another; never past either end) scales the samples before they are
 played (the square of the share of the full volume, since a person hears loudness and not
