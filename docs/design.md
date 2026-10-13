@@ -146,13 +146,15 @@ with a credential issued at pairing, declare **capabilities**, and are driven th
 | `media_player` | playing a URL or stream; pause, resume, stop |
 | `buttons`, `led`, `sensors` | input events and status commands |
 
-The **command vocabulary** (version 2) is the single definition every other piece derives from. Each
+The **command vocabulary** (version 5) is the single definition every other piece derives from. Each
 command requires one capability: `speak`, `play_audio` (a clip, which the platform's own skills give:
 [ADR 0026](decisions/0026-saying-something-on-a-device-play-audio-speak-through-the-edge-and-core-skills.md)),
 `play_url`, `pause`, `resume`, `stop`, `set_volume` (to a level), `adjust_volume` (a direction and,
 if a person said it, an amount; the step of the device otherwise: ADR 0028), `set_mute`, `get_state`
-(a question to the device, whose answer is the `data` of the result: ADR 0029), `show_card`, `clear_display`, `set_led`. What a
-skill, a script or a plan may give is that vocabulary but for `play_audio` (`SkillCommand`), and a
+(a question to the device, whose answer is the `data` of the result: ADR 0029), `set_timer`, `cancel_timer`, `set_alarm`,
+`cancel_alarm` (the device keeps the time and rings by itself: ADR 0029), `show_card`, `clear_display`, `set_led`. What a
+skill, a script or a plan may give is that vocabulary but for what only the platform gives (`PLATFORM_COMMAND_MODELS`:
+`play_audio`, `get_state` and the four of timers and alarms; `SkillCommand` is the rest), and a
 `speak` is made a voice by the edge for a device that takes clips. `SystemDevice` has one ready-made
 method per command; a method refuses
 with `CapabilityNotSupportedError` when the device did not declare the capability, and a test keeps

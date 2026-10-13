@@ -82,7 +82,7 @@ it.
 | `voice_chunk` | `utterance_id`, `seq` (0, 1, 2... with no gap, in a track), `part_seq` (the `seq` of the `speech` part whose sound this is), `data` (whole samples, base64, at most 64 KiB; about a tenth of a second is what is sent) |
 | `voice_end` | `utterance_id`: the sound is all sent |
 | `turn_ended` | `utterance_id`, `status` (`finished`, `failed`, `cancelled`) and, for a failure, a stable `code` and a `message` |
-| `command` | `id`, `command`: something to do (the command vocabulary of the design: `speak`, `play_audio`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `adjust_volume`, `set_mute`, `get_state`, `show_card`, `clear_display`, `set_led`). The device answers with an `ack`. A `play_audio` carries a clip, and is sent only to a device that declared `play_audio` (below) |
+| `command` | `id`, `command`: something to do (the command vocabulary of the design: `speak`, `play_audio`, `play_url`, `pause`, `resume`, `stop`, `set_volume`, `adjust_volume`, `set_mute`, `get_state`, `set_timer`, `cancel_timer`, `set_alarm`, `cancel_alarm`, `show_card`, `clear_display`, `set_led`). The device answers with an `ack`. A `play_audio`, a `set_timer` and a `set_alarm` carry a clip, and are sent only to a device that declared `play_audio` (below): a device that did not is answered `unsupported` without being sent anything, since there are no words to ring with in place of a clip |
 | `pong` | Me too |
 | `error` | `code`, `message`, `fatal` (the connection is closed after it), `ref` (the utterance, stream or command it is about) |
 

@@ -175,6 +175,28 @@ to, and run here, in this process, with no sandbox and no runner: they really do
   failed (*The volume-status skill failed*), not a guess; a model never reads the answer.
 * **Mute keeps the level.** Setting or turning the volume brings the sound back, as on a television.
 
+**Timers and alarms** (same decision): `timer` (*set a timer for five minutes*, *metti un timer di
+mezz'ora*), `timer-cancel` (*annulla il timer*, *stop the timer*) and `timer-status` (*quanto manca
+al timer?*), and `alarm` (*sveglia alle sette e mezza*, *wake me at 6 tomorrow*), `alarm-cancel` and
+`alarm-status`. The device keeps the time on a clock of its own and rings by itself (the sentence that
+rings is made a voice by the gateway when the timer or the alarm is set, and travels with the command:
+`set_timer` and `set_alarm` carry a clip, and so are the platform's only); the skill is the interface.
+
+* **A model copies words, code does the sums.** A timer takes the *words* of how long (a number of
+  seconds that a model wrote would be one that nobody said: ADR 0028), an alarm those of the hour and
+  of the day. `core/when.py` reads them, in English and Italian: *un'ora e mezza*, *2h30*, *half an
+  hour*, *alle sette meno un quarto*, *7:30 pm*, *domani*, *lunedì*, *il 15 ottobre*. What it does not
+  understand is not guessed: the skill says so in words of its own (*Non ho capito di quanto tempo
+  parli*), and a time that is counted from now (*tra dieci minuti*) is not an alarm.
+* **The day is not a date.** The platform has no clock. The skill passes on *tomorrow*, *Monday* or
+  *the 15th of October* as a way of saying a day (`AlarmDay`), and the device, which has the calendar
+  and the time of the place it is in, works out the next time that fits and answers with the moment it
+  chose, which the skill says (*Sveglia impostata per domani alle 7*). A moment that has gone by, a
+  date that never comes and a device that is full are answered with their reason and said in words.
+* **Which one a cancel stops** is the device's: the one named by its length or its hour, else the ones
+  that ring, else the next to ring. A device holds up to eight of each, and loses them when its
+  program stops.
+
 ## Choosing a skill
 
 1. **Candidates by meaning.** The message is embedded and compared with what each enabled skill of

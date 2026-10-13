@@ -181,6 +181,20 @@ application plays a clip when nothing else is being said, in the order they came
 at once that it took it; a person who speaks (the key, or the wake word) cuts what is being said, and
 what waits is said after their answer. The console shows each as `announcement: <the words>`.
 
+**Timers and alarms** ([ADR
+0029](decisions/0029-the-skills-for-what-a-device-does-are-the-interface-between-the-model-and-the-device.md)).
+The device keeps them itself, on its own clock: a `set_timer` or a `set_alarm` carries the clip that
+rings, and the device holds it and rings when the time comes, even if the edge is not there then. The
+keeper (`factotum.client_core.Timekeeper`) is the device's and not a connection's: it is made once and
+lent to each client the device makes after a lost connection, and it is lost when the program stops
+(nothing is written to disk in this version, and nothing repeats: an alarm is for one day). A timer
+runs on the clock that only goes forward; an alarm is for a time on the wall of the place (the clock
+and the time zone of the machine), so an alarm for seven rings at seven. It rings like an
+announcement, when nothing else is being said, and again every eight seconds until a person says to
+stop it (*ferma il timer*, *spegni la sveglia*) or for three minutes; a muted speaker rings in
+silence. Up to eight of each are held. The console shows `timer t1 set for 300 s`, `timer t1 is up`
+and `alarm a1 set for 2026-10-14 07:00`.
+
 A device is its hands, and what the hands of `audio_out` do is set the volume. Saying is not the
 hands' work: the client core plays a clip, and a text never reaches a device that takes clips, because
 the edge makes a clip of it. What these hands are asked for and have no hands for is answered

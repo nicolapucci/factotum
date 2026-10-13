@@ -1,6 +1,6 @@
 # 0029. The skills for what a device does are the interface between the model and the device
 
-Status: accepted, 2026-10-13. Built: the sound (volume, mute, how it is). Not built yet: timers and alarms.
+Status: accepted, 2026-10-13. Built: the sound (volume, mute, how it is), and the timers and the alarms.
 
 ## Context
 
@@ -38,23 +38,42 @@ default belongs to the device and not to the skill.
   `muted` for a speaker; the timers and alarms that it holds, later).
 - **Mute keeps the level.** `set_mute` mutes the sound or brings it back where it was. Setting or
   turning the volume brings the sound back, as it does on a television.
-- **Timers and alarms live on the device** (not built yet; this is what it will be):
+- **Timers and alarms live on the device.** The device keeps the time on a clock of its own and rings
+  by itself, even when its connection is down at that moment; the skill is the interface to it.
   - *A timer*: `timer` takes the **words** of the duration as the person said them (*cinque minuti*,
-    *un'ora e mezza*, *mezz'ora*, *2h30*), which the check of ADR 0028 can find in the message, and
-    code turns them into seconds (it and en): a model does no sums, and "300" is a number that is
-    not in the message. The skill has the voice of the tenant make the sentence that rings, as
-    `announce` does, and gives the device `set_timer` with the clip; the device keeps the time on its
-    own clock, rings when it is due (when nothing else is being said), and goes on until it is
-    stopped. `timer-cancel` and `timer-status` (the latter asks the device and says its answer).
-  - *An alarm*: `alarm` takes the words of the time and, if there is one, of the day (*alle sette e
-    mezza*, *domani*, *lunedì*, *il 15 ottobre*), and code reads them into an hour and a minute and a
-    day that is *a way of saying a day*, not a date: the platform has no clock and does not need one.
-    The device, which has the clock and the time zone of the place it is in, resolves it to the next
-    time that it comes, and answers with the moment that it chose so that the skill can say it. The
-    skill says only: set the alarm for this day at this hour. `alarm-cancel` and `alarm-status` as for
-    the timer.
-  - *What a device holds is lost when its program stops* in the first version, and a repeating alarm
-    (every morning) is not in it: both are for a decision of their own.
+    *un'ora e mezza*, *mezz'ora*, *2h30*, *half an hour*), which the check of ADR 0028 finds in the
+    message, and code turns them into seconds (`core/when.py`, English and Italian, mixed if the
+    person mixes them): a model does no sums, and "300" is a number that is not in the message. A
+    length that is not understood is a skill that says so in words of its own (nothing is guessed),
+    and a timer is from a second to a day. The skill has the voice of whom the device acts for make
+    the sentence that rings, once, when the timer is set (`core/rings.py`), and gives the device
+    `set_timer` with the clip. `timer-cancel` and `timer-status` (the latter asks the device with
+    `get_state` and says its answer).
+  - *An alarm*: `alarm` takes the words of the hour and, if there is one, of the day (*alle sette e
+    mezza*, *domani*, *lunedì*, *il 15 ottobre*, *half past seven*, *7:30 pm*), and code reads them
+    into an hour and a minute on the 24-hour clock (a period of the day, *di sera*, *pm*, makes the
+    hour; with none it is as it was said) and a day that is **a way of saying a day** (`AlarmDay`:
+    in some days, a weekday, a date), **not a date**: the platform has no clock and does not need
+    one. The device, which has the clock and the calendar of the place it is in
+    (`client_core/moments.py`), resolves it to the next time that it comes, and answers with the
+    moment that it chose and the `now` it chose it from, so that the skill can say *domani alle 7*
+    from the device's own today. A moment that has gone by (*today at six* at noon) or a date that
+    never comes (the 31st of April) is not an alarm: the device answers why, and the skill says it.
+    `alarm-cancel` and `alarm-status` as for the timer. A time that is counted from now (*in ten
+    minutes*) is a timer and not an alarm, and is refused as one.
+  - *Several at once*: a device holds up to eight timers and eight alarms. **A cancel** stops the
+    one that the person named (a timer by its length, an alarm by its hour), else the ones that are
+    ringing, else the next to ring: the choice is the device's, as the step of the volume is, and
+    "cancel all" is not built (the skill is not given the words of the message, so nothing could
+    check it).
+  - *Ringing*: a device says the clip when nothing else is being said, as an announcement is said
+    (it waits for an answer to end, and a person who speaks cuts it), and says it again every eight
+    seconds until the timer or the alarm is cancelled, or for three minutes: a device in an empty
+    house does not ring for ever. A timer is kept on the clock that only goes forward and an alarm
+    on the wall (*civil time*, no zone), so that an alarm for seven rings at seven whatever the
+    clock did in between.
+  - *What a device holds is lost when its program stops* in the first version (it is held in memory),
+    and a repeating alarm (every morning) is not in it: both are for a decision of their own.
 
 ## Consequences
 
@@ -82,7 +101,42 @@ default belongs to the device and not to the skill.
 
 ## What was built, and what it found
 
-The first slice: `set_mute` and `get_state`, the `data` of a result, `CoreResult.after` and the
+**The second slice**: timers and alarms. The vocabulary is version 5 (`set_timer`, `cancel_timer`,
+`set_alarm`, `cancel_alarm`), all four the platform's (`PLATFORM_COMMAND_MODELS`: a ring is a clip that
+nobody else makes, and what a device says of its timers is for the skill that asked). What a device
+answers is defined once, in `factotum.contracts.timekeeping` (`TimerSet`, `TimersCancelled`,
+`AlarmSet`, `AlarmsCancelled`, and `TimeState` for the part of `get_state` that is about time), so that
+the keeper that writes an answer and the skill that reads it cannot disagree. The keeper is
+`factotum.client_core.Timekeeper`, with a `Clock` port (the machine's, or one that a test moves); the
+six skills are in `core/timers.py` and `core/alarms.py`, the readers of what a person says in
+`core/when.py`, and the sentences, with the words for a length, an hour and a day, in
+`core/phrases.py`. The corpus has the new cases, the series of `e2e` says them to the three devices
+and judges what each device *holds* before and after (`e2e/series_time.py`), and a test of its own
+puts a whole day on a device by moving its clock.
+
+What it found:
+
+* **The keeper cannot live in a connection.** The first sketch gave the client its timers, and a client
+  is made again at every reconnection (`stay_connected`), so a device that lost the edge for a minute
+  lost its timer. The keeper is the device's and is lent to each client (`attach`): a connected
+  client rings through its announcements (they wait for an answer, and are cut by a person who
+  speaks), and a device with no client rings on the speaker itself.
+* **A skill must be able to say why after the device answered.** *Today at six* is a question for the
+  device's calendar, and it answers *past*: until now the only thing a skill could do after a device
+  answered was say a sentence or fail with a generic one. `SkillFailedError` raised by `after` is now
+  said in the skill's own words (*Quell'ora è già passata*), as it is when raised by `run`.
+* **An answer that sets nothing is an answer.** A full device or a moment that has gone by answers
+  `ok` with the reason, not `failed`: the command was understood and answered, and what a person is
+  told is the reason, in words, not that "the device did not do it".
+* **The fake clock had to let a task begin to wait.** A test that set a timer and moved time at
+  once moved it before the keeper had looked at the clock for the first time: `FakeClock.advance`
+  now lets what was just made begin first.
+
+Nothing was measured with a model: the planner is not shown the new skills in its examples until a
+graphics card is free to measure what each example moves, and the corpus gained 43 cases for the
+live test to measure then.
+
+**The first slice:** `set_mute` and `get_state`, the `data` of a result, `CoreResult.after` and the
 language that a core skill is given, the skills `volume`, `volume-change`, `mute` and `volume-status`
 (`factotum.actions.core.volume`, with their sentences in `core/phrases.py`), the muted state of the
 speaker of the device application and of the hardware of the terminal, and the corpus and the series

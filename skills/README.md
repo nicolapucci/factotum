@@ -19,7 +19,8 @@ runs them is in [`docs/actions.md`](../docs/actions.md).
 
 What is not here are the skills of the platform, in code, that every tenant has without installing
 anything: `announce`, which says something out loud on a device, and the ones for the sound of a
-device (`volume`, `volume-change`, `mute`, `volume-status`)
+device (`volume`, `volume-change`, `mute`, `volume-status`) and for its time (`timer`, `timer-cancel`,
+`timer-status`, `alarm`, `alarm-cancel`, `alarm-status`)
 ([`docs/actions.md`](../docs/actions.md#skills-of-the-platform)); they used to be examples here. A skill of yours that gives a device
 a `speak` (a command, no network, nothing granted) works the way the example `announce` used to, and
 the edge makes the voice of it.

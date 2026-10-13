@@ -129,7 +129,14 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   of a device (`volume`, `volume-change`, `mute`, `volume-status`, ADR 0029) are code that really runs
   (no sandbox, no runner), and what a device answers (the `data` of a `CommandResult`, asked with
   `get_state`, which only the platform may give) is read by that code and said in a sentence of its
-  own, never by a model. A model is never asked to quote the
+  own, never by a model. **The time of a device is the device's too** (`timer`, `alarm` and their
+  cancels and statuses): the device keeps it on a clock of its own (`factotum.client_core.Timekeeper`,
+  the device's and not a connection's, lost when the program stops) and rings by itself with a clip
+  that the platform made when it was set; the platform has **no clock**, so a skill passes on the
+  hour and the *way a day was said* (`AlarmDay`: tomorrow, Monday, the 15th), never a date, and the
+  device works out which day that is; the words of a length, an hour and a day are read by code
+  (`core/when.py`), because a number of seconds that a model wrote is one nobody said. A model is
+  never asked to quote the
   words a value came from: the check is in code. Several skills in one request are not built, and
   nothing may assume that there is exactly one.
 - **A script runs in a container of its own and reaches only what its grant lists** (ADR 0015). The
@@ -384,6 +391,12 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   does. The corpus (`plan_cases`) keeps itself honest the same way (`check_values(..., said=...)`).
   A heredoc of Python run by the shell tool turns `\\b` of a pattern in a string into a backspace
   (`^H` in `cat -A`): patch files with the Edit tool, or with a script file written by Write.
+- A timer or an alarm on a device of a test does not run by itself, and a clock that nobody moves is
+  not wrong: `Device.clock` (e2e) and `ClientRig.clock` are a `FakeClock` that moves when a test says
+  (`advance`, which first lets what was just made begin to wait, or a timer set and moved at once finds
+  the time already gone; `set_wall` for a wall that is set to another hour). The keeper belongs to
+  the *device*, and a client is made again at every reconnection: a keeper built inside a client
+  loses its timers with the connection, which was how the first sketch of ADR 0029 was wrong.
 - The score of a passage is not its relevance: it is a fusion of ranks scaled by the best a rank can
   score (a question about nothing has a first passage at 1.0). Ask for `min_similarity` and read
   `similarity`. The floor is measured with the real model and the numbers are in `docs/knowledge.md`

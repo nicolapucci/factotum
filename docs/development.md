@@ -167,8 +167,19 @@ cannot play a clip (it is given the words); and a device that is not connected. 
 the hub's house, with signed tokens (`test_e2e_hub.py`), and as `play_audio` reaches a real client in
 `test_e2e_device_app.py`.
 
+**Timers and alarms** (`test_e2e_timers.py`, ADR 0029) are what a device does by itself once it has
+been told: a timer set by voice is kept by the device and rings when its clock says so, with the voice
+that the platform made when it was set, again every few seconds until it is stopped by voice (*stop
+the timer*); an alarm in the words of a person (*svegliami domani alle sette*) is worked out by the
+calendar of the device, rings when the wall of the device shows the hour, and is cancelled and asked
+about; a moment that has gone by is said, and nothing is set; a device that plays no clips cannot
+ring and the person is told, without the edge having sent it what it cannot do. Time does not pass by
+itself there: every device of `factotum.e2e.devices` has a clock that a test moves (`Device.clock`,
+`FakeClock.advance`), so that a day takes no time, and the wall alone can be set to another hour
+(`set_wall`) as a journey or the summer time would.
+
 **A series of commands** (`test_e2e_series.py`, `factotum.e2e.series`) says the corpus that a model
-that plans is measured against (`factotum.actions.plan_cases`: 82 messages in English and in
+that plans is measured against (`factotum.actions.plan_cases`: 143 messages in English and in
 Italian, about the example skills, said to the kitchen speaker, the living room display and a
 phone) one after another, to the three devices at once, each on the one connection it holds for the
 whole series, and four more where the corpus is silent (a phone that has two lamps to choose from, a
@@ -178,7 +189,8 @@ sentence of the code, in the language of the message, with no model asked). What
 looked at, for every one, is what the whole assistant did: what the actions service made of it (it
 is recorded as it is said: `House.acts`), the skill that ran and what it was given (the values, the
 hosts it may reach, the secrets it was granted and no others), what Home Assistant was asked, what
-each device was told to do and has done (a volume), and said (an announcement on the device that
+each device was told to do and has done (a volume, a timer or an alarm that it now holds, judged
+against what it held before: `factotum.e2e.series_time`), and said (an announcement on the device that
 was named, which the speaker of no other says; the answer to the person on the one they spoke to),
 and, after all of it, the audit trail, which must say exactly what was done, refused and
 asked about and nothing else, and every client, which must have seen no rule of the protocol broken
