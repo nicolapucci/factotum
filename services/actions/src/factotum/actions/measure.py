@@ -89,15 +89,28 @@ what the code makes of it and not by its letters, since the code reads *alle ott
 the same hour (and *ten minutes* and *ten minute* as the same length)."""
 
 
+_INTRODUCING = frozenset({"to", "di", "that", "che"})
+"""The word that begins what is to be remembered or said (*remind me to call*, *ricordami di
+chiamare*, *tell her that*): a model that copies it has copied the words that were said."""
+
+
+def _with_the_word_that_introduces_it(understood: object, wanted: ParamValue) -> bool:
+    if not isinstance(understood, str) or not isinstance(wanted, str):
+        return False
+    first, _, rest = understood.strip().partition(" ")
+    return first.casefold() in _INTRODUCING and same(rest, wanted)
+
+
 def same_value(skill: str | None, name: str, understood: object, wanted: ParamValue) -> bool:
-    """Whether what a model wrote for a value of a skill is what the case wants: the same words,
-    or, for a value that code reads, the same reading."""
+    """Whether what a model wrote for a value of a skill is what the case wants: the same words
+    (with the word that introduces them, if it copied that), or, for a value that code reads, the
+    same reading."""
     reader = _READ_AS.get((skill or "", name))
     if reader is not None and isinstance(understood, str) and isinstance(wanted, str):
         read = reader(understood)
         if read is not None and read == reader(wanted):
             return True
-    return same(understood, wanted)
+    return same(understood, wanted) or _with_the_word_that_introduces_it(understood, wanted)
 
 
 def judge(

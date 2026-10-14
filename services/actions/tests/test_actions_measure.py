@@ -124,6 +124,34 @@ class TestSameValue:
         assert not same_value("announce", "message", "dinner", "dinner is ready")
         assert same_value("weather", "place", "rome", "Rome")
 
+    @pytest.mark.parametrize(
+        ("understood", "wanted"),
+        [
+            ("to call the dentist", "call the dentist"),
+            ("To call the dentist.", "call the dentist"),
+            ("di comprare il pane", "comprare il pane"),
+            ("that dinner is ready", "dinner is ready"),
+            ("che arrivo tra dieci minuti", "arrivo tra dieci minuti"),
+        ],
+    )
+    def test_the_words_that_were_said_with_the_one_that_introduces_them_are_the_same_words(
+        self, understood: str, wanted: str
+    ) -> None:
+        assert same_value("reminder-add", "what", understood, wanted)
+
+    @pytest.mark.parametrize(
+        ("understood", "wanted"),
+        [
+            ("call to the dentist", "call the dentist"),
+            ("to", "call the dentist"),
+            ("to call the vet", "call the dentist"),
+            ("the call the dentist", "call the dentist"),
+            ("so call the dentist", "call the dentist"),
+        ],
+    )
+    def test_only_that_one_word_in_front_is_let_through(self, understood: str, wanted: str) -> None:
+        assert not same_value("reminder-add", "what", understood, wanted)
+
     def test_a_value_that_is_missing_or_is_not_a_text_is_compared_as_it_is(self) -> None:
         assert not same_value("timer", "duration", None, "ten minutes")
         assert not same_value("timer", "duration", 600, "ten minutes")
