@@ -18,6 +18,7 @@ from factotum.common.config import Environment, ServiceSettings
 from factotum.contracts.actions import ActCode
 from factotum.contracts.devices import SystemDeviceRecord
 from factotum.contracts.identity import Principal, Role, Subject
+from factotum.contracts.skills import SkillManifest
 from factotum.contracts.testing import make_tenant_id, make_user_id
 from factotum.devices.home import parse_home
 
@@ -416,6 +417,73 @@ class TestWhatThePersonSaid:
         assert isinstance(found, NeedsMore)
         assert found.reply == "I still need: brightness."
         assert found.left_out == ()
+
+
+MEETING = SkillManifest.model_validate(
+    {
+        "name": "meeting-add",
+        "description": "Add a meeting to the calendar.",
+        "effect": "reversible",
+        "parameters": {
+            "title": {"type": "string"},
+            "day": {"type": "string", "formats": [{"date": "dd/MM/yy"}, {"in_days": "+{n}d"}]},
+            "at": {"type": "string", "formats": [{"time": "HH:mm"}]},
+        },
+        "required": ["title", "day"],
+    }
+)
+
+
+class TestWhatAFormatMakesOfWhatWasSaid:
+    """A value that a skill takes in a form is what code reads in the message, written in that
+    form (ADR 0030); and what was not said, or cannot be written in a form, is not a value."""
+
+    async def test_the_skill_is_given_the_form_it_declared(self) -> None:
+        found = await understood(
+            plan(
+                "meeting-add",
+                parameters={"title": "il pranzo", "day": "domani", "at": "sette e mezza"},
+            ),
+            candidates=[Candidate(stored_skill(MEETING, TENANT))],
+            message="metti il pranzo domani alle sette e mezza",
+        )
+
+        assert isinstance(found, Understood)
+        assert found.values == {"title": "il pranzo", "day": "+1d", "at": "07:30"}
+        assert found.left_out == ()
+
+    async def test_the_form_of_what_was_said_is_as_good_as_the_words(self) -> None:
+        found = await understood(
+            plan("meeting-add", parameters={"title": "pranzo", "day": "tomorrow", "at": "7:30"}),
+            candidates=[Candidate(stored_skill(MEETING, TENANT))],
+            message="metti il pranzo domani alle sette e mezza",
+        )
+
+        assert isinstance(found, Understood)
+        assert found.values == {"title": "pranzo", "day": "+1d", "at": "07:30"}
+
+    async def test_an_hour_that_was_not_said_is_left_out_and_the_rest_is_done(self) -> None:
+        found = await understood(
+            plan("meeting-add", parameters={"title": "pranzo", "day": "domani", "at": "12:00"}),
+            candidates=[Candidate(stored_skill(MEETING, TENANT))],
+            message="metti il pranzo domani",
+        )
+
+        assert isinstance(found, Understood)
+        assert found.values == {"title": "pranzo", "day": "+1d"}
+        assert found.left_out == ("at",)
+
+    async def test_a_day_that_the_skill_cannot_take_is_asked_for(self) -> None:
+        found = await understood(
+            plan("meeting-add", parameters={"title": "pranzo", "day": "lunedì"}),
+            candidates=[Candidate(stored_skill(MEETING, TENANT))],
+            message="metti il pranzo lunedì",
+        )
+
+        assert isinstance(found, NeedsMore)
+        assert (found.code, found.skill) == (ActCode.MISSING_VALUES, "meeting-add")
+        assert found.reply == "Mi serve ancora: day."
+        assert found.left_out == ("day",)
 
 
 class TestTheQuestionForAMissingValue:

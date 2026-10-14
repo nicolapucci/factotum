@@ -12,6 +12,11 @@ is the mistake of a small model (a level of 100 for "turn it up"). Given the wor
 the checks also ask that a number and a text can be found in them (``grounding``, ADR 0028): one
 that cannot is *unsaid*, which is not a value at all, so an optional one is left out and a required
 one is missing and the person is asked.
+
+A parameter that declares ``formats`` (a time, a length of time, a day: ADR 0030) is another case: a
+model writes the words, or a form of them, and what a skill is given is what code reads in the
+message, written in the form the skill declared (``formats.convert``). What the person did not say,
+and what cannot be written in any of the forms, is unsaid in the same way.
 """
 
 import math
@@ -19,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from factotum.actions.formats import convert
 from factotum.actions.grounding import says
 from factotum.contracts.skills import ParameterSpec, ParamType, ParamValue, SkillManifest
 
@@ -77,6 +83,15 @@ def check_specs(
         raw = given.get(name)
         if raw is None:
             continue
+        if spec.formats and said is not None:
+            written = convert(spec, raw, said)
+            if written is None:
+                unsaid.append(name)
+            elif _inside_bounds(spec, written):
+                values[name] = written
+            else:
+                invalid.append(name)
+            continue
         accepted = _accept(spec, raw)
         if accepted is None:
             invalid.append(name)
@@ -107,12 +122,16 @@ def _accept(spec: ParameterSpec, raw: Any) -> ParamValue | None:
             return None
     elif spec.enum is not None and value not in spec.enum:
         return None
+    return value if _inside_bounds(spec, value) else None
+
+
+def _inside_bounds(spec: ParameterSpec, value: ParamValue) -> bool:
     if isinstance(value, int | float) and not isinstance(value, bool):
         if spec.minimum is not None and value < spec.minimum:
-            return None
+            return False
         if spec.maximum is not None and value > spec.maximum:
-            return None
-    return value
+            return False
+    return True
 
 
 def _as_type(kind: ParamType, raw: Any) -> ParamValue | None:

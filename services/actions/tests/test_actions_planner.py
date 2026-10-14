@@ -23,7 +23,7 @@ from factotum.contracts.devices import ExternalDeviceRecord
 from factotum.contracts.errors import GatewayError, GatewayUnavailableError, ProviderTimeoutError
 from factotum.contracts.identity import Owner, Subject
 from factotum.contracts.models import ModelRole
-from factotum.contracts.skills import ParameterSpec, ParamType, SkillTarget
+from factotum.contracts.skills import ParameterSpec, ParamType, SkillManifest, SkillTarget
 from factotum.contracts.testing import make_external_device, make_tenant_id
 
 TENANT = make_tenant_id()
@@ -244,6 +244,38 @@ class TestWhatTheModelIsShown:
         assert view_of(WEATHER).values == ("place (text, required)",)
         assert view_of(VOLUME).values == ("level (whole number 0 to 100, required)",)
         assert view_of(GARAGE).values == ("action (open or close, required)",)
+
+    def test_a_value_with_formats_is_shown_as_what_it_is_and_not_as_the_form_it_is_taken_in(
+        self,
+    ) -> None:
+        """The model writes the words that were said, and code writes the form (ADR 0030): showing
+        it ``HH:mm`` would be asking it to do what code does."""
+        meeting = SkillManifest.model_validate(
+            {
+                "name": "meeting-add",
+                "description": "Add a meeting.",
+                "effect": "reversible",
+                "parameters": {
+                    "at": {"type": "string", "formats": [{"time": "HH:mm"}]},
+                    "length": {
+                        "type": "integer",
+                        "formats": [{"duration": "minutes"}],
+                        "description": "how long it lasts",
+                    },
+                    "day": {
+                        "type": "string",
+                        "formats": [{"date": "dd/MM/yy"}, {"in_days": "+{n}d"}],
+                    },
+                },
+                "required": ["at"],
+            }
+        )
+
+        assert view_of(meeting).values == (
+            "at (a time of day, as the person said it, required)",
+            "length (a length of time, as the person said it): how long it lasts",
+            "day (a day, as the person said it)",
+        )
 
     def test_what_a_value_is_for_is_said_after_its_kind(self) -> None:
         """A description is how a skill tells the small model that it is to copy the words that were

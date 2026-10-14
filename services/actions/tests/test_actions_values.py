@@ -5,6 +5,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from factotum.actions.formats import convert
 from factotum.actions.grounding import says
 from factotum.actions.values import MAX_TEXT_CHARS, check_specs, check_values
 from factotum.contracts.effects import Effect
@@ -304,3 +305,151 @@ def test_whatever_a_model_writes_what_is_kept_is_what_the_message_says(
     for name in checked.unsaid:
         if name in MANIFEST.required:
             assert name in checked.missing
+
+
+MEETING = SkillManifest(
+    name="meeting-add",
+    description="Adds a meeting to the calendar.",
+    effect=Effect.REVERSIBLE,
+    parameters={
+        "title": ParameterSpec(type=ParamType.STRING),
+        "day": ParameterSpec.model_validate(
+            {"type": "string", "formats": [{"date": "dd/MM/yy"}, {"in_days": "+{n}d"}]}
+        ),
+        "at": ParameterSpec.model_validate({"type": "string", "formats": [{"time": "HH:mm"}]}),
+        "length": ParameterSpec.model_validate(
+            {"type": "integer", "minimum": 5, "maximum": 480, "formats": [{"duration": "minutes"}]}
+        ),
+    },
+    required=("title", "day"),
+)
+
+
+class TestAValueWithAFormat:
+    """What a skill is given for a value that is said in words is what code reads in the message,
+    written in the form the skill declared (ADR 0030)."""
+
+    SAID = "metti il pranzo domani alle sette e mezza per un'ora"
+
+    def test_what_was_said_is_given_in_the_forms_the_skill_declared(self) -> None:
+        checked = check_values(
+            MEETING,
+            {"title": "il pranzo", "day": "domani", "at": "sette e mezza", "length": "un'ora"},
+            said=self.SAID,
+        )
+
+        assert checked.ok
+        assert checked.values == {
+            "title": "il pranzo",
+            "day": "+1d",
+            "at": "07:30",
+            "length": 60,
+        }
+        assert checked.unsaid == ()
+
+    def test_a_model_may_write_the_form_of_what_was_said_and_not_its_words(self) -> None:
+        checked = check_values(
+            MEETING,
+            {"title": "pranzo", "day": "tomorrow", "at": "7:30", "length": "60 minutes"},
+            said=self.SAID,
+        )
+
+        assert checked.values == {"title": "pranzo", "day": "+1d", "at": "07:30", "length": 60}
+
+    def test_an_optional_value_that_was_not_said_is_left_out_and_the_rest_is_kept(self) -> None:
+        checked = check_values(
+            MEETING, {"title": "pranzo", "day": "domani", "at": "9:00"}, said=self.SAID
+        )
+
+        assert checked.ok
+        assert checked.values == {"title": "pranzo", "day": "+1d"}
+        assert checked.unsaid == ("at",)
+        assert checked.asked_for == ()
+
+    def test_a_required_value_that_was_not_said_is_missing_and_the_person_is_asked(self) -> None:
+        checked = check_values(
+            MEETING, {"title": "pranzo", "day": "dopodomani"}, said="metti il pranzo domani"
+        )
+
+        assert not checked.ok
+        assert checked.missing == ("day",)
+        assert checked.unsaid == ("day",)
+        assert checked.asked_for == ("day",)
+
+    def test_a_day_that_no_form_of_the_skill_can_say_is_not_a_value(self) -> None:
+        """Monday is a day of the week, and the skill takes a date or a number of days."""
+        checked = check_values(
+            MEETING, {"title": "pranzo", "day": "lunedì"}, said="metti il pranzo lunedì"
+        )
+
+        assert checked.missing == ("day",)
+        assert checked.unsaid == ("day",)
+
+    def test_what_cannot_be_read_is_not_a_value_and_is_not_invalid_either(self) -> None:
+        """A model that wrote something that is no hour at all: left out, not asked about again."""
+        checked = check_values(
+            MEETING,
+            {"title": "pranzo", "day": "domani", "at": "now", "length": "a while"},
+            said=self.SAID,
+        )
+
+        assert checked.ok
+        assert checked.unsaid == ("at", "length")
+        assert checked.invalid == ()
+
+    @pytest.mark.parametrize(
+        ("written", "message"),
+        [("dieci ore", "registra per dieci ore"), ("un minuto", "registra per un minuto")],
+    )
+    def test_a_value_that_was_said_and_is_out_of_the_bounds_is_invalid(
+        self, written: str, message: str
+    ) -> None:
+        checked = check_values(
+            MEETING,
+            {"title": "pranzo", "day": "domani", "length": written},
+            said=f"pranzo domani {message}",
+        )
+
+        assert checked.invalid == ("length",)
+        assert checked.unsaid == ()
+        assert not checked.ok
+
+    def test_the_other_values_of_the_skill_are_checked_as_they_were(self) -> None:
+        checked = check_values(
+            MEETING, {"title": "il vaso", "day": "domani"}, said="metti il pranzo domani"
+        )
+
+        assert checked.unsaid == ("title",)
+        assert checked.missing == ("title",)
+
+    def test_a_value_that_is_set_up_and_not_said_is_not_converted(self) -> None:
+        checked = check_specs(
+            MEETING.parameters, (), {"at": "07:30", "day": "+1d", "title": "x", "length": 30}
+        )
+
+        assert checked.values == {"at": "07:30", "day": "+1d", "title": "x", "length": 30}
+
+    def test_a_formatted_value_that_is_not_given_is_missing_when_it_is_required(self) -> None:
+        checked = check_values(MEETING, {"title": "pranzo"}, said="metti il pranzo domani")
+
+        assert checked.missing == ("day",)
+        assert checked.unsaid == ()
+
+    @given(
+        st.dictionaries(
+            st.sampled_from(["title", "day", "at", "length", "extra"]),
+            st.one_of(st.none(), st.integers(-5, 600), st.text(max_size=20)),
+        ),
+        st.text(max_size=60),
+    )
+    def test_whatever_a_model_writes_what_a_skill_is_given_is_what_was_said(
+        self, given_values: dict[str, Any], message: str
+    ) -> None:
+        checked = check_values(MEETING, given_values, said=message)
+
+        for name in ("day", "at", "length"):
+            if name in checked.values:
+                spec = MEETING.parameters[name]
+                assert convert(spec, given_values[name], message) == checked.values[name]
+        assert not set(checked.values) & set(checked.unsaid)
+        assert not set(checked.invalid) & set(checked.unsaid)

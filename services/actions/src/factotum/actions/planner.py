@@ -33,6 +33,7 @@ from factotum.contracts.base import Contract
 from factotum.contracts.chat import ChatMessage, ChatRequest, MessageRole
 from factotum.contracts.devices import ExternalDeviceRecord, SystemDeviceRecord
 from factotum.contracts.errors import GatewayError, ProviderTimeoutError
+from factotum.contracts.formats import FormatGroup
 from factotum.contracts.identity import Owner
 from factotum.contracts.models import ModelRole
 from factotum.contracts.skills import ParameterSpec, ParamType, SkillManifest, SkillTarget
@@ -147,8 +148,19 @@ class PlanDevices:
     """The other system devices the caller may use."""
 
 
+_SAID_AS = {
+    FormatGroup.TIME: "a time of day, as the person said it",
+    FormatGroup.DURATION: "a length of time, as the person said it",
+    FormatGroup.DAY: "a day, as the person said it",
+}
+"""A value that has formats is shown as what it is and not as the form a skill takes it in: the
+model writes the words, and code writes the form (ADR 0030)."""
+
+
 def _value(name: str, spec: ParameterSpec, required: bool) -> str:
-    if spec.enum is not None:
+    if spec.formats:
+        kind = _SAID_AS[spec.formats[0].group]
+    elif spec.enum is not None:
         kind = " or ".join(str(choice) for choice in spec.enum)
     else:
         kind = {

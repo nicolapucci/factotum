@@ -148,8 +148,9 @@ class ParameterSpec(Contract):
     formats: tuple[ValueFormat, ...] | None = Field(default=None, min_length=1, max_length=5)
     """The forms the skill takes a value that is said in words in (a time, a length of time, a day:
     ADR 0030). The person says *sette e mezza*; the skill is given ``07:30``, if that is the form it
-    declared. More than one is a skill that takes the same thing in more than one way, and the
-    system writes it in the first that fits what was said."""
+    declared. More than one is a skill that takes the same thing in more than one way (a day as a
+    date or as a number of days from today), and the system writes what was said in the one that
+    can say it."""
 
     @field_validator("formats", mode="before")
     @classmethod
