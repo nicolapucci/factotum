@@ -1,4 +1,4 @@
-"""The vocabulary of commands a system device understands (version 5).
+"""The vocabulary of commands a system device understands (version 6).
 
 This is the single definition every other piece derives from: the server-side handle
 (``factotum.devices.SystemDevice``), the command builders offered to skills and the drivers that
@@ -23,11 +23,12 @@ from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.cards import Card
 
-COMMAND_VOCABULARY_VERSION = 5
+COMMAND_VOCABULARY_VERSION = 6
 """Version 2 added ``play_audio``, version 3 added ``adjust_volume``, version 4 added ``set_mute``
-and ``get_state``, and the ``data`` that the result of a command may carry, and version 5 added the
+and ``get_state``, and the ``data`` that the result of a command may carry, version 5 added the
 timers and the alarms of a device: ``set_timer``, ``cancel_timer``, ``set_alarm`` and
-``cancel_alarm``."""
+``cancel_alarm``, and version 6 what changes an alarm that is set and what stops what rings:
+``postpone_alarm``, ``move_alarm`` and ``stop_ringing``."""
 
 MAX_SPOKEN_CHARS = 2000
 """The most a command says: a text to speak, or the words of a clip."""
@@ -258,6 +259,67 @@ class CancelAlarm(BaseCommand):
         return self
 
 
+class PostponeAlarm(BaseCommand):
+    """Put an alarm off (ADR 0029). The one at ``hour`` and ``minute`` if a person said it; else the
+    one that is ringing; else the next to ring. An alarm that is ringing is silenced and rings again
+    ``seconds`` from now, as a snooze does; one that has not rung yet is moved ``seconds`` later
+    than it was. A person who does not say by how much gets the length that the device has for it
+    (ADR 0028: what a snooze is belongs to the device, and the skill has none to tell). It answers
+    with the alarms as they are now.
+
+    The platform's, as the other commands about time."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["postpone_alarm"] = "postpone_alarm"
+    seconds: int | None = Field(default=None, ge=1, le=MAX_TIMER_SECONDS)
+    hour: int | None = Field(default=None, ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
+
+    @model_validator(mode="after")
+    def _is_an_hour_and_a_minute(self) -> Self:
+        if (self.hour is None) != (self.minute is None):
+            raise ValueError("an alarm is named by its hour and its minute together")
+        return self
+
+
+class MoveAlarm(BaseCommand):
+    """Change the hour of an alarm (ADR 0029). The alarm at ``from_hour`` and ``from_minute`` if a
+    person said it; else the one that is ringing; else the next to ring. It is moved to ``hour``
+    and ``minute`` on ``day``, which the device works out as it does for ``set_alarm``: a moment
+    that has gone by, or a date that never comes, is not a move, and the alarm stays where it was.
+    The device answers with the alarms as they are now, or says why it moved none.
+
+    The platform's, as the other commands about time."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["move_alarm"] = "move_alarm"
+    hour: int = Field(ge=0, le=23)
+    minute: int = Field(ge=0, le=59)
+    day: AlarmDay = Field(default_factory=AlarmDay)
+    from_hour: int | None = Field(default=None, ge=0, le=23)
+    from_minute: int | None = Field(default=None, ge=0, le=59)
+
+    @model_validator(mode="after")
+    def _is_an_hour_and_a_minute(self) -> Self:
+        if (self.from_hour is None) != (self.from_minute is None):
+            raise ValueError("an alarm is named by its hour and its minute together")
+        return self
+
+
+class StopRinging(BaseCommand):
+    """Stop what is ringing (ADR 0029): every timer and every alarm that is up, and none that is
+    not. It is what a person means by *enough*, without saying which of them it is. The device
+    answers with what it stopped, and with nothing when nothing rang.
+
+    The platform's, as the other commands about time."""
+
+    requires: ClassVar[Capability] = Capability.AUDIO_OUT
+
+    name: Literal["stop_ringing"] = "stop_ringing"
+
+
 class ShowCard(BaseCommand):
     requires: ClassVar[Capability] = Capability.DISPLAY
 
@@ -294,6 +356,9 @@ COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
     CancelTimer,
     SetAlarm,
     CancelAlarm,
+    PostponeAlarm,
+    MoveAlarm,
+    StopRinging,
     ShowCard,
     ClearDisplay,
     SetLed,
@@ -314,6 +379,9 @@ DeviceCommand = Annotated[
     | CancelTimer
     | SetAlarm
     | CancelAlarm
+    | PostponeAlarm
+    | MoveAlarm
+    | StopRinging
     | ShowCard
     | ClearDisplay
     | SetLed,
@@ -328,6 +396,9 @@ PLATFORM_COMMAND_MODELS: tuple[type[BaseCommand], ...] = (
     CancelTimer,
     SetAlarm,
     CancelAlarm,
+    PostponeAlarm,
+    MoveAlarm,
+    StopRinging,
 )
 """What only the skills of the platform may give: a clip that nobody but the platform makes (a ring
 carries one), and what a device answers to a question or says of a timer, which a script or a model

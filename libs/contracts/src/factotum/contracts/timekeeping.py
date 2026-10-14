@@ -146,6 +146,55 @@ class AlarmsCancelled(Contract):
         return _is_civil(moment)
 
 
+class AlarmsPostponed(Contract):
+    """What a device answers to ``postpone_alarm``: the alarms it put off, as they are now (none,
+    when it had none to put off, or none that was named)."""
+
+    now: datetime
+    postponed: tuple[AlarmInfo, ...] = ()
+
+    @field_validator("now")
+    @classmethod
+    def _now_is_civil(cls, moment: datetime) -> datetime:
+        return _is_civil(moment)
+
+
+class AlarmsMoved(Contract):
+    """What a device answers to ``move_alarm``: the alarms it moved, as they are now, or why it
+    moved none: there was none to move (``none``), the moment has gone by (``past``) or the date
+    never comes (``no_such_day``)."""
+
+    now: datetime
+    moved: tuple[AlarmInfo, ...] = ()
+    reason: Literal["none", "past", "no_such_day"] | None = None
+
+    @field_validator("now")
+    @classmethod
+    def _now_is_civil(cls, moment: datetime) -> datetime:
+        return _is_civil(moment)
+
+    @model_validator(mode="after")
+    def _is_one_or_the_other(self) -> Self:
+        if bool(self.moved) == (self.reason is not None):
+            raise ValueError("alarms were moved, or it says why none was")
+        return self
+
+
+class RingsStopped(Contract):
+    """What a device answers to ``stop_ringing``: the timers and the alarms it stopped, as they
+    were when they rang (none, when nothing was ringing). The wall is in it so that an answer that
+    says nothing is not taken for one that says that nothing rang."""
+
+    now: datetime
+    timers: tuple[TimerInfo, ...] = ()
+    alarms: tuple[AlarmInfo, ...] = ()
+
+    @field_validator("now")
+    @classmethod
+    def _now_is_civil(cls, moment: datetime) -> datetime:
+        return _is_civil(moment)
+
+
 def data_of(answer: Contract) -> dict[str, JsonValue]:
     """An answer as the ``data`` of a result."""
     return answer.model_dump(mode="json")

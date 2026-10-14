@@ -14,11 +14,14 @@ from factotum.contracts.commands import (
     CommandStatus,
     DeviceCommand,
     GetState,
+    MoveAlarm,
     PlayAudio,
+    PostponeAlarm,
     SetAlarm,
     SetTimer,
     SetVolume,
     Speak,
+    StopRinging,
 )
 from factotum.contracts.edge import Ack, Feature
 from factotum.contracts.errors import GatewayUnavailableError, TtsNotConfiguredError
@@ -349,7 +352,14 @@ class TestARingAndAFeature:
         async with Rig(speech=FakeSpeech()) as rig:
             connected = await rig.connect()
 
-            others: list[DeviceCommand] = [CancelTimer(), CancelAlarm(), GetState()]
+            others: list[DeviceCommand] = [
+                CancelTimer(),
+                CancelAlarm(),
+                PostponeAlarm(),
+                MoveAlarm(hour=8, minute=0),
+                StopRinging(),
+                GetState(),
+            ]
             for number, command in enumerate(others, 1):
                 asked = asyncio.create_task(connected.session.command(command))
                 [*_, sent] = await accepting(connected, number)

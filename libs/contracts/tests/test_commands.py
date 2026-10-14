@@ -28,9 +28,11 @@ from factotum.contracts.commands import (
     GetState,
     LedPattern,
     MediaKind,
+    MoveAlarm,
     Pause,
     PlayAudio,
     PlayUrl,
+    PostponeAlarm,
     Resume,
     SetAlarm,
     SetLed,
@@ -41,6 +43,7 @@ from factotum.contracts.commands import (
     SkillCommand,
     Speak,
     Stop,
+    StopRinging,
     VolumeDirection,
     Weekday,
 )
@@ -76,6 +79,12 @@ EXAMPLES: list[tuple[BaseCommand, Capability]] = [
         Capability.AUDIO_OUT,
     ),
     (CancelAlarm(hour=7, minute=30), Capability.AUDIO_OUT),
+    (PostponeAlarm(seconds=600, hour=7, minute=30), Capability.AUDIO_OUT),
+    (
+        MoveAlarm(hour=8, minute=0, day=AlarmDay(in_days=1), from_hour=7, from_minute=30),
+        Capability.AUDIO_OUT,
+    ),
+    (StopRinging(), Capability.AUDIO_OUT),
     (ShowCard(card=CARD), Capability.DISPLAY),
     (ClearDisplay(), Capability.DISPLAY),
     (SetLed(pattern=LedPattern.PULSE, color="#00ff00"), Capability.LED),
@@ -108,8 +117,9 @@ def test_command_names_are_unique_snake_case_identifiers() -> None:
 
 def test_the_vocabulary_is_versioned() -> None:
     # play_audio is what version 2 added, adjust_volume what version 3 did, set_mute, get_state and
-    # the data of a result what version 4 did, and the timers and the alarms version 5
-    assert COMMAND_VOCABULARY_VERSION == 5
+    # the data of a result what version 4 did, the timers and the alarms version 5, and what puts an
+    # alarm off or moves it, and stops what rings, version 6
+    assert COMMAND_VOCABULARY_VERSION == 6
 
 
 @pytest.mark.parametrize(("command", "_"), EXAMPLES, ids=lambda x: type(x).__name__)
@@ -137,7 +147,17 @@ class TestWhatASkillMayGive:
     def test_it_is_the_vocabulary_but_for_what_only_the_platform_makes(self) -> None:
         union = get_args(SkillCommand)[0]
 
-        platform = {PlayAudio, GetState, SetTimer, CancelTimer, SetAlarm, CancelAlarm}
+        platform = {
+            PlayAudio,
+            GetState,
+            SetTimer,
+            CancelTimer,
+            SetAlarm,
+            CancelAlarm,
+            PostponeAlarm,
+            MoveAlarm,
+            StopRinging,
+        }
 
         assert set(get_args(union)) == set(SKILL_COMMAND_MODELS)
         assert set(COMMAND_MODELS) - set(SKILL_COMMAND_MODELS) == platform
@@ -187,6 +207,9 @@ class TestWhatASkillMayGive:
             CancelTimer(),
             SetAlarm(hour=7, minute=0, text="Up.", audio=CLIP),
             CancelAlarm(),
+            PostponeAlarm(),
+            MoveAlarm(hour=8, minute=0),
+            StopRinging(),
         ],
         ids=lambda command: command.name,
     )
@@ -194,7 +217,8 @@ class TestWhatASkillMayGive:
         self, command: BaseCommand
     ) -> None:
         """A ring is a clip that nobody but the platform makes, and what a device says of its timers
-        is never given to a script: so no skill of a person can set, cancel or ask for one."""
+        is never given to a script: so no skill of a person can set, change, cancel or ask for
+        one."""
         said = command.model_dump(mode="json")
 
         with pytest.raises(ValidationError):
@@ -302,6 +326,57 @@ class TestTimersAndAlarms:
         ]:
             with pytest.raises(ValidationError):
                 CancelAlarm.model_validate({"name": "cancel_alarm", **said})
+
+    def test_an_alarm_to_put_off_says_by_how_much_only_if_a_person_did(self) -> None:
+        assert PostponeAlarm().seconds is None  # the length of a snooze is the device's
+        assert command_adapter.validate_python({"name": "postpone_alarm"}) == PostponeAlarm()
+        for seconds in [1, 600, MAX_TIMER_SECONDS]:
+            assert PostponeAlarm(seconds=seconds).seconds == seconds
+        for seconds in [0, -1, MAX_TIMER_SECONDS + 1]:
+            with pytest.raises(ValidationError):
+                PostponeAlarm(seconds=seconds)
+
+    def test_an_alarm_to_put_off_or_move_is_named_by_its_hour_and_its_minute_together(
+        self,
+    ) -> None:
+        assert PostponeAlarm(hour=7, minute=0).minute == 0
+        assert MoveAlarm(hour=8, minute=0, from_hour=7, from_minute=0).from_minute == 0
+        for said in [
+            {"hour": 7},
+            {"minute": 30},
+            {"hour": 24, "minute": 0},
+            {"hour": 7, "minute": 60},
+        ]:
+            with pytest.raises(ValidationError):
+                PostponeAlarm.model_validate({"name": "postpone_alarm", **said})
+        for said in [
+            {"from_hour": 7},
+            {"from_minute": 30},
+            {"from_hour": 24, "from_minute": 0},
+            {"from_hour": 7, "from_minute": 60},
+        ]:
+            with pytest.raises(ValidationError):
+                MoveAlarm.model_validate({"name": "move_alarm", "hour": 8, "minute": 0, **said})
+
+    def test_an_alarm_is_moved_to_an_hour_and_a_minute_on_a_day_said_as_a_person_says_it(
+        self,
+    ) -> None:
+        moved = MoveAlarm(hour=8, minute=15, day=AlarmDay(weekday=Weekday.MONDAY))
+
+        assert (moved.hour, moved.minute, moved.day.weekday) == (8, 15, Weekday.MONDAY)
+        assert MoveAlarm(hour=8, minute=0).day == AlarmDay()  # the next time the hour comes
+        assert MoveAlarm(hour=8, minute=0).from_hour is None  # and which alarm is the device's
+        for hour, minute in [(24, 0), (-1, 0), (8, 60), (8, -1)]:
+            with pytest.raises(ValidationError):
+                MoveAlarm(hour=hour, minute=minute)
+        with pytest.raises(ValidationError):
+            MoveAlarm.model_validate({"name": "move_alarm", "minute": 0})  # an hour is needed
+
+    def test_what_rings_is_stopped_without_saying_what_it_is(self) -> None:
+        assert set(StopRinging.model_fields) == {"name"}
+        assert command_adapter.validate_python({"name": "stop_ringing"}) == StopRinging()
+        with pytest.raises(ValidationError):
+            StopRinging.model_validate({"name": "stop_ringing", "seconds": 1})
 
     def test_a_ring_travels_as_base64_in_json_like_any_clip(self) -> None:
         said = SetAlarm(hour=6, minute=45, text="Up.", audio=CLIP).model_dump(mode="json")

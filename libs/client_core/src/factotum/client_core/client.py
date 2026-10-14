@@ -35,8 +35,6 @@ from factotum.client_core.timekeeping import Ring, TimeCommand, Timekeeper
 from factotum.contracts.audio import AudioPayload, pcm_of
 from factotum.contracts.capabilities import Capability
 from factotum.contracts.commands import (
-    CancelAlarm,
-    CancelTimer,
     CommandResult,
     CommandStatus,
     DeviceCommand,
@@ -343,7 +341,7 @@ class DeviceClient:
             return CommandResult(
                 status=CommandStatus.UNSUPPORTED, detail="this device does not play clips"
             )
-        if isinstance(command, SetTimer | CancelTimer | SetAlarm | CancelAlarm):
+        if isinstance(command, TimeCommand):
             return await self._keep_time(command)
         if isinstance(command, GetState):
             return await self._how_it_is(command)

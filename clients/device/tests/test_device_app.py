@@ -32,6 +32,8 @@ from factotum.contracts.commands import (
     CommandStatus,
     GetState,
     PlayAudio,
+    PostponeAlarm,
+    SetAlarm,
     SetMute,
     SetTimer,
     SetVolume,
@@ -600,6 +602,34 @@ class TestItsTimers:
         assert ring.tolist() == [2000] * 200  # a quarter of the amplitude: half the volume
         assert announcement.tolist() == [0] * 200  # it is muted, and nothing else is
         assert hardware.speaker.muted
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    async def test_an_alarm_is_put_off_by_the_snooze_that_the_settings_of_the_device_give(
+        self,
+    ) -> None:
+        backend, presses, clock = FakeBackend(), KeyPresses(), FakeClock()
+        edge, renderer = Edge(), RecordingRenderer()
+        config = a_config(timekeeping={"snooze_minutes": 5})
+        hardware = build_hardware(config, backend, renderer, presses=presses)
+        edge.connection.say(ready(features=frozenset({Feature.PLAY_AUDIO})))
+        running = asyncio.create_task(
+            run_device(config, hardware, renderer, opening=edge.open, sleep=forever, clock=clock)
+        )
+        await edge.connection.wait_for("hello")
+        alarm = SetAlarm(hour=22, minute=1, text="Up.", audio=self.RING)
+        edge.connection.say(CommandFrame(id="c1", command=alarm))
+        await edge.connection.wait_for("ack", count=1)
+        await clock.advance(60)
+        await until(lambda: backend.outputs and "stop" in backend.outputs[0].calls)  # it rings
+
+        edge.connection.say(CommandFrame(id="c2", command=PostponeAlarm()))
+        acks = await edge.connection.wait_for("ack", count=2)
+
+        data = acks[1].result.data
+        assert data is not None
+        assert [alarm["at"] for alarm in data["postponed"]] == ["2026-10-13T22:06:00"]
         running.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await running

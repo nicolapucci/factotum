@@ -196,7 +196,12 @@ async def run_device(
     )
 
     keeper = (
-        Timekeeper(renderer, clock=clock, output=hardware.speaker)
+        Timekeeper(
+            renderer,
+            clock=clock,
+            output=hardware.speaker,
+            snooze_s=config.timekeeping.snooze_minutes * 60,
+        )
         if hardware.speaker is not None
         else None
     )

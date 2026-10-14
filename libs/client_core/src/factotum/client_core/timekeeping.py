@@ -13,6 +13,9 @@ A timer is kept on the clock that only goes forward (the wall may be set to anot
 runs) and an alarm on the wall (``moments``: it rings at seven on the clock of the place, whatever
 that clock did in between). What a device holds is lost when its program stops, which the first
 version says plainly rather than pretends otherwise, and nothing repeats: an alarm is for one day.
+What is set can be changed and stopped (ADR 0029): an alarm is put off (a snooze, when it rings),
+moved to another hour, and whatever rings is stopped at once, all by the device, which is the one
+that knows which alarm a person means and how long its own snooze is.
 
 The keeper is the device's and not a connection's: a client comes and goes with the connection,
 the keeper stays, and the client that is connected lends it its way of saying a clip (``attach``)
@@ -26,7 +29,7 @@ import math
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from pydantic import JsonValue
@@ -39,8 +42,11 @@ from factotum.contracts.commands import (
     CancelAlarm,
     CancelTimer,
     CommandResult,
+    MoveAlarm,
+    PostponeAlarm,
     SetAlarm,
     SetTimer,
+    StopRinging,
 )
 from factotum.contracts.timekeeping import (
     MAX_ALARMS,
@@ -48,6 +54,9 @@ from factotum.contracts.timekeeping import (
     AlarmInfo,
     AlarmsCancelled,
     AlarmSet,
+    AlarmsMoved,
+    AlarmsPostponed,
+    RingsStopped,
     TimerInfo,
     TimersCancelled,
     TimerSet,
@@ -57,7 +66,9 @@ from factotum.contracts.timekeeping import (
 
 logger = logging.getLogger("factotum.client_core")
 
-TimeCommand = SetTimer | CancelTimer | SetAlarm | CancelAlarm
+TimeCommand = (
+    SetTimer | CancelTimer | SetAlarm | CancelAlarm | PostponeAlarm | MoveAlarm | StopRinging
+)
 """What the keeper does: the commands about time."""
 
 RING_EVERY_S = 8.0
@@ -66,6 +77,10 @@ RING_EVERY_S = 8.0
 RING_FOR_S = 180.0
 """How long a timer or an alarm rings, if nobody stops it: a device in an empty house does not ring
 for ever."""
+
+DEFAULT_SNOOZE_S = 600
+"""How long an alarm is put off by when a person does not say by how much: the device's own snooze,
+which its settings may change (``timekeeping.snooze_minutes`` of the device application)."""
 
 TICK_S = 1.0
 """The most that the keeper sleeps: it looks at both clocks at least this often, so that a wall that
@@ -150,12 +165,14 @@ class Timekeeper:
         output: VoiceOutput | None = None,
         ring_every_s: float = RING_EVERY_S,
         ring_for_s: float = RING_FOR_S,
+        snooze_s: int = DEFAULT_SNOOZE_S,
     ) -> None:
         self._renderer = renderer
         self._clock: Clock = clock or SystemClock()
         self._output = output
         self._ring_every_s = ring_every_s
         self._ring_for_s = ring_for_s
+        self._snooze_s = snooze_s
         self._sayer: Sayer | None = None
         self._timers: list[_Timer] = []
         self._alarms: list[_Alarm] = []
@@ -190,6 +207,12 @@ class Timekeeper:
                 return self._set_alarm(command)
             case CancelAlarm():
                 return self._cancel_alarm(command)
+            case PostponeAlarm():
+                return self._postpone_alarm(command)
+            case MoveAlarm():
+                return self._move_alarm(command)
+            case StopRinging():
+                return self._stop_ringing()
 
     def state(self) -> dict[str, JsonValue]:
         """How the device is, as far as time goes: what the wall shows, and what it holds."""
@@ -262,13 +285,7 @@ class Timekeeper:
 
     def _cancel_alarm(self, command: CancelAlarm) -> CommandResult:
         """The alarm named by its hour, else the ones that ring, else the next to ring."""
-        named = [
-            alarm
-            for alarm in self._by_moment()
-            if command.hour is None
-            or (alarm.at.hour, alarm.at.minute) == (command.hour, command.minute)
-        ]
-        chosen = [alarm for alarm in named if alarm.ringing_since is not None] or named[:1]
+        chosen = self._chosen_alarms(command.hour, command.minute)
         info = tuple(self._alarm_info(alarm) for alarm in chosen)
         for alarm in chosen:
             self._alarms.remove(alarm)
@@ -278,6 +295,67 @@ class Timekeeper:
             now=self._clock.wall(), cancelled=info, remaining=len(self._alarms)
         )
         return CommandResult.ok(data_of(answer))
+
+    def _postpone_alarm(self, command: PostponeAlarm) -> CommandResult:
+        """The alarm named by its hour, else the ones that ring, else the next to ring, rings later:
+        one that rings is silenced and rings again after the delay (a snooze), one that has not
+        rung is moved by it. A person who did not say by how much gets the snooze of the device."""
+        wall = self._clock.wall()
+        delay = timedelta(seconds=command.seconds or self._snooze_s)
+        chosen = self._chosen_alarms(command.hour, command.minute)
+        for alarm in chosen:
+            alarm.at = (wall if alarm.ringing_since is not None else alarm.at) + delay
+            self._silence(alarm)
+            self._renderer.event(f"alarm {alarm.id} put off to {alarm.at:%Y-%m-%d %H:%M}")
+        answer = AlarmsPostponed(now=wall, postponed=tuple(self._alarm_info(a) for a in chosen))
+        return CommandResult.ok(data_of(answer))
+
+    def _move_alarm(self, command: MoveAlarm) -> CommandResult:
+        """The alarm named by its hour, else the ones that ring, else the next to ring, is moved to
+        the next time that the new hour and day fit. A moment that has gone by, or a date that never
+        comes, moves nothing: the alarm stays where it was."""
+        wall = self._clock.wall()
+        chosen = self._chosen_alarms(command.from_hour, command.from_minute)
+        if not chosen:
+            return CommandResult.ok(data_of(AlarmsMoved(now=wall, reason="none")))
+        moment = next_moment(wall, command.hour, command.minute, command.day)
+        if isinstance(moment, str):
+            return CommandResult.ok(data_of(AlarmsMoved(now=wall, reason=moment)))
+        for alarm in chosen:
+            alarm.at = moment
+            self._silence(alarm)
+            self._renderer.event(f"alarm {alarm.id} moved to {moment:%Y-%m-%d %H:%M}")
+        answer = AlarmsMoved(now=wall, moved=tuple(self._alarm_info(a) for a in chosen))
+        return CommandResult.ok(data_of(answer))
+
+    def _stop_ringing(self) -> CommandResult:
+        """Whatever rings is stopped, a timer or an alarm; what has not rung is left alone."""
+        mono = self._clock.monotonic()
+        timers = [timer for timer in self._by_due() if timer.ringing_since is not None]
+        alarms = [alarm for alarm in self._by_moment() if alarm.ringing_since is not None]
+        answer = RingsStopped(
+            now=self._clock.wall(),
+            timers=tuple(self._info_of(timer, mono) for timer in timers),
+            alarms=tuple(self._alarm_info(alarm) for alarm in alarms),
+        )
+        for timer in timers:
+            self._timers.remove(timer)
+            self._stop(timer)
+            self._renderer.event(f"timer {timer.id} stopped")
+        for alarm in alarms:
+            self._alarms.remove(alarm)
+            self._stop(alarm)
+            self._renderer.event(f"alarm {alarm.id} stopped")
+        return CommandResult.ok(data_of(answer))
+
+    def _chosen_alarms(self, hour: int | None, minute: int | None) -> list[_Alarm]:
+        """The alarm named by its hour, else the ones that ring, else the next to ring."""
+        named = [
+            alarm
+            for alarm in self._by_moment()
+            if hour is None or (alarm.at.hour, alarm.at.minute) == (hour, minute)
+        ]
+        return [alarm for alarm in named if alarm.ringing_since is not None] or named[:1]
 
     # ---- what is kept and what is shown of it ---------------------------------------------------
 
@@ -304,6 +382,12 @@ class Timekeeper:
         saying = self._saying
         if saying is not None and saying[0] is item:
             saying[1].cancel()
+
+    def _silence(self, item: _Item) -> None:
+        """What rang rings no more, and the ring that is being said is cut. The item is not given
+        up on: it rings when its new moment comes."""
+        item.ringing_since, item.next_ring = None, 0.0
+        self._stop(item)
 
     # ---- keeping the time ------------------------------------------------------------
 

@@ -24,13 +24,19 @@ from factotum.contracts.commands import (
     CommandResult,
     CommandStatus,
     GetState,
+    MoveAlarm,
+    PostponeAlarm,
     SetAlarm,
     SetTimer,
+    StopRinging,
 )
 from factotum.contracts.edge import CommandFrame, Feature, TurnEnded, TurnStatus
 from factotum.contracts.timekeeping import (
     AlarmsCancelled,
     AlarmSet,
+    AlarmsMoved,
+    AlarmsPostponed,
+    RingsStopped,
     TimersCancelled,
     TimerSet,
     TimeState,
@@ -138,6 +144,62 @@ class TestSettingAndCancelling:
         await running
 
 
+class TestChangingAndStopping:
+    async def test_an_alarm_is_put_off_and_the_device_answers_with_it_as_it_is_now(self) -> None:
+        rig = ClientRig("speaker", voice_output=FakeVoiceOutput())
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetAlarm(hour=7, minute=0, text="Up.", audio=clip()), "c1")
+
+        result = await ask(rig, PostponeAlarm(seconds=900), "c2")
+
+        assert result.succeeded
+        answer = answer_in(AlarmsPostponed, result.data)
+        assert answer is not None
+        assert [alarm.at for alarm in answer.postponed] == [
+            datetime(2026, 10, 14, 7, 15)  # noqa: DTZ001 - civil time
+        ]
+        assert rig.hands.commands == []  # it is the keeper's, not the hands'
+        rig.connection.drop()
+        await running
+
+    async def test_an_alarm_is_moved_and_the_day_is_the_devices_to_work_out(self) -> None:
+        rig = ClientRig("speaker", voice_output=FakeVoiceOutput())
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetAlarm(hour=7, minute=0, text="Up.", audio=clip()), "c1")
+
+        moved = await ask(rig, MoveAlarm(hour=8, minute=0, day=AlarmDay(in_days=1)), "c2")
+        refused = await ask(rig, MoveAlarm(hour=7, minute=0, day=AlarmDay(in_days=0)), "c3")
+
+        said = answer_in(AlarmsMoved, moved.data)
+        assert said is not None
+        assert [alarm.at for alarm in said.moved] == [
+            datetime(2026, 10, 14, 8, 0)  # noqa: DTZ001 - civil time
+        ]
+        again = answer_in(AlarmsMoved, refused.data)
+        assert again is not None
+        assert again.reason == "past"  # it is evening: seven is over
+        assert rig.hands.commands == []
+        rig.connection.drop()
+        await running
+
+    async def test_what_rings_is_stopped_and_nothing_else(self) -> None:
+        rig = ClientRig("speaker", voice_output=FakeVoiceOutput())
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetTimer(seconds=60, text="Done.", audio=clip()), "c1")
+        await ask(rig, SetTimer(seconds=600, text="Later.", audio=clip()), "c2")
+        await rig.clock.advance(60)  # the first is up; the second is not
+
+        result = await ask(rig, StopRinging(), "c3")
+
+        assert result.succeeded
+        answer = answer_in(RingsStopped, result.data)
+        assert answer is not None
+        assert [timer.seconds for timer in answer.timers] == [60]
+        assert rig.hands.commands == []
+        rig.connection.drop()
+        await running
+
+
 class TestHowTheDeviceIs:
     async def test_it_says_what_its_hands_have_and_what_the_keeper_holds(self) -> None:
         hands = RecordingCommands(
@@ -232,6 +294,22 @@ class TestADeviceThatKeepsNoTime:
         assert timer_.status is CommandStatus.UNSUPPORTED
         assert alarm.status is CommandStatus.UNSUPPORTED
         assert rig.shown.of("violation") == []
+        rig.connection.drop()
+        await running
+
+    async def test_nor_is_changing_or_stopping_them(self) -> None:
+        rig = ClientRig("screen")
+        running = await rig.running()
+
+        results = [
+            await ask(rig, PostponeAlarm(), "c1"),
+            await ask(rig, MoveAlarm(hour=8, minute=0), "c2"),
+            await ask(rig, StopRinging(), "c3"),
+        ]
+
+        assert [result.status for result in results] == [CommandStatus.UNSUPPORTED] * 3
+        assert rig.shown.of("violation") == []
+        assert rig.hands.commands == []  # the hands do not keep time either
         rig.connection.drop()
         await running
 

@@ -21,9 +21,11 @@ from factotum.contracts.commands import (
     GetState,
     LedPattern,
     MediaKind,
+    MoveAlarm,
     Pause,
     PlayAudio,
     PlayUrl,
+    PostponeAlarm,
     Resume,
     SetAlarm,
     SetLed,
@@ -33,6 +35,7 @@ from factotum.contracts.commands import (
     ShowCard,
     Speak,
     Stop,
+    StopRinging,
     VolumeDirection,
     Weekday,
 )
@@ -84,6 +87,21 @@ CALLS: list[tuple[str, Call, DeviceCommand]] = [
         SetAlarm(hour=7, minute=30, day=AlarmDay(weekday=Weekday.MONDAY), text="Up.", audio=CLIP),
     ),
     ("cancel_alarm", lambda d: d.cancel_alarm(7, 30), CancelAlarm(hour=7, minute=30)),
+    (
+        "postpone_alarm",
+        lambda d: d.postpone_alarm(300, 7, 30),
+        PostponeAlarm(seconds=300, hour=7, minute=30),
+    ),
+    (
+        "move_alarm",
+        lambda d: d.move_alarm(
+            8, 15, day=AlarmDay(weekday=Weekday.MONDAY), from_hour=7, from_minute=30
+        ),
+        MoveAlarm(
+            hour=8, minute=15, day=AlarmDay(weekday=Weekday.MONDAY), from_hour=7, from_minute=30
+        ),
+    ),
+    ("stop_ringing", lambda d: d.stop_ringing(), StopRinging()),
     ("show_card", lambda d: d.show_card(CARD), ShowCard(card=CARD)),
     ("clear_display", lambda d: d.clear_display(), ClearDisplay()),
     (
@@ -231,11 +249,15 @@ class TestInvalidArguments:
         await device.cancel_timer()
         await device.cancel_alarm()
         await device.set_alarm(6, 45, "Up.", CLIP)
+        await device.postpone_alarm()
+        await device.move_alarm(8, 0)
 
         assert device.sent == [
             CancelTimer(),
             CancelAlarm(),
             SetAlarm(hour=6, minute=45, text="Up.", audio=CLIP),
+            PostponeAlarm(),  # how long is the device's own to say
+            MoveAlarm(hour=8, minute=0),
         ]
 
     @pytest.mark.parametrize("seconds", [0, 86_401])

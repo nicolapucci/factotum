@@ -39,6 +39,10 @@ listening:
   max_seconds: 12                          # the most that one thing said may last
   listen_while_answering: false            # true only with headphones: a speaker hears itself
 
+timekeeping:
+  snooze_minutes: 10                       # how long an alarm is put off when nobody says for
+                                           # how long: the snooze of this device
+
 reconnect:
   first_s: 1                               # a device that loses the edge asks again after this,
   max_s: 30                                # and after twice as long each time, up to this

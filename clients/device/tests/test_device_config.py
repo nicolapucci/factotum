@@ -34,10 +34,16 @@ class TestWhatTheDefaultsAre:
         assert config.device.capabilities == {Capability.AUDIO_IN, Capability.AUDIO_OUT}
         assert (config.listening.mode, config.audio.volume) == (Mode.PUSH_TO_TALK, 100)
         assert config.audio.volume_step == 10
+        assert config.timekeeping.snooze_minutes == 10  # the snooze is the device's to say
         assert (config.audio.input_device, config.audio.output_device) == (None, None)
         assert config.listening.listen_while_answering is False
         assert (config.reconnect.first_s, config.reconnect.max_s) == (1.0, 30.0)
         assert config.log_level == "INFO"
+
+    def test_the_snooze_may_be_set_for_the_device(self) -> None:
+        config = parse_config(MINIMAL + "timekeeping:\n  snooze_minutes: 5\n", {})
+
+        assert config.timekeeping.snooze_minutes == 5
 
     def test_the_credential_is_given_back_and_is_not_written_where_a_config_is_shown(self) -> None:
         config = parse_config(MINIMAL, {})
@@ -236,6 +242,9 @@ class TestWhatCannotBe:
             (MINIMAL + "audio:\n  volume: 150\n", "audio.volume"),
             (MINIMAL + "audio:\n  volume_step: 0\n", "audio.volume_step"),
             (MINIMAL + "audio:\n  volume_step: 101\n", "audio.volume_step"),
+            (MINIMAL + "timekeeping:\n  snooze_minutes: 0\n", "timekeeping.snooze_minutes"),
+            (MINIMAL + "timekeeping:\n  snooze_minutes: 1441\n", "timekeeping.snooze_minutes"),
+            (MINIMAL + "timekeeping:\n  snooze: 5\n", "timekeeping.snooze"),
             (MINIMAL + "edge:\n  url: http://edge\n", "edge.url"),
             (MINIMAL + "listening:\n  mode: shouting\n", "listening.mode"),
             (MINIMAL + "listening:\n  silence_seconds: 0\n", "listening.silence_seconds"),

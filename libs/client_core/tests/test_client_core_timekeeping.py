@@ -9,6 +9,7 @@ import pytest
 
 from factotum.client_core.testing import FakeClock, FakeVoiceOutput, RecordingRenderer, settle
 from factotum.client_core.timekeeping import (
+    DEFAULT_SNOOZE_S,
     RING_EVERY_S,
     RING_FOR_S,
     Ring,
@@ -20,8 +21,11 @@ from factotum.contracts.commands import (
     AlarmDay,
     CancelAlarm,
     CancelTimer,
+    MoveAlarm,
+    PostponeAlarm,
     SetAlarm,
     SetTimer,
+    StopRinging,
     Weekday,
 )
 from factotum.contracts.timekeeping import (
@@ -29,6 +33,9 @@ from factotum.contracts.timekeeping import (
     MAX_TIMERS,
     AlarmsCancelled,
     AlarmSet,
+    AlarmsMoved,
+    AlarmsPostponed,
+    RingsStopped,
     TimersCancelled,
     TimerSet,
     TimeState,
@@ -75,11 +82,11 @@ class Sayer:
 class Keeper:
     """A keeper on a clock that a test moves, with a sayer that remembers."""
 
-    def __init__(self, wall: datetime = EVENING) -> None:
+    def __init__(self, wall: datetime = EVENING, snooze_s: int = DEFAULT_SNOOZE_S) -> None:
         self.clock = FakeClock(wall)
         self.shown = RecordingRenderer()
         self.sayer = Sayer()
-        self.timekeeper = Timekeeper(self.shown, clock=self.clock)
+        self.timekeeper = Timekeeper(self.shown, clock=self.clock, snooze_s=snooze_s)
         self.timekeeper.attach(self.sayer)
 
     async def timer(self, seconds: int, text: str = "Timer.", fill: int = 1) -> TimerSet:
@@ -111,6 +118,41 @@ class Keeper:
         hour, minute = at or (None, None)
         result = await self.timekeeper.execute(CancelAlarm(hour=hour, minute=minute))
         answer = answer_in(AlarmsCancelled, result.data)
+        assert answer is not None
+        return answer
+
+    async def postpone(
+        self, seconds: int | None = None, at: tuple[int, int] | None = None
+    ) -> AlarmsPostponed:
+        hour, minute = at or (None, None)
+        result = await self.timekeeper.execute(
+            PostponeAlarm(seconds=seconds, hour=hour, minute=minute)
+        )
+        answer = answer_in(AlarmsPostponed, result.data)
+        assert answer is not None
+        return answer
+
+    async def move(
+        self,
+        hour: int,
+        minute: int,
+        day: AlarmDay | None = None,
+        was: tuple[int, int] | None = None,
+    ) -> AlarmsMoved:
+        from_hour, from_minute = was or (None, None)
+        command = MoveAlarm(
+            hour=hour,
+            minute=minute,
+            day=day or AlarmDay(),
+            from_hour=from_hour,
+            from_minute=from_minute,
+        )
+        answer = answer_in(AlarmsMoved, (await self.timekeeper.execute(command)).data)
+        assert answer is not None
+        return answer
+
+    async def stop(self) -> RingsStopped:
+        answer = answer_in(RingsStopped, (await self.timekeeper.execute(StopRinging())).data)
         assert answer is not None
         return answer
 
@@ -512,6 +554,329 @@ class TestCancellingAnAlarm:
 
         assert gone.cancelled == ()
         assert gone.remaining == 1
+
+
+class TestPuttingAnAlarmOff:
+    async def test_one_that_rings_is_silenced_and_rings_again_after_the_snooze_of_the_device(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+        assert len(keeper.sayer.said) == 1
+
+        put_off = await keeper.postpone()
+
+        [alarm] = put_off.postponed
+        assert (alarm.at, alarm.ringing) == (civil(2026, 10, 13, 22, 15), False)
+        assert put_off.now == civil(2026, 10, 13, 22, 5)
+        await keeper.clock.advance(599)
+        assert len(keeper.sayer.said) == 1  # it is quiet for the whole of the snooze
+        await keeper.clock.advance(1)
+        assert len(keeper.sayer.said) == 2
+
+    async def test_the_snooze_counts_from_now_and_not_from_the_hour_it_rang_at(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60 + 30)  # it has been ringing for half a minute
+
+        put_off = await keeper.postpone()
+
+        assert put_off.postponed[0].at == civil(2026, 10, 13, 22, 15).replace(second=30)
+
+    async def test_by_as_long_as_a_person_said(self, keeper: Keeper) -> None:
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+
+        put_off = await keeper.postpone(seconds=300)
+
+        assert put_off.postponed[0].at == civil(2026, 10, 13, 22, 10)
+
+    async def test_by_the_snooze_that_the_device_was_given_when_nobody_said(self) -> None:
+        keeper = Keeper(snooze_s=120)
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+
+        put_off = await keeper.postpone()
+
+        assert put_off.postponed[0].at == civil(2026, 10, 13, 22, 7)
+        await keeper.timekeeper.close()
+
+    def test_the_snooze_of_a_device_that_was_given_none_is_ten_minutes(self) -> None:
+        assert DEFAULT_SNOOZE_S == 600
+
+    async def test_one_that_has_not_rung_is_moved_later_by_that_much(self, keeper: Keeper) -> None:
+        await keeper.alarm(23, 0)
+
+        put_off = await keeper.postpone(seconds=1800)
+
+        assert put_off.postponed[0].at == civil(2026, 10, 13, 23, 30)
+        await keeper.clock.advance(3600)
+        assert keeper.sayer.said == []  # it did not ring at eleven
+        await keeper.clock.advance(1800)
+        assert len(keeper.sayer.said) == 1
+
+    async def test_with_none_named_the_next_to_ring_is_put_off(self, keeper: Keeper) -> None:
+        await keeper.alarm(9, 0)
+        await keeper.alarm(7, 0)
+
+        put_off = await keeper.postpone()
+
+        assert [alarm.at.hour for alarm in put_off.postponed] == [7]
+        assert [(a.at.hour, a.at.minute) for a in keeper.state().alarms] == [(7, 10), (9, 0)]
+
+    async def test_the_one_named_by_its_hour(self, keeper: Keeper) -> None:
+        await keeper.alarm(7, 0)
+        await keeper.alarm(8, 0)
+
+        put_off = await keeper.postpone(seconds=600, at=(8, 0))
+
+        assert [(a.at.hour, a.at.minute) for a in put_off.postponed] == [(8, 10)]
+        assert [(a.at.hour, a.at.minute) for a in keeper.state().alarms] == [(7, 0), (8, 10)]
+
+    async def test_the_one_that_rings_is_put_off_before_one_that_has_not_rung(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.alarm(22, 5)
+        await keeper.alarm(23, 0)
+        await keeper.clock.advance(5 * 60)
+
+        put_off = await keeper.postpone()
+
+        assert [alarm.id for alarm in put_off.postponed] == ["a1"]
+        assert [(a.at.hour, a.at.minute) for a in keeper.state().alarms] == [(22, 15), (23, 0)]
+
+    async def test_all_that_ring_are_put_off_together(self, keeper: Keeper) -> None:
+        await keeper.alarm(22, 5)
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+
+        put_off = await keeper.postpone()
+
+        assert len(put_off.postponed) == 2
+        assert [alarm.ringing for alarm in keeper.state().alarms] == [False, False]
+
+    async def test_there_is_nothing_to_put_off_when_nothing_matches(self, keeper: Keeper) -> None:
+        await keeper.alarm(7, 0)
+
+        none_named = await keeper.postpone(at=(7, 1))
+
+        assert none_named.postponed == ()
+        assert keeper.state().alarms[0].at == civil(2026, 10, 14, 7, 0)
+        assert (await Keeper().postpone()).postponed == ()
+
+    async def test_the_ring_that_is_being_said_is_cut(self, keeper: Keeper) -> None:
+        keeper.sayer.hold = asyncio.Event()
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+        await asyncio.wait_for(keeper.sayer.saying.wait(), 2)
+
+        await keeper.postpone()
+        await settle()
+
+        assert keeper.sayer.cut == 1
+
+    async def test_the_snooze_is_not_counted_as_ringing(self, keeper: Keeper) -> None:
+        """It has not given up when it comes back: the three minutes that it rings for begin again
+        when it does, and are not the ones that went by before it was put off."""
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+
+        await keeper.postpone()
+        await keeper.clock.advance(599)
+
+        assert len(keeper.state().alarms) == 1  # it did not give up while it was quiet
+        await keeper.clock.advance(1 + RING_FOR_S - 1)
+        assert len(keeper.state().alarms) == 1  # and rings for as long as an alarm does
+        await keeper.clock.advance(1)
+        assert keeper.state().alarms == ()
+        assert keeper.shown.of("notice") == ["a1 rang for 180 s and nobody stopped it"]
+
+    async def test_the_device_shows_that_it_was_put_off(self, keeper: Keeper) -> None:
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+
+        await keeper.postpone()
+
+        assert keeper.shown.of("event")[-1] == "alarm a1 put off to 2026-10-13 22:15"
+
+
+class TestMovingAnAlarm:
+    async def test_the_next_to_ring_is_moved_to_the_next_time_the_new_hour_comes(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.alarm(7, 0)
+
+        moved = await keeper.move(8, 30)
+
+        assert moved.reason is None
+        assert [alarm.at for alarm in moved.moved] == [civil(2026, 10, 14, 8, 30)]
+        assert [alarm.at for alarm in keeper.state().alarms] == [civil(2026, 10, 14, 8, 30)]
+        await keeper.clock.advance(9 * 3600)  # to seven: it does not ring there any more
+        assert keeper.sayer.said == []
+        await keeper.clock.advance(5400)
+        assert len(keeper.sayer.said) == 1
+
+    async def test_the_day_is_worked_out_from_the_calendar_of_the_device(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.alarm(7, 0)
+
+        moved = await keeper.move(8, 0, AlarmDay(weekday=Weekday.MONDAY))
+
+        assert [alarm.at for alarm in moved.moved] == [civil(2026, 10, 19, 8, 0)]
+
+    async def test_the_one_named_by_its_hour_is_the_one_that_moves(self, keeper: Keeper) -> None:
+        await keeper.alarm(7, 0)
+        await keeper.alarm(9, 0)
+
+        moved = await keeper.move(6, 30, was=(9, 0))
+
+        assert [alarm.id for alarm in moved.moved] == ["a2"]
+        assert [(a.at.hour, a.at.minute) for a in keeper.state().alarms] == [(6, 30), (7, 0)]
+
+    async def test_the_one_that_rings_moves_before_one_that_has_not_rung(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.alarm(22, 5)
+        await keeper.alarm(23, 0)
+        await keeper.clock.advance(5 * 60)
+
+        moved = await keeper.move(6, 0)
+
+        assert [alarm.id for alarm in moved.moved] == ["a1"]
+        assert not any(alarm.ringing for alarm in keeper.state().alarms)
+        await keeper.clock.advance(RING_EVERY_S * 4)
+        assert len(keeper.sayer.said) == 1  # it is quiet: it rings at six
+
+    async def test_a_moment_that_has_gone_by_moves_nothing(self, keeper: Keeper) -> None:
+        await keeper.alarm(7, 0)
+
+        refused = await keeper.move(7, 0, AlarmDay(in_days=0))
+
+        assert (refused.moved, refused.reason, refused.now) == ((), "past", EVENING)
+        assert [alarm.at for alarm in keeper.state().alarms] == [civil(2026, 10, 14, 7, 0)]
+
+    async def test_a_date_that_never_comes_moves_nothing(self, keeper: Keeper) -> None:
+        await keeper.alarm(7, 0)
+
+        refused = await keeper.move(7, 0, AlarmDay(day=31, month=4))
+
+        assert refused.reason == "no_such_day"
+        assert [alarm.at for alarm in keeper.state().alarms] == [civil(2026, 10, 14, 7, 0)]
+
+    async def test_with_no_alarm_there_is_none_to_move(self, keeper: Keeper) -> None:
+        none_at_all = await keeper.move(8, 0)
+        await keeper.alarm(7, 0)
+        none_named = await keeper.move(8, 0, was=(7, 1))
+
+        assert (none_at_all.reason, none_named.reason) == ("none", "none")
+        assert none_at_all.moved == () == none_named.moved
+        assert [alarm.at for alarm in keeper.state().alarms] == [civil(2026, 10, 14, 7, 0)]
+
+    async def test_with_nothing_to_move_a_past_hour_is_not_what_is_said(
+        self, keeper: Keeper
+    ) -> None:
+        """There is no alarm to move, and that comes before the hour being one that has gone by."""
+        refused = await keeper.move(7, 0, AlarmDay(in_days=0))
+
+        assert refused.reason == "none"
+
+    async def test_the_ring_that_is_being_said_is_cut(self, keeper: Keeper) -> None:
+        keeper.sayer.hold = asyncio.Event()
+        await keeper.alarm(22, 5)
+        await keeper.clock.advance(5 * 60)
+        await asyncio.wait_for(keeper.sayer.saying.wait(), 2)
+
+        await keeper.move(6, 0)
+        await settle()
+
+        assert keeper.sayer.cut == 1
+
+    async def test_the_device_shows_that_it_was_moved(self, keeper: Keeper) -> None:
+        await keeper.alarm(7, 0)
+
+        await keeper.move(8, 30)
+
+        assert keeper.shown.of("event")[-1] == "alarm a1 moved to 2026-10-14 08:30"
+
+
+class TestStoppingWhatRings:
+    async def test_a_timer_and_an_alarm_that_ring_are_stopped_together(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.timer(60)
+        await keeper.alarm(22, 1)
+        await keeper.clock.advance(60)
+
+        stopped = await keeper.stop()
+
+        assert stopped.now == civil(2026, 10, 13, 22, 1)  # what the wall shows when it did
+        assert [(timer.id, timer.ringing) for timer in stopped.timers] == [("t1", True)]
+        assert [(alarm.id, alarm.ringing) for alarm in stopped.alarms] == [("a2", True)]
+        assert keeper.state().timers == ()
+        assert keeper.state().alarms == ()
+
+    async def test_what_has_not_rung_is_left_alone(self, keeper: Keeper) -> None:
+        await keeper.timer(600)
+        await keeper.timer(60)
+        await keeper.alarm(23, 0)
+        await keeper.clock.advance(60)
+
+        stopped = await keeper.stop()
+
+        assert [timer.seconds for timer in stopped.timers] == [60]
+        assert stopped.alarms == ()
+        assert [timer.seconds for timer in keeper.state().timers] == [600]
+        assert len(keeper.state().alarms) == 1
+
+    async def test_with_nothing_ringing_nothing_is_stopped_and_nothing_is_cancelled(
+        self, keeper: Keeper
+    ) -> None:
+        await keeper.timer(60)
+        await keeper.alarm(7, 0)
+
+        stopped = await keeper.stop()
+
+        assert (stopped.timers, stopped.alarms) == ((), ())
+        assert len(keeper.state().timers) == 1
+        assert len(keeper.state().alarms) == 1
+        assert (await Keeper().stop()) == RingsStopped(now=EVENING)
+
+    async def test_it_rings_no_more(self, keeper: Keeper) -> None:
+        await keeper.timer(60)
+        await keeper.clock.advance(60)
+        said = len(keeper.sayer.said)
+
+        await keeper.stop()
+        await keeper.clock.advance(RING_EVERY_S * 4)
+
+        assert len(keeper.sayer.said) == said
+        assert keeper.clock.sleepers == 0
+
+    @pytest.mark.parametrize("what", ["a timer", "an alarm"])
+    async def test_the_ring_that_is_being_said_is_cut(self, keeper: Keeper, what: str) -> None:
+        keeper.sayer.hold = asyncio.Event()
+        if what == "a timer":
+            await keeper.timer(60)
+        else:
+            await keeper.alarm(22, 1)
+        await keeper.clock.advance(60)
+        await asyncio.wait_for(keeper.sayer.saying.wait(), 2)
+
+        await keeper.stop()
+        await settle()
+
+        assert keeper.sayer.cut == 1
+
+    async def test_the_device_shows_what_it_stopped(self, keeper: Keeper) -> None:
+        await keeper.timer(60)
+        await keeper.alarm(22, 1)
+        await keeper.clock.advance(60)
+
+        await keeper.stop()
+
+        assert keeper.shown.of("event")[-2:] == ["timer t1 stopped", "alarm a2 stopped"]
 
 
 class TestTimersAndAlarmsTogether:

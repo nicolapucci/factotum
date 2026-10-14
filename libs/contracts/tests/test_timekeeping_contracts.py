@@ -12,6 +12,9 @@ from factotum.contracts.timekeeping import (
     AlarmInfo,
     AlarmsCancelled,
     AlarmSet,
+    AlarmsMoved,
+    AlarmsPostponed,
+    RingsStopped,
     TimerInfo,
     TimersCancelled,
     TimerSet,
@@ -46,6 +49,12 @@ class TestWhatAMomentOnTheWallIs:
             AlarmSet(now=zoned, reason="past")
         with pytest.raises(ValidationError, match="no zone"):
             AlarmsCancelled(now=zoned, remaining=0)
+        with pytest.raises(ValidationError, match="no zone"):
+            AlarmsPostponed(now=zoned)
+        with pytest.raises(ValidationError, match="no zone"):
+            AlarmsMoved(now=zoned, reason="past")
+        with pytest.raises(ValidationError, match="no zone"):
+            RingsStopped(now=zoned)
 
     def test_it_travels_as_the_time_that_the_wall_shows(self) -> None:
         said = data_of(AlarmSet(now=NOW, alarm=an_alarm()))
@@ -177,9 +186,67 @@ class TestWhatADeviceSaysOfWhatItDid:
         assert said is not None
         assert said.cancelled == (an_alarm(),)
 
+    def test_the_alarms_that_were_put_off_are_as_they_are_now(self) -> None:
+        later = an_alarm(at=datetime(2026, 10, 14, 7, 10))  # noqa: DTZ001 - civil time
+        said = answer_in(AlarmsPostponed, data_of(AlarmsPostponed(now=NOW, postponed=(later,))))
+
+        assert said is not None
+        assert said.postponed == (later,)
+        assert said.now == NOW
+
+    def test_none_put_off_is_an_answer_too(self) -> None:
+        said = answer_in(AlarmsPostponed, {"now": "2026-10-13T22:01:14"})
+
+        assert said == AlarmsPostponed(now=NOW)
+        assert answer_in(AlarmsPostponed, {"postponed": []}) is None  # what the wall shows is said
+
+    def test_the_alarms_that_were_moved_are_as_they_are_now(self) -> None:
+        said = answer_in(AlarmsMoved, data_of(AlarmsMoved(now=NOW, moved=(an_alarm(),))))
+
+        assert said is not None
+        assert said.moved == (an_alarm(),)
+        assert said.reason is None
+
+    @pytest.mark.parametrize("reason", ["none", "past", "no_such_day"])
+    def test_an_alarm_that_was_not_moved_says_why(self, reason: str) -> None:
+        said = answer_in(AlarmsMoved, {"now": "2026-10-13T22:01:14", "reason": reason})
+
+        assert said is not None
+        assert said.moved == ()
+        assert said.reason == reason
+        assert answer_in(AlarmsMoved, {"now": "2026-10-13T22:01:14", "reason": "because"}) is None
+
+    def test_alarms_were_moved_or_it_says_why_none_was_and_never_both_or_neither(self) -> None:
+        both = {"now": "2026-10-13T22:01:14", "moved": [data_of(an_alarm())], "reason": "past"}
+
+        assert answer_in(AlarmsMoved, {"now": "2026-10-13T22:01:14"}) is None
+        assert answer_in(AlarmsMoved, both) is None
+
+    def test_what_was_stopped_is_the_timers_and_the_alarms_that_rang(self) -> None:
+        ringing_timer = a_timer(left_s=0, ringing=True)
+        ringing_alarm = an_alarm(ringing=True)
+        stopped = RingsStopped(now=NOW, timers=(ringing_timer,), alarms=(ringing_alarm,))
+
+        assert answer_in(RingsStopped, data_of(stopped)) == stopped
+
+    def test_nothing_stopped_is_an_answer_too_but_no_answer_is_not_that(self) -> None:
+        assert answer_in(RingsStopped, {"now": "2026-10-13T22:01:14"}) == RingsStopped(now=NOW)
+        assert answer_in(RingsStopped, {}) is None  # a device that said nothing did not say it
+        assert answer_in(RingsStopped, None) is None
+
     @given(st.dictionaries(st.text(max_size=8), st.integers() | st.text(max_size=8), max_size=4))
     def test_what_is_not_an_answer_is_never_an_error_for_the_skill_that_reads_it(
         self, rubbish: dict[str, object]
     ) -> None:
-        for shape in (TimeState, TimerSet, TimersCancelled, AlarmSet, AlarmsCancelled):
+        shapes = (
+            TimeState,
+            TimerSet,
+            TimersCancelled,
+            AlarmSet,
+            AlarmsCancelled,
+            AlarmsPostponed,
+            AlarmsMoved,
+            RingsStopped,
+        )
+        for shape in shapes:
             answer_in(shape, rubbish)

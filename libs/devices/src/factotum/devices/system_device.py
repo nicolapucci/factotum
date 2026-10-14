@@ -29,9 +29,11 @@ from factotum.contracts.commands import (
     GetState,
     LedPattern,
     MediaKind,
+    MoveAlarm,
     Pause,
     PlayAudio,
     PlayUrl,
+    PostponeAlarm,
     Resume,
     SetAlarm,
     SetLed,
@@ -41,6 +43,7 @@ from factotum.contracts.commands import (
     ShowCard,
     Speak,
     Stop,
+    StopRinging,
     VolumeDirection,
 )
 from factotum.contracts.errors import CapabilityNotSupportedError
@@ -151,6 +154,39 @@ class SystemDevice(ABC):
         """Stop an alarm of the device: the one at that hour and minute, else the one that is
         ringing, else the next to ring."""
         return await self.execute(CancelAlarm(hour=hour, minute=minute))
+
+    async def postpone_alarm(
+        self, seconds: int | None = None, hour: int | None = None, minute: int | None = None
+    ) -> CommandResult:
+        """Put an alarm of the device off by ``seconds`` (the device's own snooze when there is
+        none): the one at that hour and minute, else the one that is ringing, else the next to
+        ring."""
+        return await self.execute(PostponeAlarm(seconds=seconds, hour=hour, minute=minute))
+
+    async def move_alarm(
+        self,
+        hour: int,
+        minute: int,
+        *,
+        day: AlarmDay | None = None,
+        from_hour: int | None = None,
+        from_minute: int | None = None,
+    ) -> CommandResult:
+        """Move an alarm of the device to ``hour`` and ``minute`` on ``day``: the one at
+        ``from_hour`` and ``from_minute``, else the one that is ringing, else the next to ring."""
+        return await self.execute(
+            MoveAlarm(
+                hour=hour,
+                minute=minute,
+                day=day or AlarmDay(),
+                from_hour=from_hour,
+                from_minute=from_minute,
+            )
+        )
+
+    async def stop_ringing(self) -> CommandResult:
+        """Stop every timer and every alarm of the device that is ringing."""
+        return await self.execute(StopRinging())
 
     async def show_card(self, card: Card) -> CommandResult:
         return await self.execute(ShowCard(card=card))

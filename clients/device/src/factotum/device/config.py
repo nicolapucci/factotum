@@ -26,6 +26,7 @@ from factotum.client_audio import (
     Engine,
     default_word,
 )
+from factotum.client_core.timekeeping import DEFAULT_SNOOZE_S
 from factotum.contracts.base import Contract
 from factotum.contracts.capabilities import Capability
 
@@ -144,6 +145,12 @@ class ListeningSettings(Contract):
         return default_word(self.engine)
 
 
+class TimekeepingSettings(Contract):
+    snooze_minutes: int = Field(default=DEFAULT_SNOOZE_S // 60, ge=1, le=1440)
+    """How long an alarm is put off by when a person does not say by how much (ADR 0029): the
+    snooze of this device, which a skill does not know."""
+
+
 class ReconnectSettings(Contract):
     first_s: float = Field(default=1.0, gt=0)
     max_s: float = Field(default=30.0, gt=0)
@@ -160,6 +167,7 @@ class Config(Contract):
     device: DeviceSettings
     audio: AudioSettings = AudioSettings()
     listening: ListeningSettings = ListeningSettings()
+    timekeeping: TimekeepingSettings = TimekeepingSettings()
     reconnect: ReconnectSettings = ReconnectSettings()
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 

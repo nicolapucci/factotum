@@ -23,6 +23,7 @@ from factotum.device.config import (
     ListeningSettings,
     Mode,
     ReconnectSettings,
+    TimekeepingSettings,
     parse_config,
 )
 
@@ -34,6 +35,7 @@ SECTIONS: dict[str, type[BaseModel]] = {
     "device": DeviceSettings,
     "audio": AudioSettings,
     "listening": ListeningSettings,
+    "timekeeping": TimekeepingSettings,
     "reconnect": ReconnectSettings,
 }
 PAIRED = {TOKEN_VARIABLE: "the-credential"}
