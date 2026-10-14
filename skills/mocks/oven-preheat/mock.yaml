@@ -1,6 +1,12 @@
 replies:
-  - when: {mode: "*"}
-    it: "Forno in preriscaldamento a {temperature} gradi, modalità {mode}."
-    en: "The oven is preheating to {temperature} degrees, {mode} mode."
+  - when: {mode: "fan"}
+    it: "Forno in preriscaldamento a {temperature} gradi, ventilato."
+    en: "The oven is preheating to {temperature} degrees with the fan."
+  - when: {mode: "grill"}
+    it: "Forno in preriscaldamento a {temperature} gradi, con il grill."
+    en: "The oven is preheating to {temperature} degrees with the grill."
+  - when: {mode: "static"}
+    it: "Forno in preriscaldamento a {temperature} gradi, statico."
+    en: "The oven is preheating to {temperature} degrees, static."
   - it: "Forno in preriscaldamento a {temperature} gradi."
     en: "The oven is preheating to {temperature} degrees."

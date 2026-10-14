@@ -1,6 +1,15 @@
 replies:
-  - when: {room: "*"}
-    it: "L'aspirapolvere è partito: {room}."
-    en: "The vacuum started in the {room}."
+  - when: {room: "kitchen"}
+    it: "L'aspirapolvere è partito in cucina."
+    en: "The vacuum started in the kitchen."
+  - when: {room: "living room"}
+    it: "L'aspirapolvere è partito in salotto."
+    en: "The vacuum started in the living room."
+  - when: {room: "bedroom"}
+    it: "L'aspirapolvere è partito in camera da letto."
+    en: "The vacuum started in the bedroom."
+  - when: {room: "bathroom"}
+    it: "L'aspirapolvere è partito in bagno."
+    en: "The vacuum started in the bathroom."
   - it: "L'aspirapolvere è partito in tutta la casa."
     en: "The vacuum started in the whole home."
