@@ -12,6 +12,7 @@ import pytest
 
 from factotum.actions.mock_runner import MOCK_FILE, MockAnswers, blanks_of, read_mock
 from factotum.actions.skills import LoadedSkill, load_folder
+from factotum.contracts.formats import FormatKind
 from factotum.contracts.skills import ParameterSpec, ParamType, ParamValue, SkillTarget
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -157,3 +158,10 @@ def test_the_mocks_cover_the_shapes_that_a_manifest_can_have() -> None:
         "irreversible",
     }
     assert {manifest.target for manifest in manifests} == {SkillTarget.NONE, SkillTarget.SYSTEM}
+    assert {fmt.kind for spec in parameters for fmt in spec.formats or ()} == set(FormatKind)
+    assert {fmt.pattern for spec in parameters for fmt in spec.formats or ()} >= {
+        "seconds",
+        "minutes",
+        "iso",
+        "name",
+    }

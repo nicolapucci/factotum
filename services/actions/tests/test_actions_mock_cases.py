@@ -20,6 +20,7 @@ from factotum.actions.testing import FakeSpeech, a_device_answers
 from factotum.actions.values import check_values
 from factotum.common.language import detect_language
 from factotum.contracts.actions import ActStatus
+from factotum.contracts.formats import FormatKind
 from factotum.contracts.skills import SkillManifest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -43,6 +44,12 @@ def language_of(case: PlanCase) -> str:
     return "it" if detect_language(case.message) == "it" else "en"
 
 
+def written(case: PlanCase) -> dict[str, Any]:
+    """The values as a model that reads the message well writes them: the words that were said for
+    a value that a skill takes in a form (ADR 0030), and the value itself for the others."""
+    return {**case.params, **case.words}
+
+
 def ideal_plan(case: PlanCase) -> dict[str, Any]:
     """What a model that reads the message as it is meant says."""
     if case.skill is None:
@@ -51,7 +58,7 @@ def ideal_plan(case: PlanCase) -> dict[str, Any]:
     return plan_of(
         case.skill,
         device=case.device,
-        parameters=case.params,
+        parameters=written(case),
         language=language_of(case),
         question="Do you really want me to do that?" if asks else None,
     )
@@ -61,8 +68,8 @@ class TestTheCorpus:
     def test_it_is_a_good_number_of_messages_and_questions_are_among_them(self) -> None:
         questions = sum(1 for case in MOCK_CASES if case.skill is None)
 
-        assert len(MOCK_CASES) >= 100
-        assert 0.15 <= questions / len(MOCK_CASES) <= 0.35
+        assert len(MOCK_CASES) >= 150
+        assert 0.12 <= questions / len(MOCK_CASES) <= 0.35
 
     def test_no_message_is_there_twice_for_the_same_device(self) -> None:
         seen = Counter((case.message, case.speaker) for case in MOCK_CASES)
@@ -103,7 +110,7 @@ class TestTheCorpus:
         for case in MOCK_CASES:
             if case.skill is None:
                 continue
-            checked = check_values(manifests[case.skill], case.params, said=case.message)
+            checked = check_values(manifests[case.skill], written(case), said=case.message)
             assert checked.unsaid == (), case.message
             if case.status is ActStatus.NEEDS_MORE:
                 assert checked.asked_for, case.message
@@ -111,6 +118,36 @@ class TestTheCorpus:
                 assert checked.invalid == (), case.message
                 assert checked.missing == (), case.message
                 assert checked.values == case.params, case.message
+
+    def test_a_value_that_is_taken_in_a_form_has_the_words_a_model_writes_for_it(self) -> None:
+        """What is said is not what the skill is given (ADR 0030): a case that is done says both."""
+        for case in MOCK_CASES:
+            if case.skill is None or case.status is not ActStatus.DONE:
+                continue
+            formatted = {
+                name for name, spec in mocks()[case.skill].parameters.items() if spec.formats
+            }
+            assert set(case.words) == formatted & set(case.params), case.message
+            assert set(case.words) <= set(case.params), case.message
+
+    def test_every_kind_of_format_is_asked_for_and_given_at_least_once(self) -> None:
+        kinds = {
+            fmt.kind
+            for case in MOCK_CASES
+            if case.skill is not None and case.status is ActStatus.DONE
+            for name in case.words
+            for fmt in mocks()[case.skill].parameters[name].formats or ()
+        }
+
+        assert kinds == set(FormatKind)
+
+    def test_what_a_form_cannot_say_is_asked_for_and_not_guessed(self) -> None:
+        """A day with no year for a skill that wants a date, and *tomorrow* for one that does not
+        count days (the platform has no clock), are not values."""
+        asked = {case.message for case in MOCK_CASES if case.status is ActStatus.NEEDS_MORE}
+
+        assert "biglietto del treno per Napoli domani" in asked
+        assert "book a train ticket to Florence on October 16" in asked
 
     def test_what_is_irreversible_is_refused_to_the_shared_speaker_and_asked_about_elsewhere(
         self,

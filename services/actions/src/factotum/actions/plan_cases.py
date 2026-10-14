@@ -40,7 +40,12 @@ class PlanCase:
     """The device it is for, when it is for one that is not the one it is said to."""
 
     params: dict[str, ParamValue] = field(default_factory=dict)
-    """The values that must be understood in it, and no others are looked at."""
+    """The values that must be understood in it, and no others are looked at. They are what the
+    skill is called with: for a value that a skill takes in a form (ADR 0030), that form."""
+
+    words: dict[str, str] = field(default_factory=dict)
+    """What a model that reads the message well writes for a value that a skill takes in a form,
+    which is the words that were said and not the form (``params`` says what comes of them)."""
 
 
 def _action(

@@ -1,0 +1,3 @@
+replies:
+  - it: "Riscaldamento acceso dalle {start} alle {end}."
+    en: "The heating is on from {start} to {end}."

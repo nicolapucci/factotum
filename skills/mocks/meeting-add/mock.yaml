@@ -1,0 +1,6 @@
+replies:
+  - when: {at: "*"}
+    it: "Ho messo in calendario {title}: giorno {day}, alle {at}."
+    en: "I put {title} in the calendar: day {day}, at {at}."
+  - it: "Ho messo in calendario {title}: giorno {day}."
+    en: "I put {title} in the calendar: day {day}."

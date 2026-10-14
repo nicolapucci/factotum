@@ -1,0 +1,3 @@
+replies:
+  - it: "Ho prenotato il biglietto del treno per {destination} il {date}."
+    en: "I booked the train ticket to {destination} for {date}."

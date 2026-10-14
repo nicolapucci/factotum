@@ -1,0 +1,6 @@
+replies:
+  - when: {length: "*"}
+    it: "Registro il canale {channel} alle {at} per {length} minuti."
+    en: "Recording channel {channel} at {at} for {length} minutes."
+  - it: "Registro il canale {channel} alle {at}."
+    en: "Recording channel {channel} at {at}."

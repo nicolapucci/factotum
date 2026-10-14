@@ -22,6 +22,10 @@ The first reply whose `when` fits is the answer, in the language of the person; 
 values the skill was called with. A read answers with something plausible (a weather, a score, a
 temperature), an action says it is done and what it was done with.
 
+Some of them take a time, a length of time or a day in a form that their manifest declares
+(`formats`: `HH:mm`, minutes, `+1d`, ADR 0030). The person says *sette e mezza* and the reply shows the
+form that the skill was given (*alle 07:30*), which is how to see what the system made of what was said.
+
 ## Trying them
 
 Where no runner is set, `FACTOTUM_ACTIONS_MOCK_RUNNER=true` makes the actions service answer a skill
@@ -50,3 +54,9 @@ that says them to a real model is `services/actions/tests/live/test_live_actions
 | `fridge-temperature` | a number with a decimal |
 | `sports-score` | a read of a team |
 | `oven-preheat` | a number in a range and a mode, near the thermostat |
+| `meeting-add` | a day in three forms (`16/10/26`, `+1d`, `monday`) and a time (`HH:mm`) |
+| `tv-record` | a time (`HH:mm`) and a length in minutes, beside a channel |
+| `tv-sleep` | a length as an ISO 8601 duration (`PT1H30M`) |
+| `train-ticket` | a day only as a calendar date (`2026-10-16`): *tomorrow* is asked for |
+| `heating-schedule` | two times in one message (*dalle sei alle otto*) |
+| `sprinkler-run` | a length in seconds, in a range |
