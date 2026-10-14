@@ -130,7 +130,8 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   (no sandbox, no runner), and what a device answers (the `data` of a `CommandResult`, asked with
   `get_state`, which only the platform may give) is read by that code and said in a sentence of its
   own, never by a model. **The time of a device is the device's too** (`timer`, `alarm` and their
-  cancels and statuses): the device keeps it on a clock of its own (`factotum.client_core.Timekeeper`,
+  cancels and statuses, and `clock`, which asks the device what its wall shows and says it: nobody
+  but the device tells the time): the device keeps it on a clock of its own (`factotum.client_core.Timekeeper`,
   the device's and not a connection's, lost when the program stops) and rings by itself with a clip
   that the platform made when it was set (an *alert*: it goes through a mute, and at the volume of
   the speaker); the platform has **no clock**, so a skill passes on the
@@ -411,3 +412,15 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   message which asks for something to be done is not a question for the sources, and the live tests
   (`services/conversation/tests/live`) keep that line honest. The second line of defence is
   probabilistic; the first (the floor, and not asking a model with nothing to work on) is not.
+- A harness that measures a model must be able to give a perfect score to a perfect model, and a
+  test says so: `factotum.actions.measure` judges the live corpus and a unit test gives it a planner
+  that is told the right answer. The live test used to judge every skill by what the runner was asked,
+  and the skills of the platform have no runner: for three slices the first run with a model called 65
+  of 76 commands wrong that were right. What a skill was called with is in the audit trail.
+- What a model is shown (a description, an example, a sentence of the prompt) is measured before it is
+  kept, on the corpus, and a thing that is right can break three others: an example that taught the
+  right reading of *a level* made three messages that were right a turn of the volume. The answers are
+  the same each time (temperature zero), so a handful of messages, said once for each wording, compare
+  wordings in half a minute. A small model also writes a value in the words it likes (`7:30` for *sette
+  e mezza*, `ten minutes` for *ten minute*), and a text that is not made of the words of the message
+  is left out (ADR 0028): the failure is in silence when the value is optional.

@@ -115,7 +115,8 @@ default belongs to the device and not to the skill.
   or says in its record why not (the timer, on purpose; music, later).
 - A planner that has more skills to choose from is asked about more messages that are near a skill
   (*what is the volume?* is a question in form and a command in effect); how well a small model tells
-  them is measured with the corpus (`factotum.actions.plan_cases`) when a model is free to be asked.
+  them is measured with the corpus (`factotum.actions.plan_cases`): 135 of 143 commands with the right
+  skill and 50 of 53 questions left as questions, with the 8B model and fifteen skills of the platform.
 
 ## Alternatives considered
 
@@ -131,6 +132,59 @@ default belongs to the device and not to the skill.
 - **Mute as a volume of 0.** Unmuting would not know what the volume was.
 
 ## What was built, and what it found
+
+**The fourth slice**: the clock, and the first measurement of the skills of the platform with a real
+model. `clock` (`core/clock.py`) says what time it is and what day by the wall of the device that was
+spoken to. It asks the device how it is (`get_state`, whose answer already carried `TimeState.now`:
+the vocabulary stays at version 6) and says what the wall shows in a sentence of `core/phrases.py`
+(*Sono le 14 e 32*, *È l'una e 5*, *È mezzogiorno*, *It is 2:32 PM*, *Oggi è mercoledì 14 ottobre
+2026*): the time, the day or both (`about`). The platform has no clock, so it works out nothing: a
+device that does not answer its wall is a skill that failed. It tells the time of the place the device
+is in and the date of today and nothing else; *che giorno è domani* needs a calendar, which only a
+device has (an alarm asks it), and is not built. The corpus has 12 new cases and 7 new questions that
+look like it, the series of `e2e` judges what is said from the wall the device had, and tests with a
+clock that is set say it in both languages for each of two devices.
+
+The skills of the platform (slices 1 to 4) were measured with a model for the first time, with
+llama3.1 8B and `bge-m3` on the card, over the 196 messages of the corpus: **125 of 143 commands
+exactly as meant, 135 with the right skill, 50 of 53 questions left as questions** (`clock` 12 of 12,
+`stop` 8 of 8; the numbers and the list of what is wrong are in [`actions.md`](../actions.md#the-skills-of-the-platform-with-a-real-model-adr-0029-21-skills-196-messages)).
+What it found:
+
+* **The harness that measures a model could not give a perfect score.** It judged every skill by
+  what the runner was asked, and the skills of the platform have no runner: 65 of the 76 commands it
+  called wrong were its own mistake. It is `factotum.actions.measure` now, which reads what a skill
+  was called with from the audit trail and which a unit test gives a planner that is told the
+  right answer for the whole corpus, and asks for a perfect score.
+* **A small model writes a value in the words it likes, and a text has to be made of the words of the
+  message (ADR 0028).** *Sette e mezza* came back as `7:30` and `seven thirty`, *dieci minuti* as
+  `ten minutes`, *domani* as `tomorrow`, *a ten minute timer* as `ten minutes`: good readings, left out
+  by the check. With a required value the person was asked for what they had just said; with an
+  optional one the skill applied its default and said nothing (*cancel the five minute timer* cancelled
+  the next timer, *five more minutes* put the alarm off by ten). Telling the model to copy the words
+  fixed most of the Italian alarms and moved the rest of the failures from one language to the other,
+  depending on the language of the examples. **Open, and the maintainer's to decide:** a value that
+  code reads (a length, an hour, a day: `core/when.py` reads both languages whichever is spoken) would
+  count as said when the code reads it the way it reads something the person said, which keeps what the
+  check is for (a made-up *300* for *five minutes* reads as nothing, and *10 minutes* for *ten*
+  reads as the same length), and changes the sentence of ADR 0028 that says a text is made of the
+  words of the message, for these values.
+* **The reader did not know some ways of saying it** (*delle sette*, *dalle sette*, *dell'una*, *five
+  more minutes*, *ancora cinque minuti*, *another hour*), and a model that copied the words exactly
+  was a skill that failed. They are read now.
+* **What a model is shown is fragile.** One example of a level (*Porta il volume a 35*) made three
+  messages that were right read as a turn of the volume; a description that names the words of a skill
+  (*louder, turn it up*) took a message of another skill. The answers are the same each time (the
+  temperature is zero), so a few messages said once for each wording compare wordings in half a
+  minute. A name does not steer (the skill that stops what rings was called `silence` for a run, and
+  nothing changed). The examples of the planner for the platform's skills are made of their own text
+  (`_of_the_platform`), so that what the model has been shown is what it is given.
+* **A choice that the model is not given, it writes** (`both`, for the time and the day at once), and
+  a value that is not one of the choices is a value that is missing.
+
+Still wrong, and the model's: *stop the timer*, *ferma il timer* and *stop the alarm* go to `stop`
+(which says that nothing is ringing when a timer has not rung) and not to the cancels; *avvisami tra
+dieci minuti* is an alarm; *che giorno è domani?* is answered with today's date in Italian.
 
 **The third slice**: what changes an alarm and what stops a ring. The vocabulary is version 6
 (`postpone_alarm`, `move_alarm`, `stop_ringing`, all the platform's), the answers of the device are
@@ -159,7 +213,7 @@ What it found:
   to ring), and so does its snooze: the skill has neither, and a model that wrote *twenty minutes* for
   *snooze* gets none of it (ADR 0028).
 
-Nothing was measured with a model (the graphics card was in use).
+It was measured with a model with the fourth slice.
 
 **The second slice**: timers and alarms. The vocabulary is version 5 (`set_timer`, `cancel_timer`,
 `set_alarm`, `cancel_alarm`), all four the platform's (`PLATFORM_COMMAND_MODELS`: a ring is a clip that

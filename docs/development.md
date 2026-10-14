@@ -179,9 +179,9 @@ itself there: every device of `factotum.e2e.devices` has a clock that a test mov
 (`set_wall`) as a journey or the summer time would.
 
 **A series of commands** (`test_e2e_series.py`, `factotum.e2e.series`) says the corpus that a model
-that plans is measured against (`factotum.actions.plan_cases`: 143 messages in English and in
-Italian, about the example skills, said to the kitchen speaker, the living room display and a
-phone) one after another, to the three devices at once, each on the one connection it holds for the
+that plans is measured against (`factotum.actions.plan_cases`: 196 messages in English and in
+Italian, about the example skills and the skills of the platform, said to the kitchen speaker, the
+living room display and a phone) one after another, to the three devices at once, each on the one connection it holds for the
 whole series, and four more where the corpus is silent (a phone that has two lamps to choose from, a
 speaker that is told of a lamp that is not its own). Each message comes with what the code must make
 of it: done, asked about first, refused, asked for what is missing, or told that no skill fits (the

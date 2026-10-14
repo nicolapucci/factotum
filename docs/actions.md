@@ -221,6 +221,26 @@ timer stays as it is: set, cancel, status.
 * **Nothing to change is a thing to say**, as for a cancel (*Non c'è nessuna sveglia da cambiare*);
   a moment that has gone by or a date that never comes is a skill that failed, in its own words.
 
+**The clock** (same decision): `clock` (*che ore sono?*, *what day is it today?*, *dimmi l'ora*). The
+only clock there is, is the device's: the platform has none and a model has none (ADR 0028), so
+nobody but the device tells the time. The skill asks the device how it is (`get_state`, as
+`volume-status` and `timer-status` do) and says what its wall shows, in a sentence of the code in
+the language of the person: *Sono le 14 e 32*, *È l'una e 5*, *È mezzogiorno*, *It is 2:32 PM*,
+*Oggi è mercoledì 14 ottobre 2026*. It is `read_only` and changes nothing.
+
+* **The time, the day, or both.** `about` is `time`, `date` or `both`, the model's reading of what
+  was asked (a choice is not searched for in the words of the message); a person who asks for neither
+  in particular is told both, and a model that is not given `both` writes it anyway (measured), which
+  is a value that is not one of the choices and so a value that is missing. Anything else is a skill
+  that failed.
+* **The wall as it shows.** What the device answers is the civil time of the place it stands in
+  (`TimeState.now`, no zone), and the skill says it as it shows it: it works out nothing, and a device
+  that does not answer its wall is a skill that failed, not a guess. The first of the month is
+  *primo* in Italian, which a digit would not be read as.
+* **Only now.** It tells the time where the device is and the date of today: not the time in another
+  city and not the day of another date (*che giorno è domani*), which nothing in the platform can
+  work out without a calendar of its own.
+
 ## Choosing a skill
 
 1. **Candidates by meaning.** The message is embedded and compared with what each enabled skill of
@@ -540,10 +560,14 @@ homeassistant.local:8123, POST homeassistant.local:8123`), or why there was none
 what a test says, and every rule (the checks on a plan, the values, the decision, the confirmation,
 the audit) is tested on its own and through the service. The store has one set of tests that runs
 against both implementations; the ones that need Postgres are `integration` and skip without it. A
-corpus of 82 messages (`factotum.actions.plan_cases`: 55 that ask for something, for the eight skills
-that come with the project, and 27 that do not) is run through the whole service with a planner that
-reads every one as it is meant, to keep the expectations honest; `tests/live` measures a real model
-against it:
+corpus of 196 messages (`factotum.actions.plan_cases`: 143 that ask for something, for the skills
+that come with the project and for those of the platform, and 53 that do not) is run through the whole
+service with a planner that reads every one as it is meant, to keep the expectations honest, and
+judged by the same code (`factotum.actions.measure`) that `tests/live` measures a real model with: a
+harness that cannot give a perfect score to a perfect planner measures itself. It judges what the
+service made of a reading (the skill, and the values that skill was called with, which are in the
+audit trail whichever kind of skill it is) and not what a device then did, so the device of the
+test answers as a plausible one does and need not be a good one:
 
 ```bash
 FACTOTUM_LIVE_TESTS=1 uv run pytest -m live services/actions/tests/live -s
@@ -810,6 +834,92 @@ languages) and a *why* that is a question and not a request.
 * What is still wrong is the model's, as before: *could you dim the lights to thirty percent* goes to
   the scene, *could you open up the garage for me* from the phone asks which garage, *reboot the wifi*
   is no skill and *what is the weather usually like in Rome in August?* is taken for a request.
+
+### The skills of the platform, with a real model (ADR 0029: 21 skills, 196 messages)
+
+The first time that the skills of the platform (the sound of a device, timers, alarms, what rings,
+the clock) were measured with a model. The corpus is **196 messages, 143 that ask for something and
+53 that do not** (among them the ones that look like what a skill does: *how long is a snooze
+usually?*, *what time is it in Tokyo?*, *what volume is safe for headphones?*), said to the speaker,
+the display and the phone, by the 8B model in the `chat.fast` role with `bge-m3` (the whole live test:
+5 minutes 55 seconds, on a card that nothing else was using). The device of the test answers as a
+plausible one does and what it then does is not measured: what is judged is the skill that the
+service chose and the values that skill was called with (`factotum.actions.measure`).
+
+| | `llama3.1:8b-instruct-q4_K_M` |
+| --- | --- |
+| Commands read exactly as meant | **125 of 143** |
+| Commands with the right skill | **135 of 143** |
+| Questions left as questions | 50 of 53 |
+| A message that is acted on, median (90th percentile) | 1.6 s (1.8 s) |
+| A question that is passed over | 1.4 s |
+| A command near its skill, by meaning, at 0.45 | 143 of 143 |
+| A yes or a no read as it was meant | 22 of 22 |
+
+By skill: **clock 12 of 12**, **stop 8 of 8**, mute 4 of 4, volume status 3 of 3, alarm status 4 of
+4, timer status 4 of 4, announcement 6 of 6, air quality 6 of 6, weather 8 of 8, router 4 of 4, volume
+6 of 7, volume change 7 of 8, alarm postpone 7 of 8, alarm change 7 of 9, alarm 6 of 8, timer 6 of
+8, alarm cancel 4 of 6, **timer cancel 3 of 6**, garage door 6 of 7, lamp 11 of 13, scene 3 of 4. The
+first run with the harness corrected and nothing else changed read 116 of 143 exactly, 132 with the
+right skill and 49 of 53 questions; what was done since is below, and the judge now reads *alle otto*
+as *otto* (the code does), which is worth about three of the nine. The prompt has 28 examples, where it
+had 19 (about 5,500 tokens, which a model on the same card keeps from one message to the next as long
+as nothing else is asked of it in between: the median is 1.6 s, and one run on a card that something
+else was using took 4.4 s).
+
+What it found:
+
+* **The harness could not give a perfect score.** The first run said that 55 of 131 commands were
+  right, and 65 of the 76 that it called wrong were not the model's: the live test judged every
+  skill by what the runner was asked, and the skills of the platform do not go through a runner
+  (*nothing was run*), and the device of the test answered nothing, which a skill that reads the
+  answer takes for a failure. The values a skill was called with are in the audit trail whatever
+  kind of skill it is, and a device that answers plausibly (`a_device_answers`) lets the skill
+  finish. A unit test now gives the same code a planner that is told the right answer for the whole
+  corpus and asks for no mistakes.
+* **A model writes the value in the words it likes, and the check of ADR 0028 leaves it out.** The
+  text of a value has to be made of the words of the message, and the 8B model gave *sette e mezza* as
+  `7:30` and as `seven thirty`, *lunedì alle otto* as `8am` and `Monday`, *dieci minuti* as
+  `ten minutes`, *domani* as `tomorrow`, *a ten minute timer* as `ten minutes` (a plural) and *alle
+  sette* for *delle sette*. Each is a good reading of what was said, and each was left out: for a
+  required value the person was asked for what they had said (*Mi serve ancora: time*), and for an
+  optional one the skill used its own default, in silence: *cancel the five minute timer* cancelled
+  the next timer, *five more minutes* put the alarm off by the ten of the device, *svegliami domani
+  alle 6* set the next 6 o'clock. Asking for the words (a sentence in the instructions and examples
+  that copy them) fixed most of the alarms said in Italian, and moved the rest: an Italian example
+  made *set an alarm for monday at eight* come back as `otto` and `domani`, and an English one made
+  *imposta una sveglia per lunedì alle otto* come back as `eight` and `Monday`. The code reads both
+  languages whichever is spoken (`core/when.py`), so what is wrong here is the check and not the
+  reading; it is the open point of ADR 0029.
+* **The code that reads did not know some ways of saying it**: *delle sette* and *dalle sette* (the
+  alarm of seven, from seven), *dell'una*, and *five more minutes*, *ancora cinque minuti*, *another
+  hour* (how a person puts an alarm off). A model that copied the words exactly was a skill that
+  failed. They are read now.
+* **What a model is shown is fragile, and a thing that is right can break three others.** An example
+  of a level said after *a* (*Porta il volume a 35*) made the model read *alza il volume a 70*,
+  *abbassa il volume a 20* and *bump the volume up to 80* as a turn of the volume (three of three, and
+  not at all before it). The answers are the same each time (the temperature is zero), so a handful
+  of messages, said once for each wording, compare wordings in half a minute and do not need the
+  whole corpus. A description that names the words of a skill attracts them: *(louder, a bit lower,
+  turn it up)* in the description of `volume-change` took *alza il volume a 70* for itself.
+* **A name does not steer, a description does a little.** The skill that stops what rings was called
+  `silence` for one run, and *stop the timer* went to it all the same; saying in its description that
+  a message with *timer* or *alarm* in it is not this skill fixed one of three, and broke an
+  unrelated message in another wording. It is the part of this that a model does not read well:
+  *stop the timer*, *ferma il timer* and *stop the alarm* go to `stop` (which, with a timer that has
+  not rung, says that nothing is ringing) and not to the cancel.
+* **A model that is not given `both` writes it.** For *what time and what day is it* the 8B model
+  wrote `both`, which is not one of the choices of `about` (`time`, `date`) and so a value that is
+  missing: the person was asked what they had just said. `both` is a choice now.
+* **What the clock cannot tell, it is asked about.** *What time is it in Tokyo?* and *che ore sono a
+  New York?* are declined (the description says that it tells the time where the device is), and
+  *che giorno è domani?* is answered with today's date in Italian, where it is declined in English
+  once the examples have a message of that kind. The day of another date is not built: it needs the
+  calendar of the device, which an alarm asks for and the clock does not.
+* **What is still wrong is the model's, as before:** *spegni la lampada* leaves out `off`, *could you
+  dim the lights to thirty percent* goes to the scene, *make the volume a bit lower* is a level,
+  *could you open up the garage for me* asks which garage, *set the movie scene* is no skill, and *what
+  is the weather usually like in Rome in August?* is a request.
 
 ### What the measurements found
 
