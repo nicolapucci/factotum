@@ -71,6 +71,10 @@ class RunRequest(Contract):
 
     timeout_s: int = Field(ge=1, le=120)
 
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
+    """The language the person spoke (*it*, *en*), for a runner that answers in it: the mock runner
+    of development does. A script is not given it."""
+
     plan: InstructionPlan | None = None
     """What a model wrote for a skill in instructions mode, after it was checked: the platform runs
     it (in the sandbox, with a program of its own) in place of a script."""

@@ -204,6 +204,28 @@ class TestWhatIsRunWith:
         assert request.permissions.network == ("homeassistant.local",)
         assert request.params == {"state": "on"}
 
+    def test_a_run_knows_the_language_of_the_person_when_it_is_told(self) -> None:
+        def request(**changes: object) -> RunRequest:
+            return RunRequest.model_validate(
+                {
+                    "tenant_id": TENANT,
+                    "owner": Owner.of_subject(Subject.tenant(TENANT)),
+                    "skill_id": SkillId(uuid4()),
+                    "skill_name": "weather",
+                    "version": 1,
+                    "mode": SkillMode.SCRIPT,
+                    "timeout_s": 10,
+                    **changes,
+                }
+            )
+
+        assert request().language is None
+        assert request(language="it").language == "it"
+        assert request(language="eng").language == "eng"
+        for not_a_code in ("Italian", "i", "IT", "it-IT", ""):
+            with pytest.raises(ValidationError):
+                request(language=not_a_code)
+
     @pytest.mark.parametrize("timeout_s", [0, 121])
     def test_a_run_has_a_time_limit_of_a_couple_of_minutes_at_most(self, timeout_s: int) -> None:
         with pytest.raises(ValidationError):

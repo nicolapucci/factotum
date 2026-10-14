@@ -655,6 +655,7 @@ class ActionService:
             device_params=understood.device_params,
             permissions=stored.enabled.granted or SkillPermissions(),
             timeout_s=manifest.timeout_s,
+            language=language,
             plan=plan,
         )
         ran: _Ran

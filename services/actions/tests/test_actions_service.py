@@ -265,6 +265,21 @@ class TestDoingIt:
         assert rig.runner.requests[0].params == {"state": "on", "brightness": 40}
 
 
+class TestTheRunnerIsToldTheLanguage:
+    async def test_the_runner_is_told_the_language_the_person_spoke(self) -> None:
+        rig = ActionsRig(every_skill_is_offered=True)
+        await rig.install(WEATHER)
+        rig.plans(
+            plan_of("weather", parameters={"place": "Torino"}, language="it"),
+            plan_of("weather", parameters={"place": "Rome"}),
+        )
+
+        await rig.hear(KITCHEN, "che tempo fa a Torino")
+        await rig.hear(KITCHEN, "what is the weather like in Rome")
+
+        assert [request.language for request in rig.runner.requests] == ["it", "en"]
+
+
 class TestNothingIsRunOnTheDryRun:
     async def test_it_is_said_and_it_is_audited_as_not_executed(self) -> None:
         rig = ActionsRig(runner=DryRunRunner())
