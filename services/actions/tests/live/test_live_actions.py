@@ -19,6 +19,11 @@ skills of the platform. What a model made of each is judged by ``factotum.action
 skill it chose and the values that skill was called with, whatever the device then did. The device
 of the test answers as a plausible one does (``a_device_answers``) and what it did is not what is
 measured here.
+
+The messages of ``factotum.actions.mock_cases`` are about skills that the planner was never shown
+anything like (``skills/mocks``), which do nothing and answer as their ``mock.yaml`` says: they are
+measured with those skills beside the examples and the platform's, and the corpus above is measured
+again with the mocks beside it, since a catalog with more skills in it is a harder one.
 """
 
 import os
@@ -36,8 +41,11 @@ from factotum.actions.confirmations import Answer, ConfirmationReader
 from factotum.actions.core import platform_skills
 from factotum.actions.matching import SkillMatcher
 from factotum.actions.measure import Judged, measure
+from factotum.actions.mock_cases import MOCK_CASES
+from factotum.actions.mock_runner import MockRunner
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PLAN_CASES, PlanCase
 from factotum.actions.rig import ActionsRig
+from factotum.actions.skills import load_folder
 from factotum.actions.testing import FakeSpeech, a_device_answers
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
@@ -80,7 +88,8 @@ that answers there is the one that is already loaded here."""
 
 ROOT = Path(__file__).resolve().parents[4]
 HOME_TEXT = (ROOT / "config" / "devices.example.yaml").read_text("utf-8")
-EXAMPLES = ROOT / "skills" / "examples"
+SKILLS = ROOT / "skills"
+EXAMPLES = SKILLS / "examples"
 
 OWNER = Owner.model_validate({"kind": "tenant", "id": str(DEV_TENANT_ID)})
 
@@ -165,26 +174,40 @@ async def home_of(opened: Gateway) -> ActionsRig:
     return rig
 
 
+async def everything_of(opened: Gateway) -> ActionsRig:
+    """The example home with every skill of the folder of skills (the examples and the mocks)
+    installed, enabled and indexed by meaning, and the skills of the platform: what a household
+    that tried them all would have. A skill that runs is answered by its ``mock.yaml``."""
+    core = platform_skills(FakeSpeech())
+    rig = ActionsRig(
+        home_text=HOME_TEXT,
+        chat=opened.chat,
+        embedder=opened.embedder,
+        patience_s=PATIENCE_S,
+        core=core,
+    )
+    rig.dispatcher.responder = a_device_answers
+    rig.use_runner(MockRunner(rig.store))
+    catalog = Catalog(
+        rig.store, rig.index, folder=SKILLS, enable_folder=True, core=core, now=rig.clock
+    )
+    read = await catalog.reload(rig.principal(None))
+    assert read.problems == ()
+    assert len(read.enabled) == len(load_folder(SKILLS)[0])
+    return rig
+
+
 def percentile(values: Sequence[float], share: float) -> float:
     return sorted(values)[min(len(values) - 1, int(len(values) * share))]
 
 
-async def run_corpus(rig: ActionsRig) -> list[Judged]:
-    return [await measure(rig, case) for case in PLAN_CASES]
+async def run_corpus(rig: ActionsRig, cases: Sequence[PlanCase] = PLAN_CASES) -> list[Judged]:
+    return [await measure(rig, case) for case in cases]
 
 
-@pytest.mark.parametrize("model", MODELS)
-async def test_a_small_model_tells_commands_from_questions_and_reads_them(model: str) -> None:
-    opened = await open_gateway(model)
-    try:
-        rig = await home_of(opened)
-        # The first call loads the model: it is not what a message pays for, so it is not measured.
-        await rig.hear(KITCHEN, "warm up the model")
-        rig.runner.requests.clear()
-        judged = await run_corpus(rig)
-    finally:
-        await close_gateway(opened)
-
+def describe(model: str, judged: Sequence[Judged]) -> tuple[float, float, float]:
+    """Says what was measured, and gives the shares of questions left as questions, of commands
+    with the right skill and of commands exactly as meant."""
     commands = [j for j in judged if j.case.skill is not None]
     questions = [j for j in judged if j.case.skill is None]
     print(f"\n  planner model {model}: {len(judged)} messages, embeddings by {EMBED_MODEL}")
@@ -212,17 +235,84 @@ async def test_a_small_model_tells_commands_from_questions_and_reads_them(model:
     for j in judged:
         if not j.right:
             print(f"  wrong: {j.case.message!r} at {j.case.speaker}: {'; '.join(j.problems)}")
+    return (
+        right_questions / len(questions),
+        right_skill / len(commands),
+        right_commands / len(commands),
+    )
 
-    # What must hold whatever the model: what the policy refuses is never done, whatever it read.
+
+def nothing_that_was_refused_was_done(judged: Sequence[Judged]) -> None:
+    """What must hold whatever the model: what the policy refuses is never done, whatever it
+    read, and what asks for a yes does not run before it."""
     for j in judged:
         if j.case.status in {ActStatus.REFUSED, ActStatus.NEEDS_CONFIRMATION}:
             assert j.outcome.status is not ActStatus.DONE, j.case.message
+
+
+@pytest.mark.parametrize("model", MODELS)
+async def test_a_small_model_tells_commands_from_questions_and_reads_them(model: str) -> None:
+    opened = await open_gateway(model)
+    try:
+        rig = await home_of(opened)
+        # The first call loads the model: it is not what a message pays for, so it is not measured.
+        await rig.hear(KITCHEN, "warm up the model")
+        rig.runner.requests.clear()
+        judged = await run_corpus(rig)
+    finally:
+        await close_gateway(opened)
+
+    questions, skills, exactly = describe(model, judged)
+
+    nothing_that_was_refused_was_done(judged)
     # What must hold of a model worth binding to the fast role: a question is not taken for a
     # command (that is the one mistake that does something nobody asked for), and most commands are
     # read as they were meant.
-    assert right_questions / len(questions) >= 0.85
-    assert right_skill / len(commands) >= 0.85
-    assert right_commands / len(commands) >= 0.75
+    assert questions >= 0.85
+    assert skills >= 0.85
+    assert exactly >= 0.75
+
+
+@pytest.mark.parametrize("model", MODELS)
+async def test_a_small_model_chooses_and_calls_skills_it_was_never_shown(model: str) -> None:
+    """The mocks are written plainly and nothing the planner is shown is about them: this is how
+    it does with a skill that somebody wrote. The floors are low, for a first measurement: the
+    numbers are what this is for."""
+    opened = await open_gateway(model)
+    try:
+        rig = await everything_of(opened)
+        await rig.hear(KITCHEN, "warm up the model")
+        judged = await run_corpus(rig, MOCK_CASES)
+    finally:
+        await close_gateway(opened)
+
+    questions, skills, exactly = describe(model, judged)
+
+    nothing_that_was_refused_was_done(judged)
+    assert questions >= 0.7
+    assert skills >= 0.7
+    assert exactly >= 0.5
+
+
+@pytest.mark.parametrize("model", MODELS)
+async def test_the_corpus_of_the_examples_holds_with_the_mocks_beside_them(model: str) -> None:
+    """A catalog with more skills in it is a harder one: the skills that the planner was shown how
+    to read are asked about again with the mocks beside them, and the floors are those of the
+    corpus without them."""
+    opened = await open_gateway(model)
+    try:
+        rig = await everything_of(opened)
+        await rig.hear(KITCHEN, "warm up the model")
+        judged = await run_corpus(rig)
+    finally:
+        await close_gateway(opened)
+
+    questions, skills, exactly = describe(model, judged)
+
+    nothing_that_was_refused_was_done(judged)
+    assert questions >= 0.8
+    assert skills >= 0.8
+    assert exactly >= 0.7
 
 
 @pytest.mark.parametrize("model", MODELS)
