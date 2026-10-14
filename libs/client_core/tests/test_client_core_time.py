@@ -7,6 +7,8 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+import pytest
+
 from factotum.client_core import CommandRouter, DeviceClient
 from factotum.client_core.testing import (
     ClientRig,
@@ -25,6 +27,7 @@ from factotum.contracts.commands import (
     CommandStatus,
     GetState,
     MoveAlarm,
+    PlayAudio,
     PostponeAlarm,
     SetAlarm,
     SetTimer,
@@ -78,6 +81,47 @@ async def until(condition: Callable[[], bool]) -> None:
 async def ask(rig: ClientRig, command: Any, identity: str = "c1") -> CommandResult:
     rig.connection.say(CommandFrame(id=identity, command=command))
     return await acked(rig, identity)
+
+
+def after_beats(beats: int, action: Callable[[], None]) -> None:
+    """Do ``action`` once the event loop has gone round ``beats`` times: the same alignment with the
+    other tasks every time, which a delay in seconds never gives."""
+    if beats <= 0:
+        action()
+    else:
+        asyncio.get_running_loop().call_soon(after_beats, beats - 1, action)
+
+
+class SpeakerThatNeverEnds(FakeVoiceOutput):
+    """A speaker of clips that goes on with a clip until it is cut, and says that it was."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.began = asyncio.Event()
+        self.cut = False
+
+    async def play(self, audio: AudioPayload, *, alert: bool = False) -> None:
+        await super().play(audio, alert=alert)
+        self.began.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cut = True
+            raise
+
+
+class SinkWithSomethingToDoAtTheEnd(FakeVoiceSink):
+    """A speaker that, the first time a track ends, sets something going at that very moment."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.at_the_end: Callable[[], None] | None = None
+
+    async def finish(self) -> None:
+        await super().finish()
+        then, self.at_the_end = self.at_the_end, None
+        if then is not None:
+            then()
 
 
 class TestSettingAndCancelling:
@@ -449,6 +493,80 @@ class TestWhenItRings:
         await rig.clock.advance(RING_EVERY_S * 3)
         await settle()
         assert len(sink.tracks) == 1
+        rig.connection.drop()
+        await running
+
+    @pytest.mark.parametrize("gap", range(6))
+    @pytest.mark.parametrize("beat", range(10))
+    async def test_a_timer_cancelled_as_its_ring_ends_does_not_take_the_next_clip_with_it(
+        self, beat: int, gap: int
+    ) -> None:
+        """Wherever, to the beat of the event loop, the cancel falls in the end of a ring, and
+        however soon after it the next clip comes, that clip is said whole. The cut of the ring and
+        the beginning of the next clip used to cross (the speaker was told to stop after the next
+        clip had begun, and the clip was dropped), once in ten under load."""
+        sink = SinkWithSomethingToDoAtTheEnd()
+        rig = ClientRig("speaker", voice_sink=sink)
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetTimer(seconds=60, text="Done.", audio=clip(5)))
+
+        def cancel_the_timer() -> None:
+            rig.connection.say(CommandFrame(id="c2", command=CancelTimer()))
+
+        def say_something() -> None:
+            rig.connection.say(CommandFrame(id="c3", command=PlayAudio(text="Hi.", audio=clip(9))))
+
+        def at_the_end_of_the_ring() -> None:
+            after_beats(beat, cancel_the_timer)
+            after_beats(beat + gap, say_something)
+
+        sink.at_the_end = at_the_end_of_the_ring
+        await rig.clock.advance(60)
+        await acked(rig, "c3")
+        await rig.client.wait_until_played()
+
+        assert bytes(sink.tracks[-1].pcm) == pcm_of_fill(9)
+        assert sink.tracks[-1].finished
+        rig.connection.drop()
+        await running
+
+    async def test_cancelling_the_ring_that_is_being_said_lets_the_clip_behind_it_be_said(
+        self,
+    ) -> None:
+        gate = asyncio.Event()
+        sink = FakeVoiceSink(gate=gate)
+        rig = ClientRig("speaker", voice_sink=sink)
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetTimer(seconds=60, text="Done.", audio=clip(5)))
+        await rig.clock.advance(60)
+        await asyncio.wait_for(sink.writing.wait(), 2)  # the ring is being said
+        await ask(rig, PlayAudio(text="Hi.", audio=clip(9)), "c2")  # and a clip waits behind it
+
+        await ask(rig, CancelTimer(), "c3")
+        await settle()
+
+        assert sink.tracks[0].aborted  # the ring is cut on the spot, and not waited for
+        gate.set()
+        await rig.client.wait_until_played()
+        assert bytes(sink.tracks[1].pcm) == pcm_of_fill(9)
+        assert sink.tracks[1].finished
+        rig.connection.drop()
+        await running
+
+    async def test_cancelling_the_ring_of_a_speaker_that_only_plays_clips_cuts_it(self) -> None:
+        output = SpeakerThatNeverEnds()
+        rig = ClientRig("speaker", voice_output=output)
+        running = await rig.running(features=PLAYING)
+        await ask(rig, SetTimer(seconds=60, text="Done.", audio=clip(5)))
+        await rig.clock.advance(60)
+        await asyncio.wait_for(output.began.wait(), 2)
+
+        await ask(rig, CancelTimer(), "c2")
+        await settle()
+
+        assert output.cut
+        assert not rig.client.playing
+        assert [n for n in rig.shown.of("notice") if "could not" in n] == []
         rig.connection.drop()
         await running
 

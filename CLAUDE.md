@@ -424,3 +424,9 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   wordings in half a minute. A small model also writes a value in the words it likes (`7:30` for *sette
   e mezza*, `ten minutes` for *ten minute*), and a text that is not made of the words of the message
   is left out (ADR 0028): the failure is in silence when the value is optional.
+- A flake is a race, and a race is held by a test that moves one side of it a turn of the event loop at
+  a time, not by one that sleeps: `after_beats(n, action)` (`test_client_core_time.py`) does something
+  `n` turns after something else, with the same alignment of the tasks every time. A test of the device
+  failed once in a full run and never alone (a timer cancelled as its ring ended took the next clip
+  with it: the cut of the ring stopped the speaker after the next clip had begun); run eight at a time
+  in a loop it failed about one run in ten, and the sweep of turns fails the old code every time.

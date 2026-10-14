@@ -611,8 +611,13 @@ class DeviceClient:
             announcing = self._announcing
             announcing.cancel()
             await asyncio.wait({announcing})
-            if self._player is not None:
-                await self._player.stop()  # and what the speaker was given of it is dropped
+            # What the speaker was given of it is dropped, if it still has it: while this waited the
+            # announcer may have gone on to the next clip, which is what the speaker has now and
+            # which is not to be dropped, and a speaker with nothing left of the ring has nothing to
+            # stop. A speaker that is busy and a clip that is not being said are the ring's: the
+            # announcer waits for it to be quiet, so nothing begins until this has stopped it.
+            if self._player is not None and self._being_said is None and self._player.playing:
+                await self._player.stop()
 
     async def _announce(self) -> None:
         """Say what was accepted, in order, each when nothing else is being said."""
