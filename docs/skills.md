@@ -42,7 +42,7 @@ The lights are managed by Home Assistant, at `homeassistant.local` on port 8123.
 | `description` | one sentence: what it does. It is embedded, and it is what the model that reads a message is shown. |
 | `examples` | things a person would say, in every language you expect. They are embedded too: the more they sound like the messages, the surer the skill is found. |
 | `target` | `none` (no device: a service), `system` (a Factotum device: the one that was spoken to, or the one that was named) or `external` (a lamp, a door, a TV: bound to the skill in the devices file with what is its own). |
-| `parameters`, `required` | what the message may say: a name, a `type` (`string`, `integer`, `number`, `boolean`), and optionally `description`, `enum`, `minimum`, `maximum`. The `description` is shown, after the type, to the model that reads a message: it is where to say what a value is for (*as the person said it*, *on, when only a brightness is asked for*). `required` is what the skill cannot do without: a required value that is not in the message is asked for, and one is never invented (below). |
+| `parameters`, `required` | what the message may say: a name, a `type` (`string`, `integer`, `number`, `boolean`), and optionally `description`, `enum`, `minimum`, `maximum` and `formats` (a time, a length or a day, in the form the skill takes it: below). The `description` is shown, after the type, to the model that reads a message: it is where to say what a value is for (*as the person said it*, *on, when only a brightness is asked for*). `required` is what the skill cannot do without: a required value that is not in the message is asked for, and one is never invented (below). |
 | `device_parameters` | what is fixed for an external device (its `host`, its `entity_id`): set in the devices file, never said in a message. |
 | `permissions` | `network`: the hosts the skill may reach (`${device.host}` is the host of the device it is bound to; `*.example.com` is every subdomain), `secrets`: the names of the secrets it may be given. Nothing that is not declared is available, and enabling a version grants exactly what it declares. |
 | `effect` | `read_only`, `reversible` or `irreversible`: how severe the worst thing it does is. It decides what a device may start (a shared speaker may not start what cannot be undone) and, for a skill in instructions mode, what a plan may do: **a plan of a `read_only` skill has `GET`s and nothing else**, whatever it says. Declare it honestly. |
@@ -61,6 +61,53 @@ person says *alza il volume*, passes exactly that to the device, and the device 
 step. Do not ask a model for a number that nobody said, and do not make an optional value required to
 get one. A manifest cannot say that one of two values is required (a level, or a direction), so a
 skill that would take either is two skills, as `volume` and `volume-change` are.
+
+**A time, a length of time or a day: formats** (ADR 0030). A person says *sette e mezza*, *tra dieci
+minuti*, *domani*; a skill wants `07:30`, `600` or `+1d`. The skill says in its manifest which form it
+takes, and the system writes what was said in it. The model that reads the message is shown *a time of
+day, as the person said it* and writes the words (a form of them will do: `7:30`, `tomorrow`), and
+**code** reads them, looks for the same thing in what the person said, and writes it in the form. A
+made-up `600` for *cinque minuti* is not what was said, and is left out (or asked for, if the skill
+requires it).
+
+```yaml
+parameters:
+  at:
+    type: string
+    description: when it starts
+    formats:
+      - time: "HH:mm"            # sette e mezza → 07:30, half past seven pm → 19:30
+  length:
+    type: integer
+    formats:
+      - duration: minutes        # un'ora e mezza → 90
+  day:
+    type: string
+    formats:                     # the same thing in more than one form:
+      - date: "dd/MM/yy"         #   il 16 ottobre 2026 → 16/10/26
+      - in_days: "+{n}d"         #   domani → +1d, tra tre giorni → +3d
+      - weekday: name            #   lunedì → monday
+```
+
+| Kind | Type | Written with |
+| --- | --- | --- |
+| `time` | `string` | `HH` or `H` (24-hour clock), or `hh` or `h` with `a` (12-hour clock, `am` or `pm`), and `mm` for the minutes, with `:`, `.` or a space between: `HH:mm`, `h:mm a` |
+| `duration` | `integer` or `number`; `string` for `iso` | `seconds`, `minutes`, `hours` (a number: a whole one if the type is `integer`, and a length that is not a whole number of the unit is not written) or `iso` (`PT1H30M`) |
+| `date` | `string` | `dd` or `d`, `MM` or `M` and, if there is a year, `yyyy` or `yy`, with `/`, `-` or `.` between: `dd/MM/yy`, `yyyy-MM-dd`, `dd/MM` |
+| `in_days` | `integer` for `{n}`; else `string` | the number of days from today as `{n}`, alone or in a template: `+{n}d` |
+| `weekday` | `integer` for `iso`; `string` for `name` | `iso` (1 is Monday) or `name` (`monday`) |
+
+The formats of a parameter are of one group (a time of day, a length of time, a day: `date`, `in_days`
+and `weekday` are ways of writing a day), and a parameter with formats has no `enum`. A pattern that
+means nothing or does not fit the type stops the manifest and says why. A device parameter has no
+formats: nobody says it.
+
+What the system does **not** do: it has **no clock**, so *domani* is `+1d` for a skill that counts days
+and nothing at all for one that wants a calendar date (`dd/MM/yy`): the value is not one and the
+person is asked for the day. A date with no year is not `dd/MM/yy` either. A day is read with the day
+first (*16/10/26*) and a year in four digits (*2026*) in the words; a year said in words is not read,
+and is asked for. A value that no form can write is *unsaid*: left out when optional, asked for when
+required, and never guessed.
 
 **A skill for what a device does is the interface between the model and the device** (ADR 0028). The
 function lives on the device (the volume, a timer); the skill says to the model what can be asked, and

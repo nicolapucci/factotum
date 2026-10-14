@@ -1033,6 +1033,64 @@ should be. Of the three that were not, one was the first message after a restart
 models were still loading (above), one was the translated reminder and one, *prepara un caffè lungo*,
 was declined by the model (*prepara un caffè* asks which kind).
 
+### Values in the form a skill declares (ADR 0030: six mock skills, 62 messages)
+
+A time, a length of time and a day are said in words (*sette e mezza*, *tra tre giorni*, *il 16
+ottobre 2026*) and a skill wants them in a form: the manifest declares it (`formats`, in
+[`skills.md`](skills.md#the-skillmd)) and the system writes what was said in it. The model is shown *a
+time of day, as the person said it*; code reads what it wrote, looks for the same thing in the
+message (in the windows of its words that are not inside a longer one) and writes it. Six mock skills
+take their values this way, each in a different form: `meeting-add` (a day as `16/10/26`, `+1d` or
+`monday`, and a time as `HH:mm`), `tv-record` (a time, and a length in minutes), `tv-sleep` (a length as
+`PT1H30M`), `train-ticket` (a day only as `2026-10-16`), `heating-schedule` (two times in a message)
+and `sprinkler-run` (a length in seconds). Their 62 messages are in the corpus of the mocks (49 that
+ask for it and 13 that are missing something that cannot be guessed), with the words that a model
+that reads each well writes and what the skill must be given.
+
+Measured with the 8B model, as before (the card free, a catalog of 44 skills):
+
+| | first run | after what it found |
+| --- | --- | --- |
+| The 38 messages of the six skills that were written first | 32 of 38 | **38 of 38** |
+| 24 written afterwards, in other words, and said once | | **24 of 24** |
+| The 130 commands of the mocks, exactly as meant (the 38 among them) | 118 | 124 |
+| the right skill | 129 | 129 |
+| The 26 questions left as questions | 24 | 24 |
+| The corpus of the examples, beside the mocks (143 commands, 53 questions) | | 126 exactly, 134 with the right skill, 52 |
+
+The second column is not a fresh measure: what it found was found in the messages of the first. That
+is why 24 more were written afterwards, in other words and for the same six skills, and said to the
+model once, with nothing changed after them: they were all right the first time. The mistakes that are
+left of the mocks are the ones of before (a choice that nobody made, `some jazz`) and two questions that
+look like what a skill does (*a che ora si accende di solito il riscaldamento?*, *quanto ci vuole per
+andare a Roma in treno?*) that the model takes for requests, so that the person is asked for the
+values of the skill.
+
+What it found:
+
+* **A model that writes the value in the form it likes is no longer a skill that failed.** `7:30`,
+  `tomorrow`, `45 minutes` and `16/10/2026` were the values that the check of ADR 0028 left out, and
+  every one of them is read now and written in the form of the skill: the model is asked for words,
+  and is not asked to do sums.
+* **A model sometimes copies only part of what was said.** *Stasera alle nove* came back as `alle
+  nove`, and 9:00 is not what was said (it was 21:00). The check does not believe it, and it does
+  not ask the person either: the model said where, and the person said what, so the value is the one
+  thing that is said where the words are (*stasera alle nove*), unless the words are in two places
+  that say different things. A model that contradicts the person (*sette di mattina* for *sette di
+  sera*) points at nothing.
+* **A model leaves out the word that begins a day.** *In three days* came back as `three days`. In a
+  value a model wrote, that is a number of days; in a message it is as much *for three days*, and is
+  not a day.
+* **The judge was strict about an article.** The title of a meeting is whatever words the model took:
+  `una riunione con Marco` and `riunione con Marco` are the same words that were said, and four of the
+  38 messages were called wrong for it.
+* **What the platform cannot write, it asks for.** The four messages of `train-ticket` that cannot be
+  written (*domani*, *il 16 ottobre* with no year, no day at all, *next friday*) were all asked for
+  the day: the skill wants a calendar date, the platform has no clock, and nothing is guessed. A skill
+  that counts days is given `+1d`.
+* **Two hours in a message, and numbers of a length.** *Dalle sette alle otto* is two readings, and
+  the model says which is for which parameter; the *dieci* of *tra dieci minuti* is not an hour.
+
 ### What the measurements found
 
 * **A run makes a container, and it is the cheapest part of the wait now.** About a second and a half

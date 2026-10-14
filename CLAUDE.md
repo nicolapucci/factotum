@@ -121,7 +121,10 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   (`factotum.actions.grounding`): a number has to be in the message (digits, or words in English and
   Italian up to 999, or the end or the middle of the range the skill declares: *al massimo*), a text
   has to be made of its words, and a choice from a list is the model's reading and is not searched
-  for. What was not said is not a value: a required one is asked for, in the language of the message,
+  for. **A value that a skill takes in a form** (a time, a length of time, a day: `formats` in its
+  manifest, ADR 0030) is what code reads in the message and writes in that form: the model writes the
+  words, and a sum of a model is never believed; what the platform has no clock for (*domani* for a
+  calendar date) is asked for. What was not said is not a value: a required one is asked for, in the language of the message,
   and an optional one is left out so that the device or the skill applies its default (*alza il
   volume* is `volume-change` with a direction and no amount, and the device turns it up by its own
   step: **a skill for what a device does is the interface between the model and the device**, it
