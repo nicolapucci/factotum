@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from factotum.actions.core import platform_skills
+from factotum.actions.measure import measure
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PHONE, PLAN_CASES, PlanCase
 from factotum.actions.rig import ActionsRig, plan_of
 from factotum.actions.skills import load_folder
@@ -148,7 +149,9 @@ async def test_a_planner_that_reads_it_right_gets_the_outcome_the_case_expects(
         )
     rig.plans(ideal_plan(case))
 
-    outcome = await rig.hear(case.speaker, case.message)
+    judged = await measure(rig, case)
 
-    assert outcome.status is case.status, (case.message, outcome.reply)
-    assert outcome.skill == case.skill
+    assert judged.outcome.status is case.status, (case.message, judged.outcome.reply)
+    assert judged.outcome.skill == case.skill
+    # What the live test measures a model with gives a planner that reads it right a perfect score
+    assert judged.problems == [], case.message

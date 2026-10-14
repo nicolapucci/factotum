@@ -14,7 +14,11 @@ Opt-in, because it needs a running Ollama with the models pulled:
 * FACTOTUM_LIVE_EMBED_MODEL: the embedding model (bge-m3).
 
 The messages are those of ``factotum.actions.plan_cases``, said to the devices of the example home
-about the example skills, which are installed and enabled through the catalog as they are.
+about the example skills, which are installed and enabled through the catalog as they are, and the
+skills of the platform. What a model made of each is judged by ``factotum.actions.measure``: the
+skill it chose and the values that skill was called with, whatever the device then did. The device
+of the test answers as a plausible one does (``a_device_answers``) and what it did is not what is
+measured here.
 """
 
 import os
@@ -31,18 +35,16 @@ from factotum.actions.catalog import Catalog
 from factotum.actions.confirmations import Answer, ConfirmationReader
 from factotum.actions.core import platform_skills
 from factotum.actions.matching import SkillMatcher
+from factotum.actions.measure import Judged, measure
 from factotum.actions.plan_cases import DISPLAY, KITCHEN, PLAN_CASES, PlanCase
 from factotum.actions.rig import ActionsRig
-from factotum.actions.testing import FakeSpeech
+from factotum.actions.testing import FakeSpeech, a_device_answers
 from factotum.common.config import Environment, ServiceSettings
 from factotum.common.devauth import DEV_TENANT_ID, DEV_USER_ID, DevAuthenticator
 from factotum.common.urlguard import UrlPolicy
-from factotum.contracts.actions import ActOutcome, ActStatus
-from factotum.contracts.commands import PlayAudio
-from factotum.contracts.identity import Owner, Principal
+from factotum.contracts.actions import ActStatus
+from factotum.contracts.identity import Owner
 from factotum.contracts.models import BindingOptions, ModelRole, ProviderKind
-from factotum.contracts.runner import RunRequest
-from factotum.contracts.skills import ParamValue
 from factotum.contracts.testing import make_model_binding
 from factotum.model_client import DevDelegation, GatewayChat, GatewayEmbedder
 from factotum.model_gateway.api import create_app as create_gateway_app
@@ -79,13 +81,6 @@ that answers there is the one that is already loaded here."""
 ROOT = Path(__file__).resolve().parents[4]
 HOME_TEXT = (ROOT / "config" / "devices.example.yaml").read_text("utf-8")
 EXAMPLES = ROOT / "skills" / "examples"
-
-ENTITIES = {
-    "Living room lamp": "light.living_room",
-    "Bedroom lamp": "light.bedroom",
-    "Garage door": "cover.garage",
-}
-"""The entity each external device of the example home is bound to."""
 
 OWNER = Owner.model_validate({"kind": "tenant", "id": str(DEV_TENANT_ID)})
 
@@ -160,6 +155,7 @@ async def home_of(opened: Gateway) -> ActionsRig:
         patience_s=PATIENCE_S,
         core=core,
     )
+    rig.dispatcher.responder = a_device_answers  # a device says how it is, and what it set
     catalog = Catalog(
         rig.store, rig.index, folder=EXAMPLES, enable_folder=True, core=core, now=rig.clock
     )
@@ -169,89 +165,12 @@ async def home_of(opened: Gateway) -> ActionsRig:
     return rig
 
 
-async def forget_what_is_asked(rig: ActionsRig, principal: Principal) -> None:
-    """A yes or a no that was asked for is answered by the next message on that device: what is
-    measured here is one message at a time."""
-    pending = await rig.store.get_pending(rig.tenant, principal.acts_as, principal.device_id)
-    if pending is not None:
-        await rig.store.take_pending(rig.tenant, pending.id)
-
-
-@dataclass
-class Judged:
-    case: PlanCase
-    outcome: ActOutcome
-    seconds: float
-    ran: RunRequest | None
-    problems: list[str]
-
-    @property
-    def right(self) -> bool:
-        return not self.problems
-
-
-def same(understood: object, wanted: ParamValue) -> bool:
-    """What a person said is not what a model has to repeat letter for letter: a text is the same
-    whatever its case and whatever punctuation it ends with."""
-    if isinstance(understood, str) and isinstance(wanted, str):
-        return understood.strip().strip(".!?").casefold() == wanted.strip().strip(".!?").casefold()
-    return understood == wanted
-
-
-def judge(
-    case: PlanCase, outcome: ActOutcome, ran: RunRequest | None, said: Sequence[str] = ()
-) -> list[str]:
-    """What is wrong with what became of a message, in a few words each; nothing when it is
-    right. ``said`` is the words of the clips that a device was given: a skill of the platform
-    (``announce``) is not run by the runner, it gives clips."""
-    problems: list[str] = []
-    if outcome.status is not case.status:
-        problems.append(f"{outcome.status.value} instead of {case.status.value}")
-    if outcome.skill != case.skill:
-        problems.append(f"skill {outcome.skill} instead of {case.skill}")
-    if case.skill == "announce":
-        if case.status is ActStatus.DONE:
-            if not said:
-                problems.append("nothing was said")
-            elif not same(" ".join(said), case.params["message"]):
-                problems.append(
-                    f"{' '.join(said)!r} was said instead of {case.params['message']!r}"
-                )
-    elif ran is not None:
-        for name, value in case.params.items():
-            if not same(ran.params.get(name), value):
-                problems.append(f"{name}={ran.params.get(name)!r} instead of {value!r}")
-        if outcome.skill == case.skill:  # a value that was run and that nobody said (ADR 0028)
-            problems.extend(
-                f"{name}={value!r} was run and nobody said it"
-                for name, value in ran.params.items()
-                if name not in case.params
-            )
-        if case.device in ENTITIES and ran.device_params.get("entity_id") != ENTITIES[case.device]:
-            problems.append(f"device {ran.device_params.get('entity_id')} instead of {case.device}")
-    elif case.status is ActStatus.DONE:
-        problems.append("nothing was run")
-    return problems
-
-
 def percentile(values: Sequence[float], share: float) -> float:
     return sorted(values)[min(len(values) - 1, int(len(values) * share))]
 
 
 async def run_corpus(rig: ActionsRig) -> list[Judged]:
-    judged: list[Judged] = []
-    for case in PLAN_CASES:
-        principal = rig.principal(case.speaker)
-        await forget_what_is_asked(rig, principal)
-        before = len(rig.runner.requests)
-        given = len(rig.dispatcher.given)
-        began = time.perf_counter()
-        outcome = await rig.hear(case.speaker, case.message)
-        seconds = time.perf_counter() - began
-        ran = rig.runner.requests[-1] if len(rig.runner.requests) > before else None
-        said = [c.text for _, _, c in rig.dispatcher.given[given:] if isinstance(c, PlayAudio)]
-        judged.append(Judged(case, outcome, seconds, ran, judge(case, outcome, ran, said)))
-    return judged
+    return [await measure(rig, case) for case in PLAN_CASES]
 
 
 @pytest.mark.parametrize("model", MODELS)
