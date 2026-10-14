@@ -23,7 +23,7 @@ from factotum.contracts.commands import AlarmDay, Weekday
 # ---- words ---------------------------------------------------------------------------------------
 
 _AND = frozenset({"e", "and"})
-_ARTICLES = frozenset({"un", "uno", "una", "a", "an"})
+_ARTICLES = frozenset({"un", "uno", "una", "a", "an", "another", "altro", "altra"})
 _OF = frozenset({"d", "di", "of"})
 _HALF = frozenset({"mezz", "mezza", "mezzo", "half"})
 _QUARTER = frozenset({"quarto", "quarter"})
@@ -38,8 +38,10 @@ _WEEKS = frozenset({"settimana", "settimane", "week", "weeks"})
 _FOR_A_DURATION = frozenset(
     {"tra", "fra", "per", "da", "di", "in", "il", "lo", "la", "un", "una", "uno", "timer"}
     | {"for", "of", "the", "a", "an", "to", "about", "circa"}
+    | {"more", "another", "ancora", "altri", "altre", "altro", "altra"}
 )
-"""What is said around a length of time without meaning anything by it."""
+"""What is said around a length of time without meaning anything by it. *Five more minutes* and
+*ancora cinque minuti* are five minutes: it is how a person puts an alarm off."""
 
 # ---- the tokens ----------------------------------------------------------------------------------
 
@@ -152,6 +154,8 @@ def _term(words: list[str], index: int, last: int | None) -> tuple[float, int, i
     if quantity is None:
         return None
     value, end = quantity
+    if end + 1 < size and words[end] == "more" and _unit(words[end + 1]) is not None:
+        end += 1  # five more minutes
     # two and a half minutes, due ore e un quarto
     joined = end + 1 if end < size and words[end] in _AND else end
     if joined + 1 < size and words[joined] in _ARTICLES and words[joined + 1] in _HALF | _QUARTER:
@@ -261,6 +265,7 @@ _IN = frozenset({"tra", "fra", "in"})
 
 _FOR_AN_ALARM = frozenset(
     {"alle", "all", "le", "l", "ore", "ora", "il", "lo", "la", "del", "della", "di", "a", "al"}
+    | {"delle", "dell", "dal", "dalla", "dalle", "dall", "nelle"}
     | {"per", "nel", "nella", "sveglia", "sul", "sulle", "tra", "fra", "e", "and"}
     | {"at", "on", "the", "of", "for", "o", "clock", "oclock", "in"}
     | {"next", "prossimo", "prossima", "this", "questo", "questa", "alarm"}
@@ -290,7 +295,7 @@ def _hour_number(words: list[str], index: int) -> tuple[int, int] | None:
     of the day is for ``_on_the_24_hour_clock`` to say, once, for every way of saying one."""
     if index >= len(words):
         return None
-    if words[index] == "una" and words[index - 1 : index] in (["all"], ["l"]):
+    if words[index] == "una" and words[index - 1 : index] in (["all"], ["l"], ["dell"], ["dall"]):
         return 1, 1
     return number_at(words, index)
 
