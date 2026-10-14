@@ -1008,6 +1008,30 @@ What it found:
   dentist* is `to call the dentist` as often as `call the dentist` (and *di comprare il pane*), and
   both are the words that were said: the judge lets that one word in front through (`to`, `di`,
   `that`, `che`), and the mock says *I will remind you: …* so that neither reads wrong.
+* **A free text is sometimes written in English, and the code leaves it out.** Said to the running
+  stack, *ricordami di chiamare mia madre domani alle nove* came back as `what: to call my mother`,
+  `when: tomorrow at nine`, and *ricordami di portare fuori la spazzatura stasera* as `to take out the
+  trash tonight`: two of six Italian reminders, and always with a time word in them (without it the
+  words were copied). The text is not made of the words that were said, so it is left out and the
+  person is asked (*Mi serve ancora: what*), which is the system doing what it should with a model that
+  does not. Asking in the prompt for every text to be copied in its words and language changed none
+  of the six, and made an optional `when` English in one that had been right. Writing `language`
+  before `parameters` in the plan, so that the model has said *it* before it writes the values, fixed
+  both and had a price: a choice from a list that is in the other language was now written in the
+  language of the message (*pulisci il salotto* gave `salotto` and not `living room`), and the mock
+  corpus read 78 of 92 exactly instead of 81 (the corpus of the examples 128 of 143 instead of 124,
+  with the same skills chosen). It trades one weakness for the other, and a skill's list can be in
+  either language, so it was not kept.
+
+On the stack, with the models, 21 messages said to the display one after the other (`factotum-terminal`,
+the audit trail for what was chosen): 17 reached the skill that was meant and were answered in the
+words of its mock (*In casa ci sono 21 gradi e il termostato è a 20.*, *A Roma ci sono 22 gradi e il
+cielo è sereno.*, *L'ultima partita di Napoli è finita 2 a 1.*, *Ho messo il canale 5.*), two of them
+with a value that nobody said (the oven's mode, and the query *some jazz*); the door and the message to
+a person asked first (*Vuoi chiudere a chiave la porta di casa?*); *tell me a joke* was declined as it
+should be. Of the three that were not, one was the first message after a restart, declined because the
+models were still loading (above), one was the translated reminder and one, *prepara un caffè lungo*,
+was declined by the model (*prepara un caffè* asks which kind).
 
 ### What the measurements found
 
