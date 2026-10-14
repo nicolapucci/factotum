@@ -7,6 +7,10 @@ sums: *300* for *five minutes* is a number that was not said. So the sums are do
 and the platform needs no clock for them: an hour and a minute are not a moment, and a day is read
 as *a way of saying a day* (``AlarmDay``) that the device, which has the calendar, turns into one.
 
+The readers take the words of a message already split (``tokenize``), so that a piece of a message
+can be read as well as a whole value: ``factotum.actions.formats`` looks for what a person said in
+the windows of what they said and writes it in the form that a skill declares (ADR 0030).
+
 A reader is strict. A word that it does not know is not skipped, unless it is one of those that a
 person says around a time without meaning anything by it (*at*, *alle*, *the*, *for*): whatever else
 is there might have changed what was meant (*in two weeks*, *every day*), and what is not understood
@@ -58,7 +62,7 @@ def _plain(text: str) -> str:
     return _DAY_PERIOD.sub(r"\1m", letters)
 
 
-def _tokens(text: str, *, decimals: bool) -> list[str]:
+def tokenize(text: str, *, decimals: bool) -> list[str]:
     """Numbers and words: ``2h30`` is ``2``, ``h``, ``30``; ``7:30`` is ``7``, ``30``. A number with
     a decimal point is one token when ``decimals`` (a length of time: ``1,5 hours``) and two when it
     is not (an hour: ``7.30``)."""
@@ -177,7 +181,11 @@ def _term(words: list[str], index: int, last: int | None) -> tuple[float, int, i
 def parse_duration(text: str) -> int | None:
     """How many seconds the words say, or nothing when they are not a length of time that is
     understood: *five minutes*, *un'ora e mezza*, *half an hour*, *2h30*, *a quarter of an hour*."""
-    words = _tokens(text, decimals=True)
+    return read_duration(tokenize(text, decimals=True))
+
+
+def read_duration(words: list[str]) -> int | None:
+    """The same for words that are already split (``tokenize`` with ``decimals``)."""
     total, last, index, found = 0.0, None, 0, False
     while index < len(words):
         if words[index] in _AND:
@@ -283,11 +291,25 @@ class AlarmWords:
     day: AlarmDay
 
 
+@dataclass(frozen=True, slots=True)
+class SaidDay:
+    """A day as a person said it (ADR 0030): in some days from today, on a day of the week, or on a
+    date, with the year if they said it. It is a reading of words and not a date: the platform has
+    no calendar to turn *tomorrow* into one."""
+
+    in_days: int | None = None
+    weekday: Weekday | None = None
+    day: int | None = None
+    month: int | None = None
+    year: int | None = None
+
+
 @dataclass(slots=True)
 class _Reading:
     clock: tuple[int, int] | None = None
     day: AlarmDay | None = None
     period: str | None = None
+    year: int | None = None
 
 
 def _hour_number(words: list[str], index: int) -> tuple[int, int] | None:
@@ -516,20 +538,8 @@ def parse_alarm(text: str) -> AlarmWords | None:
     """The hour and the day that the words say, or nothing when they say no hour, say two of
     something, or say what is not understood. *Domani alle sette e mezza*, *lunedì 6:45*, *half past
     seven pm on the 15th of October*."""
-    words = _tokens(text, decimals=False)
-    reading = _Reading()
-    index = 0
-    while index < len(words):
-        if _is_a_length_from_now(words, index):
-            return None
-        step = _read(words, index, reading)
-        if step is None:
-            if words[index] not in _FOR_AN_ALARM:
-                return None
-            index += 1
-            continue
-        index = step
-    if reading.clock is None:
+    reading = _reading_of(tokenize(text, decimals=False), years=False)
+    if reading is None or reading.clock is None:
         return None
     hour = _on_the_24_hour_clock(*reading.clock, reading.period)
     if hour is None:
@@ -537,7 +547,56 @@ def parse_alarm(text: str) -> AlarmWords | None:
     return AlarmWords(hour[0], hour[1], reading.day or AlarmDay())
 
 
-def _read(words: list[str], index: int, reading: _Reading) -> int | None:
+def read_time(words: list[str]) -> tuple[int, int] | None:
+    """The hour and the minute, on the 24-hour clock, that words already split (``tokenize``, with
+    no ``decimals``) say; the day that goes with them, if they say one, is let be. Nothing when they
+    say no hour, say two, or say what is not understood (ADR 0030)."""
+    reading = _reading_of(words, years=False)
+    if reading is None or reading.clock is None:
+        return None
+    return _on_the_24_hour_clock(*reading.clock, reading.period)
+
+
+def read_day(words: list[str]) -> SaidDay | None:
+    """The day that words already split (``tokenize``, with no ``decimals``) say, and the year of a
+    date if they say it; the hour that goes with it, if they say one, is let be. Nothing when they
+    say no day, say two, or say what is not understood (ADR 0030)."""
+    reading = _reading_of(words, years=True)
+    if reading is None or reading.day is None:
+        return None
+    if reading.clock is not None and _on_the_24_hour_clock(*reading.clock, reading.period) is None:
+        return None  # a number that is no hour (2026, 26) is not let be: it is not understood
+    said = reading.day
+    return SaidDay(said.in_days, said.weekday, said.day, said.month, reading.year)
+
+
+def _reading_of(words: list[str], *, years: bool) -> _Reading | None:
+    """What the words say of an hour and of a day, or nothing when they say what is not
+    understood. With ``years`` a date may be followed by its year."""
+    reading = _Reading()
+    index = 0
+    while index < len(words):
+        if _is_a_length_from_now(words, index):
+            return None
+        step = _read(words, index, reading, years=years)
+        if step is None:
+            if words[index] not in _FOR_AN_ALARM:
+                return None
+            index += 1
+            continue
+        index = step
+    return reading
+
+
+def _year_at(words: list[str], index: int) -> int | None:
+    """A year said in digits (*2026*) at ``index``."""
+    if index >= len(words):
+        return None
+    word = words[index]
+    return int(word) if word.isdigit() and len(word) == 4 and 1900 <= int(word) <= 2200 else None
+
+
+def _read(words: list[str], index: int, reading: _Reading, *, years: bool) -> int | None:
     """Take what is at ``index`` into the reading, and say where it ends; nothing when it is none
     of what is looked for, or when it is a second of something that is said once."""
     word = words[index]
@@ -554,6 +613,9 @@ def _read(words: list[str], index: int, reading: _Reading) -> int | None:
             return None
         reading.day = said
         reading.period = with_period or reading.period
+        year = _year_at(words, end) if years and said.month is not None else None
+        if year is not None:
+            reading.year, end = year, end + 1
         return end
     clock = _clock_at(words, index)
     if clock is not None and reading.clock is None:
