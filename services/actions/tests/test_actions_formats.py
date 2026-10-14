@@ -165,6 +165,20 @@ class TestReadingAValue:
         assert read_value("16/10/26", FormatGroup.DAY) == SaidDay(day=16, month=10, year=2026)
         assert read_value(" 2026-10-16 ", FormatGroup.DAY) == SaidDay(day=16, month=10, year=2026)
 
+    def test_a_number_of_days_may_lack_the_word_that_begins_it_in_a_value_and_not_in_a_message(
+        self,
+    ) -> None:
+        assert read_value("three days", FormatGroup.DAY) == SaidDay(in_days=3)
+        assert read_value("2 weeks", FormatGroup.DAY) == SaidDay(in_days=14)
+        assert said_in("per three days", FormatGroup.DAY) == set()
+        assert said_in("stay for three days", FormatGroup.DAY) == set()
+
+    def test_only_a_number_of_days_may_lack_it(self) -> None:
+        for written in ("three hours", "days", "three", "monday days", "ten minutes"):
+            assert read_value(written, FormatGroup.DAY) is None
+        assert read_value("three days", FormatGroup.DURATION) is None
+        assert read_value("three days", FormatGroup.TIME) is None
+
     def test_a_date_in_digits_may_have_an_article_in_front_of_it(self) -> None:
         for written in ("il 16/10/26", "the 16/10/26", "on 16/10/26", "il 16/10/26."):
             assert read_value(written, FormatGroup.DAY) == SaidDay(day=16, month=10, year=2026)
@@ -321,8 +335,8 @@ class TestWhatASkillIsGiven:
             ("7:30", "svegliami alle sette e mezza di sera"),  # so is the evening
             ("19:30", "svegliami alle sette e mezza"),  # and not said when it is not
             ("9:00", "dalle sette alle otto"),
-            ("sette", "svegliami alle sette e mezza"),
             ("domani", "svegliami alle sette e mezza"),
+            ("seven", "svegliami alle sette e mezza"),  # not the words of the message
             ("25:00", "svegliami alle 25:00"),
             ("", "svegliami alle sette"),
             ("7:30", ""),
@@ -395,11 +409,39 @@ class TestWhatASkillIsGiven:
             ("300", "timer di cinque minuti"),  # a number with no unit is nothing said
             ("10 minuti", "timer di cinque minuti"),
             ("5 minuti", "timer di un'ora e cinque minuti"),
-            ("un'ora", "timer di un'ora e cinque minuti"),
         ],
     )
     def test_a_length_that_was_not_said_is_not_given(self, written: str, message: str) -> None:
         assert convert(spec("integer", {"duration": "seconds"}), written, message) is None
+
+    def test_the_person_said_the_whole_of_what_a_model_copied_only_part_of(self) -> None:
+        """The model says where, and the person said what (*alle nove* for *stasera alle nove*)."""
+        length = spec("integer", {"duration": "seconds"})
+
+        assert convert(TIME, "alle nove", "stasera alle nove registra il canale 5") == "21:00"
+        assert convert(TIME, "sette", "svegliami alle sette e mezza") == "07:30"
+        assert convert(TIME, "alle sette", "domani sera alle sette") == "19:00"
+        assert convert(length, "un'ora", "timer di un'ora e cinque minuti") == 3900
+        assert convert(DAY, "il 16 ottobre", "il 16 ottobre 2026") == "16/10/26"
+
+    def test_what_a_model_copied_from_two_places_that_say_different_things_is_not_a_value(
+        self,
+    ) -> None:
+        message = "alle sette e mezza e poi alle sette di sera"
+
+        assert convert(TIME, "alle sette", message) is None
+        assert convert(TIME, "alle sette e mezza", message) == "07:30"
+
+    def test_a_model_that_contradicts_the_person_is_not_pointing_at_what_they_said(self) -> None:
+        assert convert(TIME, "sette di mattina", "svegliami alle sette di sera") is None
+        assert convert(TIME, "7", "svegliami alle sette e mezza") is None  # not their words
+        assert convert(TIME, "sera", "svegliami alle sette di sera") is None  # no hour at all
+        assert convert(TIME, "la sera", "svegliami alle sette di sera") is None
+
+    def test_a_day_without_the_word_that_begins_it_is_the_day_it_would_have_been(self) -> None:
+        assert convert(DAY, "three days", "metti la riunione in three days") == "+3d"
+        assert convert(DAY, "tre giorni", "metti la riunione fra tre giorni") == "+3d"
+        assert convert(DAY, "two weeks", "metti la riunione in two weeks") == "+14d"
 
     def test_a_length_that_the_form_cannot_say_is_not_given(self) -> None:
         whole_minutes = spec("integer", {"duration": "minutes"})

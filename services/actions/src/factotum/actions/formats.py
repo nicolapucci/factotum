@@ -11,7 +11,8 @@ were said, and this does the rest, in code, so that nothing is a sum of a model:
    *sette e mezza*, and 7:00 is not what that says);
 3. if the model's reading is one of the message's, it is a value that the person said (ADR 0028:
    a made-up *600* for *cinque minuti* is a reading that no window of the message has), and it is
-   **written** in the first form the skill declared that can say it.
+   **written** in the form the skill declared that can say it. A model that copied only part of
+   what was said (*alle nove* for *stasera alle nove*) pointed at it: the person said the whole.
 
 A form that cannot say it is not used: the platform has no clock, so *domani* is ``+1d`` for a skill
 that counts days and nothing at all for one that wants a calendar date, and a date with no year
@@ -172,8 +173,9 @@ def _spans(words: list[str], read: Callable[[list[str]], Reading | None]) -> lis
 
 
 @lru_cache(maxsize=256)
-def said_in(message: str, group: FormatGroup) -> frozenset[Reading]:
-    """Every time, length or day (by ``group``) that ``message`` says."""
+def _where_said(message: str, group: FormatGroup) -> tuple[tuple[Span, ...], tuple[SaidDay, ...]]:
+    """Where ``message`` says a time, a length or a day (by ``group``), in its words (with the
+    numeric dates taken out of them), and the dates that it writes in digits."""
     masked, dates = _masked(message)
     words = _words(masked, group)
     spans = _spans(words, _READ[group])
@@ -181,10 +183,32 @@ def said_in(message: str, group: FormatGroup) -> frozenset[Reading]:
         # the *dieci* of *tra dieci minuti* and the *due* of *per due ore* are numbers of a length
         lengths = _spans(words, _length)
         spans = [span for span in spans if not any(_contained(span, length) for length in lengths)]
+    return tuple(spans), tuple(dates)
+
+
+def said_in(message: str, group: FormatGroup) -> frozenset[Reading]:
+    """Every time, length or day (by ``group``) that ``message`` says."""
+    spans, dates = _where_said(message, group)
     found = {reading for _, _, reading in spans}
     if group is FormatGroup.DAY:
         found.update(dates)
     return frozenset(found)
+
+
+def _pointed_at(text: str, group: FormatGroup, message: str) -> Reading | None:
+    """What the message says in the words that a model copied only part of: *alle nove* for
+    *stasera alle nove*, *sette* for *sette e mezza*. The model said where, and the person said
+    what: the one thing that is said where it pointed. Nothing when the words are not in the message
+    as they are, or are in two places that say different things."""
+    spans, _ = _where_said(message, group)
+    words = _words(_masked(message)[0], group)
+    pointer = _words(text, group)
+    readings: set[Reading] = set()
+    for start in range(len(words) - len(pointer) + 1):
+        end = start + len(pointer)
+        if words[start:end] == pointer:
+            readings.update(found for first, last, found in spans if first <= start and end <= last)
+    return next(iter(readings)) if len(readings) == 1 else None
 
 
 _AROUND_A_DATE = frozenset({"il", "l", "the", "on", "of", "di", "del", "dal", "al", "per", "for"})
@@ -200,7 +224,18 @@ def read_value(text: str, group: FormatGroup) -> Reading | None:
         around = [word for word in _words(masked, group) if word != _MASK]
         alone = len(dates) == 1 and all(word in _AROUND_A_DATE for word in around)
         return dates[0] if group is FormatGroup.DAY and alone else None
-    return _READ[group](_words(text, group))
+    found = _READ[group](_words(text, group))
+    if found is None and group is FormatGroup.DAY:
+        found = _a_number_of_days(text)
+    return found
+
+
+def _a_number_of_days(text: str) -> Reading | None:
+    """*Three days* for *in three days*: a model that is asked for a day leaves out the word that
+    begins it. It is only read so when it is what a model wrote, and a number of days; the same
+    words in a message are *for three days* as much as *in three days*, and are not a day."""
+    found = read_day(["in", *_words(text, FormatGroup.DAY)])
+    return found if found is not None and found.in_days is not None else None
 
 
 # ---- writing a form ------------------------------------------------------------------------------
@@ -298,8 +333,12 @@ def convert(spec: ParameterSpec, raw: object, message: str) -> ParamValue | None
     if text is None:
         return None
     meant = read_value(text, group)
-    if meant is None or meant not in said_in(message, group):
+    if meant is None:
         return None
+    if meant not in said_in(message, group):
+        meant = _pointed_at(text, group, message)
+        if meant is None:
+            return None
     for fmt in spec.formats:
         written = write(fmt, meant, spec.type)
         if written is not None:
