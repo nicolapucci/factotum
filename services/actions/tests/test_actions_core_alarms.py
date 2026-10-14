@@ -10,7 +10,14 @@ from uuid import uuid4
 
 import pytest
 
-from factotum.actions.core import Alarm, AlarmCancel, AlarmStatus, platform_skills
+from factotum.actions.core import (
+    Alarm,
+    AlarmCancel,
+    AlarmChange,
+    AlarmPostpone,
+    AlarmStatus,
+    platform_skills,
+)
 from factotum.actions.core.phrases import CoreSay, core_say
 from factotum.actions.rig import HOME_TEXT, ActionsRig, plan_of
 from factotum.actions.store import InMemoryStore
@@ -22,6 +29,8 @@ from factotum.contracts.commands import (
     CancelAlarm,
     CommandResult,
     GetState,
+    MoveAlarm,
+    PostponeAlarm,
     SetAlarm,
     Weekday,
 )
@@ -36,12 +45,14 @@ from factotum.contracts.timekeeping import (
     AlarmInfo,
     AlarmsCancelled,
     AlarmSet,
+    AlarmsMoved,
+    AlarmsPostponed,
     TimeState,
     data_of,
 )
 
 KITCHEN = "Kitchen speaker"
-ROOM_FOR_ALL = ("alarm", "alarm-cancel", "alarm-status")
+ROOM_FOR_ALL = ("alarm", "alarm-cancel", "alarm-postpone", "alarm-change", "alarm-status")
 
 
 def civil(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
@@ -104,6 +115,8 @@ class TestWhatTheyAre:
 
         assert manifests["alarm"].effect is Effect.REVERSIBLE
         assert manifests["alarm-cancel"].effect is Effect.REVERSIBLE
+        assert manifests["alarm-postpone"].effect is Effect.REVERSIBLE
+        assert manifests["alarm-change"].effect is Effect.REVERSIBLE
         assert manifests["alarm-status"].effect is Effect.READ_ONLY
 
     def test_each_asks_for_what_it_cannot_do_without_and_nothing_else(self) -> None:
@@ -113,6 +126,10 @@ class TestWhatTheyAre:
         assert set(manifests["alarm"].parameters) == {"time", "day"}  # and the day only if said
         assert manifests["alarm-cancel"].required == ()
         assert set(manifests["alarm-cancel"].parameters) == {"time"}
+        assert manifests["alarm-postpone"].required == ()  # how much is the device's, if not said
+        assert set(manifests["alarm-postpone"].parameters) == {"by"}
+        assert manifests["alarm-change"].required == ("time",)
+        assert set(manifests["alarm-change"].parameters) == {"time", "day", "from"}
         assert manifests["alarm-status"].parameters == {}
 
     def test_the_hour_and_the_day_are_asked_for_in_words_and_never_as_a_date(self) -> None:
@@ -120,18 +137,21 @@ class TestWhatTheyAre:
         to write a date, and nothing in the skill makes one."""
         manifests = platform_skills(FakeSpeech()).manifests()
 
-        for parameter in manifests["alarm"].parameters.values():
-            assert parameter.type.value == "string"
-            assert "words" in (parameter.description or "")
-        assert "date" not in " ".join(
-            parameter.description or "" for parameter in manifests["alarm"].parameters.values()
-        )
+        for name in ("alarm", "alarm-postpone", "alarm-change"):
+            for parameter in manifests[name].parameters.values():
+                assert parameter.type.value == "string", name
+                assert "words" in (parameter.description or ""), name
+            assert "date" not in " ".join(
+                parameter.description or "" for parameter in manifests[name].parameters.values()
+            ), name
 
     def test_they_are_found_by_what_they_say_of_themselves_in_both_languages(self) -> None:
         manifests = platform_skills(FakeSpeech()).manifests()
         italian = {
             "alarm": ("metti la sveglia", "svegliami"),
             "alarm-cancel": ("cancella", "spegni la sveglia"),
+            "alarm-postpone": ("rimanda la sveglia", "ancora cinque minuti"),
+            "alarm-change": ("sposta la sveglia", "cambia la sveglia"),
             "alarm-status": ("che ora suona", "quali sveglie"),
         }
 
@@ -451,6 +471,347 @@ class TestCancellingAnAlarm:
             done.after([])
 
 
+class TestPuttingAnAlarmOff:
+    async def test_with_no_length_said_how_long_is_the_device_s_to_choose(self) -> None:
+        tenant = make_tenant_id()
+
+        done = await AlarmPostpone().run(
+            request_of(tenant, "alarm-postpone"), a_device(tenant), language="en"
+        )
+
+        assert done.commands == (PostponeAlarm(),)  # the skill has no snooze to tell
+        assert done.message is None
+        assert done.audit == "asked to put the alarm off by the snooze of the device"
+
+    @pytest.mark.parametrize(
+        ("words", "seconds"),
+        [
+            ("ten minutes", 600),
+            ("dieci minuti", 600),
+            ("half an hour", 1800),
+            ("mezz'ora", 1800),
+            ("5 minutes", 300),
+            ("un quarto d'ora", 900),
+            ("un'ora e mezza", 5400),
+            ("1 second", 1),
+            ("24 hours", 86_400),
+        ],
+    )
+    async def test_the_length_a_person_said_is_read_by_code_and_passed_on(
+        self, words: str, seconds: int
+    ) -> None:
+        tenant = make_tenant_id()
+
+        done = await AlarmPostpone().run(
+            request_of(tenant, "alarm-postpone", by=words), a_device(tenant), language="en"
+        )
+
+        assert done.commands == (PostponeAlarm(seconds=seconds),)
+        assert done.audit == f"asked to put the alarm off by {seconds} s"
+
+    @pytest.mark.parametrize(
+        "words", ["soon", "", "a while", "tra poco", "mezzogiorno", "two days"]
+    )
+    async def test_a_length_that_is_not_one_is_said_and_nothing_is_put_off(
+        self, words: str
+    ) -> None:
+        tenant = make_tenant_id()
+
+        with pytest.raises(SkillFailedError) as raised:
+            await AlarmPostpone().run(
+                request_of(tenant, "alarm-postpone", by=words), a_device(tenant), language="en"
+            )
+
+        assert raised.value.message == "I did not understand how long that is."
+
+    @pytest.mark.parametrize("words", ["0 minutes", "48 hours", "1500 minutes", "86401 seconds"])
+    async def test_a_length_out_of_the_range_of_a_day_says_so(self, words: str) -> None:
+        tenant = make_tenant_id()
+
+        with pytest.raises(SkillFailedError) as raised:
+            await AlarmPostpone().run(
+                request_of(tenant, "alarm-postpone", by=words), a_device(tenant), language="it"
+            )
+
+        assert raised.value.message == "Una sveglia si può rimandare da un secondo a un giorno."
+
+    async def test_a_length_that_is_not_a_text_is_not_a_length(self) -> None:
+        tenant = make_tenant_id()
+
+        with pytest.raises(SkillFailedError, match="how long"):
+            await AlarmPostpone().run(
+                request_of(tenant, "alarm-postpone", by=10), a_device(tenant), language="en"
+            )
+
+    @pytest.mark.parametrize(
+        ("postponed", "language", "said"),
+        [
+            (
+                (alarm(civil(2026, 10, 13, 22, 15)),),
+                "en",
+                "The alarm will ring today at 10:15 PM.",
+            ),
+            (
+                (alarm(civil(2026, 10, 13, 22, 15)),),
+                "it",
+                "La sveglia suonerà oggi alle 22 e 15.",
+            ),
+            (
+                (alarm(civil(2026, 10, 14, 7, 10)),),
+                "en",
+                "The alarm will ring tomorrow at 7:10 AM.",
+            ),
+            (
+                (alarm(civil(2026, 10, 14, 7, 10)),),
+                "it",
+                "La sveglia suonerà domani alle 7 e 10.",
+            ),
+            (
+                (alarm(civil(2026, 10, 14, 7, 10)), alarm(civil(2026, 10, 14, 8, 10))),
+                "en",
+                "2 alarms are put off.",
+            ),
+            (
+                (alarm(civil(2026, 10, 14, 7, 10)), alarm(civil(2026, 10, 14, 8, 10))),
+                "it",
+                "Ho rimandato 2 sveglie.",
+            ),
+        ],
+    )
+    async def test_it_says_where_the_alarm_is_now_as_the_device_has_it(
+        self, postponed: tuple[AlarmInfo, ...], language: str, said: str
+    ) -> None:
+        tenant = make_tenant_id()
+        done = await AlarmPostpone().run(
+            request_of(tenant, "alarm-postpone"), a_device(tenant), language=language
+        )
+
+        assert done.after is not None
+        answer = AlarmsPostponed(now=NOW, postponed=postponed)
+        assert done.after(answered(data_of(answer))) == said
+
+    @pytest.mark.parametrize(
+        ("language", "said"),
+        [("en", "There is no alarm to change."), ("it", "Non c'è nessuna sveglia da cambiare.")],
+    )
+    async def test_with_no_alarm_to_put_off_the_person_is_told_so(
+        self, language: str, said: str
+    ) -> None:
+        """As for a cancel: there being none is a thing to say, and no skill has failed."""
+        tenant = make_tenant_id()
+        done = await AlarmPostpone().run(
+            request_of(tenant, "alarm-postpone"), a_device(tenant), language=language
+        )
+
+        assert done.after is not None
+        assert done.after(answered(data_of(AlarmsPostponed(now=NOW)))) == said
+
+    @pytest.mark.parametrize("answer", [None, {}, {"postponed": []}, {"now": "tomorrow"}])
+    async def test_a_device_that_does_not_say_which_alarm_it_put_off_is_a_skill_that_failed(
+        self, answer: Mapping[str, object] | None
+    ) -> None:
+        tenant = make_tenant_id()
+        done = await AlarmPostpone().run(
+            request_of(tenant, "alarm-postpone"), a_device(tenant), language="en"
+        )
+
+        assert done.after is not None
+        with pytest.raises(SkillRunError, match="did not say which alarm it put off"):
+            done.after(answered(answer))
+        with pytest.raises(SkillRunError):
+            done.after([])
+
+
+class TestChangingTheHourOfAnAlarm:
+    @pytest.mark.parametrize(
+        ("time", "day", "was", "wanted", "named"),
+        [
+            ("alle otto", None, None, (8, 0, AlarmDay()), None),
+            ("seven thirty", None, None, (7, 30, AlarmDay()), None),
+            ("alle 7", "domani", None, (7, 0, AlarmDay(in_days=1)), None),
+            ("alle otto", None, "alle sette", (8, 0, AlarmDay()), (7, 0)),
+            ("8", "lunedì", "7:30", (8, 0, AlarmDay(weekday=Weekday.MONDAY)), (7, 30)),
+            ("seven", "the 15th of october", None, (7, 0, AlarmDay(day=15, month=10)), None),
+        ],
+    )
+    async def test_the_new_hour_the_day_and_the_alarm_are_given_as_the_person_said_them(
+        self,
+        time: str,
+        day: str | None,
+        was: str | None,
+        wanted: tuple[int, int, AlarmDay],
+        named: tuple[int, int] | None,
+    ) -> None:
+        tenant = make_tenant_id()
+        params: dict[str, ParamValue] = {"time": time}
+        if day is not None:
+            params["day"] = day
+        if was is not None:
+            params["from"] = was
+
+        done = await AlarmChange().run(
+            request_of(tenant, "alarm-change", **params), a_device(tenant), language="en"
+        )
+
+        hour, minute, when = wanted
+        from_hour, from_minute = named or (None, None)
+        assert done.commands == (
+            MoveAlarm(
+                hour=hour, minute=minute, day=when, from_hour=from_hour, from_minute=from_minute
+            ),
+        )
+        assert done.message is None
+
+    async def test_no_date_is_ever_worked_out_here_either(self) -> None:
+        tenant = make_tenant_id()
+
+        done = await AlarmChange().run(
+            request_of(tenant, "alarm-change", time="7", day="tomorrow"),
+            a_device(tenant),
+            language="en",
+        )
+
+        [command] = done.commands
+        assert isinstance(command, MoveAlarm)
+        assert set(command.day.model_dump(exclude_none=True)) == {"in_days"}
+        assert done.audit == "asked to move the next alarm to ring to 07:00 (in_days 1)"
+
+    async def test_the_trail_says_which_alarm_was_named(self) -> None:
+        tenant = make_tenant_id()
+
+        done = await AlarmChange().run(
+            request_of(tenant, "alarm-change", time="8", **{"from": "alle sette e mezza"}),
+            a_device(tenant),
+            language="it",
+        )
+
+        assert done.audit == "asked to move the alarm at 7:30 to 08:00 (the next time)"
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"time": "soon"},
+            {"time": "25"},
+            {"time": ""},
+            {"time": 8},
+            {"time": "8", "day": "every day"},
+            {"time": "8", "day": 3},
+            {"time": "in ten minutes"},
+            {"time": "8", "from": "soon"},
+            {"time": "8", "from": ""},
+            {"day": "tomorrow"},
+            {},
+        ],
+    )
+    async def test_what_is_not_an_hour_and_a_day_is_a_skill_that_says_so_and_nothing_is_moved(
+        self, params: dict[str, ParamValue]
+    ) -> None:
+        tenant = make_tenant_id()
+
+        with pytest.raises(SkillFailedError) as raised:
+            await AlarmChange().run(
+                request_of(tenant, "alarm-change", **params), a_device(tenant), language="en"
+            )
+
+        assert raised.value.message == "I did not understand what time that is."
+
+    @pytest.mark.parametrize(
+        ("moved", "language", "said"),
+        [
+            ((alarm(TOMORROW_AT_SEVEN),), "en", "The alarm will ring tomorrow at 7 AM."),
+            ((alarm(TOMORROW_AT_SEVEN),), "it", "La sveglia suonerà domani alle 7."),
+            (
+                (alarm(civil(2026, 10, 19, 8, 30)),),
+                "it",
+                "La sveglia suonerà lunedì alle 8 e 30.",
+            ),
+            (
+                (alarm(TOMORROW_AT_SEVEN), alarm(civil(2026, 10, 14, 8))),
+                "en",
+                "2 alarms are moved.",
+            ),
+            (
+                (alarm(TOMORROW_AT_SEVEN), alarm(civil(2026, 10, 14, 8))),
+                "it",
+                "Ho spostato 2 sveglie.",
+            ),
+        ],
+    )
+    async def test_it_says_where_the_alarm_is_now_as_the_device_has_it(
+        self, moved: tuple[AlarmInfo, ...], language: str, said: str
+    ) -> None:
+        tenant = make_tenant_id()
+        done = await AlarmChange().run(
+            request_of(tenant, "alarm-change", time="7"), a_device(tenant), language=language
+        )
+
+        assert done.after is not None
+        assert done.after(answered(data_of(AlarmsMoved(now=NOW, moved=moved)))) == said
+
+    @pytest.mark.parametrize(
+        ("reason", "language", "said"),
+        [
+            ("past", "en", "That time has already gone by."),
+            ("past", "it", "Quell'ora è già passata."),
+            ("no_such_day", "en", "There is no such day."),
+            ("no_such_day", "it", "Quel giorno non esiste."),
+        ],
+    )
+    async def test_a_moment_that_cannot_be_is_a_skill_that_failed_and_says_why_in_its_words(
+        self, reason: str, language: str, said: str
+    ) -> None:
+        tenant = make_tenant_id()
+        done = await AlarmChange().run(
+            request_of(tenant, "alarm-change", time="8", day="oggi"),
+            a_device(tenant),
+            language=language,
+        )
+
+        assert done.after is not None
+        with pytest.raises(SkillFailedError) as raised:
+            done.after(answered({"now": NOW.isoformat(), "reason": reason}))
+        assert raised.value.message == said
+
+    @pytest.mark.parametrize(
+        ("named", "language", "said"),
+        [
+            (None, "en", "There is no alarm to change."),
+            (None, "it", "Non c'è nessuna sveglia da cambiare."),
+            ("seven thirty", "en", "There is no alarm at 7:30 AM."),
+            ("alle sette e mezza", "it", "Non c'è nessuna sveglia alle 7 e 30."),
+        ],
+    )
+    async def test_with_no_alarm_to_move_the_person_is_told_so(
+        self, named: str | None, language: str, said: str
+    ) -> None:
+        """As for a cancel: there being none, or none at that hour, is a thing to say."""
+        tenant = make_tenant_id()
+        params: dict[str, ParamValue] = {"time": "8"}
+        if named is not None:
+            params["from"] = named
+        done = await AlarmChange().run(
+            request_of(tenant, "alarm-change", **params), a_device(tenant), language=language
+        )
+
+        assert done.after is not None
+        assert done.after(answered({"now": NOW.isoformat(), "reason": "none"})) == said
+
+    @pytest.mark.parametrize("answer", [None, {}, {"moved": []}, {"now": NOW.isoformat()}])
+    async def test_a_device_that_does_not_say_which_alarm_it_moved_is_a_skill_that_failed(
+        self, answer: Mapping[str, object] | None
+    ) -> None:
+        tenant = make_tenant_id()
+        done = await AlarmChange().run(
+            request_of(tenant, "alarm-change", time="8"), a_device(tenant), language="en"
+        )
+
+        assert done.after is not None
+        with pytest.raises(SkillRunError, match="did not say which alarm it moved"):
+            done.after(answered(answer))
+        with pytest.raises(SkillRunError):
+            done.after([])
+
+
 class TestSayingWhatIsSet:
     async def test_the_device_is_asked_and_nothing_is_changed(self) -> None:
         tenant = make_tenant_id()
@@ -597,3 +958,85 @@ class TestFromAMessageToADevice:
             "The alarm for tomorrow at 7 AM is cancelled.",
         )
         assert rig.dispatcher.given == [(rig.tenant, rig.device(KITCHEN).id, CancelAlarm())]
+
+    async def test_a_snooze_reaches_the_speaker_with_the_length_that_was_said(self) -> None:
+        rig = self.rig()
+        rig.dispatcher.answer = CommandResult.ok(
+            data_of(AlarmsPostponed(now=NOW, postponed=(alarm(civil(2026, 10, 13, 22, 11)),)))
+        )
+        rig.plans(plan_of("alarm-postpone", parameters={"by": "ten minutes"}))
+
+        outcome = await rig.hear(KITCHEN, "put the alarm off by ten minutes")
+
+        assert (outcome.status, outcome.reply, outcome.skill) == (
+            ActStatus.DONE,
+            "The alarm will ring today at 10:11 PM.",
+            "alarm-postpone",
+        )
+        assert rig.dispatcher.given == [
+            (rig.tenant, rig.device(KITCHEN).id, PostponeAlarm(seconds=600))
+        ]
+        assert rig.runner.requests == []  # a skill of the platform: no sandbox
+        [record] = await rig.audit()
+        assert (record.skill_name, record.result, record.detail) == (
+            "alarm-postpone",
+            ActionResult.EXECUTED,
+            "asked to put the alarm off by 600 s",
+        )
+
+    async def test_a_length_that_the_message_does_not_have_is_left_to_the_device(self) -> None:
+        """ADR 0028: a value is one that the person said. *Snooze* says no length, and a model that
+        wrote *twenty minutes* made one up: the device is told none and puts the alarm off by the
+        snooze that it has."""
+        rig = self.rig()
+        rig.dispatcher.answer = CommandResult.ok(
+            data_of(AlarmsPostponed(now=NOW, postponed=(alarm(civil(2026, 10, 13, 22, 11)),)))
+        )
+        rig.plans(plan_of("alarm-postpone", parameters={"by": "twenty minutes"}))
+
+        outcome = await rig.hear(KITCHEN, "snooze the alarm")
+
+        assert outcome.status is ActStatus.DONE
+        assert rig.dispatcher.given == [(rig.tenant, rig.device(KITCHEN).id, PostponeAlarm())]
+
+    async def test_a_move_goes_the_same_way_with_the_day_as_it_was_said(self) -> None:
+        rig = self.rig()
+        rig.dispatcher.answer = CommandResult.ok(
+            data_of(AlarmsMoved(now=NOW, moved=(alarm(civil(2026, 10, 14, 8, 0)),)))
+        )
+        rig.plans(plan_of("alarm-change", parameters={"time": "8", "day": "tomorrow"}))
+
+        outcome = await rig.hear(KITCHEN, "move the alarm to 8 tomorrow")
+
+        assert (outcome.status, outcome.reply) == (
+            ActStatus.DONE,
+            "The alarm will ring tomorrow at 8 AM.",
+        )
+        assert rig.dispatcher.given == [
+            (
+                rig.tenant,
+                rig.device(KITCHEN).id,
+                MoveAlarm(hour=8, minute=0, day=AlarmDay(in_days=1)),
+            )
+        ]
+
+    async def test_an_hour_that_has_gone_by_is_said_by_the_skill_in_its_words(self) -> None:
+        rig = self.rig()
+        rig.dispatcher.answer = CommandResult.ok(data_of(AlarmsMoved(now=NOW, reason="past")))
+        rig.plans(plan_of("alarm-change", parameters={"time": "7", "day": "oggi"}, language="it"))
+
+        outcome = await rig.hear(KITCHEN, "sposta la sveglia a oggi alle 7")
+
+        assert (outcome.status, outcome.code) == (ActStatus.FAILED, ActCode.SKILL_FAILED)
+        assert outcome.reply == core_say("it", CoreSay.ALARM_PAST)
+        [record] = await rig.audit()
+        assert record.result is ActionResult.FAILED
+
+    async def test_the_new_hour_must_be_in_the_message_or_the_person_is_asked(self) -> None:
+        rig = self.rig()
+        rig.plans(plan_of("alarm-change", parameters={"time": "9"}))
+
+        outcome = await rig.hear(KITCHEN, "move the alarm to 8")
+
+        assert outcome.status is ActStatus.NEEDS_MORE
+        assert rig.dispatcher.given == []

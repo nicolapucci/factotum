@@ -24,7 +24,8 @@ EXAMPLES = ROOT / "skills" / "examples"
 ITALIAN = (
     "accendi", "spegni", "metti", "apri", "chiudi", "alza", "abbassa", "che ", "riavvia",
     "com'è", "annuncia", "dì ", "prepara", "imposta", "avvisami", "annulla", "ferma", "quanto",
-    "svegliami", "cancella", "a che ora", "quali",
+    "svegliami", "cancella", "a che ora", "quali", "rimanda", "ancora", "posticipa", "sposta",
+    "cambia", "basta", "zitto",
 )  # fmt: skip
 
 

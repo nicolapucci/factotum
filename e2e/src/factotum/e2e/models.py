@@ -80,6 +80,7 @@ _SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
 
 _ITALIAN = re.compile(
     r"\b(accendi|spegni|apri|chiudi|alza|abbassa|imposta|metti|luce|lampada"
+    r"|rimanda|posticipa|sposta|cambia|ferma|basta|zitto|ancora"
     r"|il|lo|gli|una|uno|del|della|dei|delle|nel|nella|per|con|che|come|dove|cosa|quale|qual"
     r"|chi|perché|si|sono|mi|ti)\b|[àèéìòù]"
 )

@@ -553,7 +553,11 @@ class TestFromAMessageToADevice:
     async def test_a_level_in_words_and_the_ends_of_the_range_are_levels_that_were_said(
         self,
     ) -> None:
-        rig = self.rig()
+        # What is looked at is what the code makes of a level, and not which skill the stand-in of
+        # the embedding model finds near a message (*al massimo* is nearer to the other skill).
+        rig = ActionsRig(
+            home_text=HOME, core=platform_skills(FakeSpeech()), every_skill_is_offered=True
+        )
         rig.plans(
             plan_of("volume", parameters={"level": 50}),
             plan_of("volume", parameters={"level": 100}),
@@ -595,5 +599,8 @@ class TestFromAMessageToADevice:
             "timer-status",
             "alarm",
             "alarm-cancel",
+            "alarm-postpone",
+            "alarm-change",
             "alarm-status",
+            "stop",
         )

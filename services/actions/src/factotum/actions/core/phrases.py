@@ -66,6 +66,17 @@ class CoreSay(StrEnum):
     ALARM_RINGING = "alarm_ringing"
     ALARMS_MANY = "alarms_many"
     ALARM_ITEM_RINGING = "alarm_item_ringing"
+    POSTPONE_RANGE = "postpone_range"
+    ALARM_WILL_RING = "alarm_will_ring"
+    """Where an alarm that was put off, or moved, is now."""
+
+    ALARMS_POSTPONED = "alarms_postponed"
+    ALARMS_MOVED = "alarms_moved"
+    ALARM_NONE_TO_CHANGE = "alarm_none_to_change"
+
+    # ---- what rings
+    NOTHING_RINGS = "nothing_rings"
+    RINGS_STOPPED = "rings_stopped"
 
 
 _CATALOG: dict[str, dict[CoreSay, str]] = {
@@ -105,6 +116,13 @@ _CATALOG: dict[str, dict[CoreSay, str]] = {
         CoreSay.ALARM_RINGING: "The alarm is ringing.",
         CoreSay.ALARMS_MANY: "You have {count} alarms: {list}.",
         CoreSay.ALARM_ITEM_RINGING: "one is ringing",
+        CoreSay.POSTPONE_RANGE: "An alarm can be put off by anything from a second to a day.",
+        CoreSay.ALARM_WILL_RING: "The alarm will ring {when}.",
+        CoreSay.ALARMS_POSTPONED: "{count} alarms are put off.",
+        CoreSay.ALARMS_MOVED: "{count} alarms are moved.",
+        CoreSay.ALARM_NONE_TO_CHANGE: "There is no alarm to change.",
+        CoreSay.NOTHING_RINGS: "Nothing is ringing.",
+        CoreSay.RINGS_STOPPED: "Stopped.",
     },
     "it": {
         CoreSay.VOLUME_AT: "Volume al {level} per cento.",
@@ -142,6 +160,13 @@ _CATALOG: dict[str, dict[CoreSay, str]] = {
         CoreSay.ALARM_RINGING: "La sveglia sta suonando.",
         CoreSay.ALARMS_MANY: "Hai {count} sveglie: {list}.",
         CoreSay.ALARM_ITEM_RINGING: "una sta suonando",
+        CoreSay.POSTPONE_RANGE: "Una sveglia si può rimandare da un secondo a un giorno.",
+        CoreSay.ALARM_WILL_RING: "La sveglia suonerà {when}.",
+        CoreSay.ALARMS_POSTPONED: "Ho rimandato {count} sveglie.",
+        CoreSay.ALARMS_MOVED: "Ho spostato {count} sveglie.",
+        CoreSay.ALARM_NONE_TO_CHANGE: "Non c'è nessuna sveglia da cambiare.",
+        CoreSay.NOTHING_RINGS: "Non sta suonando niente.",
+        CoreSay.RINGS_STOPPED: "Fermato.",
     },
 }
 

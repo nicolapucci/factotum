@@ -72,6 +72,11 @@ class TestTheCatalog:
         for language in LANGUAGES:
             assert "5 minutes" in core_say(language, CoreSay.TIMER_SET, duration="5 minutes")
             assert "tomorrow at 7" in core_say(language, CoreSay.ALARM_SET, when="tomorrow at 7")
+            assert "tomorrow at 7" in core_say(
+                language, CoreSay.ALARM_WILL_RING, when="tomorrow at 7"
+            )
+            assert "3" in core_say(language, CoreSay.ALARMS_POSTPONED, count=3)
+            assert "3" in core_say(language, CoreSay.ALARMS_MOVED, count=3)
             assert "73" in core_say(language, CoreSay.VOLUME_AT, level=73)
 
 

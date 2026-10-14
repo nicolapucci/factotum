@@ -209,7 +209,68 @@ PLAN_CASES: tuple[PlanCase, ...] = (
     _action("when is my alarm", DISPLAY, "alarm-status", _DONE),
     _action("a che ora suona la sveglia", KITCHEN, "alarm-status", _DONE),
     _action("quali sveglie ho", PHONE, "alarm-status", _DONE),
+    # ---- an alarm put off: how much later is what the person said, and the device's snooze if none
+    _action("snooze the alarm", KITCHEN, "alarm-postpone", _DONE),
+    _action("put the alarm off by ten minutes", DISPLAY, "alarm-postpone", _DONE, by="ten minutes"),
+    _action("five more minutes", KITCHEN, "alarm-postpone", _DONE, by="five minutes"),
+    _action(
+        "postpone the alarm by half an hour", PHONE, "alarm-postpone", _DONE, by="half an hour"
+    ),
+    _action("rimanda la sveglia", KITCHEN, "alarm-postpone", _DONE),
+    _action(
+        "rimanda la sveglia di dieci minuti", DISPLAY, "alarm-postpone", _DONE, by="dieci minuti"
+    ),
+    _action("ancora cinque minuti", KITCHEN, "alarm-postpone", _DONE, by="cinque minuti"),
+    _action("posticipa la sveglia di mezz'ora", KITCHEN, "alarm-postpone", _DONE, by="mezz'ora"),
+    # ---- an alarm moved to another hour: the new hour and day, and which alarm if it is named
+    _action("move the alarm to eight", KITCHEN, "alarm-change", _DONE, time="eight"),
+    _action(
+        "change the alarm to seven thirty", DISPLAY, "alarm-change", _DONE, time="seven thirty"
+    ),
+    _action(
+        "move the seven o'clock alarm to eight",
+        KITCHEN,
+        "alarm-change",
+        _DONE,
+        time="eight",
+        **{"from": "seven"},
+    ),
+    _action("sposta la sveglia alle otto", KITCHEN, "alarm-change", _DONE, time="otto"),
+    _action(
+        "cambia la sveglia alle sette e mezza",
+        DISPLAY,
+        "alarm-change",
+        _DONE,
+        time="sette e mezza",
+    ),
+    _action(
+        "sposta la sveglia delle sette alle otto",
+        KITCHEN,
+        "alarm-change",
+        _DONE,
+        time="otto",
+        **{"from": "sette"},
+    ),
+    _action(
+        "sposta la sveglia a domani alle sei",
+        DISPLAY,
+        "alarm-change",
+        _DONE,
+        time="sei",
+        day="domani",
+    ),
+    # ---- enough: whatever rings is stopped, and the person does not say what it is
+    _action("stop", KITCHEN, "stop", _DONE),
+    _action("that is enough", DISPLAY, "stop", _DONE),
+    _action("be quiet", PHONE, "stop", _DONE),
+    _action("enough", KITCHEN, "stop", _DONE),
+    _action("basta", KITCHEN, "stop", _DONE),
+    _action("basta così", DISPLAY, "stop", _DONE),
+    _action("ferma", KITCHEN, "stop", _DONE),
+    _action("zitto", PHONE, "stop", _DONE),
     # ---- what is missing is asked for, never made up
+    _action("move the alarm", KITCHEN, "alarm-change", _MORE),
+    _action("sposta la sveglia", DISPLAY, "alarm-change", _MORE),
     _action("set a timer", KITCHEN, "timer", _MORE),
     _action("metti un timer", DISPLAY, "timer", _MORE),
     _action("set an alarm", KITCHEN, "alarm", _MORE),
@@ -305,4 +366,13 @@ PLAN_CASES: tuple[PlanCase, ...] = (
     _question("quanto è lungo un minuto di silenzio?"),
     _question("what is a good speaker for announcements?"),
     _question("perché l'aria di città è così inquinata?"),
+    _question("how long is a snooze usually?"),
+    _question("is it bad to snooze the alarm every morning?"),
+    _question("what does the snooze button of an alarm clock do?"),
+    _question("perché la sveglia del telefono suona sempre in ritardo?"),
+    _question("quanto dura di solito lo snooze?"),
+    _question("how do I move a meeting to eight?"),
+    _question("how do I stop my dog from barking?"),
+    _question("come si ferma una perdita d'acqua?"),
+    _question("is it enough to boil the water for five minutes?"),
 )

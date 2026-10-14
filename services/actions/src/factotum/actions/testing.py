@@ -26,10 +26,13 @@ from factotum.contracts.commands import (
     CommandResult,
     DeviceCommand,
     GetState,
+    MoveAlarm,
+    PostponeAlarm,
     SetAlarm,
     SetMute,
     SetTimer,
     SetVolume,
+    StopRinging,
 )
 from factotum.contracts.effects import Effect
 from factotum.contracts.identity import Owner, Subject
@@ -48,6 +51,9 @@ from factotum.contracts.timekeeping import (
     AlarmInfo,
     AlarmsCancelled,
     AlarmSet,
+    AlarmsMoved,
+    AlarmsPostponed,
+    RingsStopped,
     TimerInfo,
     TimersCancelled,
     TimerSet,
@@ -150,6 +156,17 @@ def a_device_answers(command: DeviceCommand) -> CommandResult:
             at = tomorrow.replace(hour=command.hour or 7, minute=command.minute or 0)
             gone = AlarmsCancelled(now=WALL, cancelled=(AlarmInfo(id="a1", at=at),), remaining=0)
             return CommandResult.ok(data_of(gone))
+        case PostponeAlarm():
+            later = tomorrow + timedelta(seconds=command.seconds or 600)
+            put_off = AlarmsPostponed(now=WALL, postponed=(AlarmInfo(id="a1", at=later),))
+            return CommandResult.ok(data_of(put_off))
+        case MoveAlarm():
+            at = tomorrow.replace(hour=command.hour, minute=command.minute)
+            moved = AlarmsMoved(now=WALL, moved=(AlarmInfo(id="a1", at=at),))
+            return CommandResult.ok(data_of(moved))
+        case StopRinging():
+            ringing = AlarmInfo(id="a1", at=WALL, ringing=True)
+            return CommandResult.ok(data_of(RingsStopped(now=WALL, alarms=(ringing,))))
         case GetState():
             state = TimeState(
                 now=WALL,
@@ -210,7 +227,10 @@ class ScriptedChat:
 
 
 _WORD = re.compile(r"[a-z0-9]+")
-DIMENSIONS = 64
+DIMENSIONS = 512
+"""Many more than the words of a skill, since a word is a place and two words in the same place are
+taken for one: with 64 of them an example of a skill that shared none of the words of a message
+came near it by chance (0.47), as soon as the platform had enough skills."""
 
 
 def embed_words(text: str) -> tuple[float, ...]:

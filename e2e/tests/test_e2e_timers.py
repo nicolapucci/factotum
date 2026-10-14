@@ -259,3 +259,161 @@ class TestAnAlarm:
 
             assert kept(speaker).alarms == ()
             assert len(kept(display).alarms) == 1
+
+
+class TestAnAlarmPutOff:
+    async def test_a_ringing_alarm_is_silenced_and_rings_again_after_the_snooze_of_the_device(
+        self,
+    ) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("alarm", time="10:05 pm")
+            await speaker.says_aloud("Set an alarm for 10:05 pm.")
+            await speaker.clock.advance(5 * 60)
+            await rung(speaker, 2)
+            assert speaker.spoken()[1:] == ["Wake up! It is time."]
+
+            house.model.proposal = proposal("alarm-postpone")
+            await speaker.says_aloud("Snooze the alarm.")
+            await speaker.clock.advance(RING_EVERY_S * 4)  # it is quiet: it was put off
+            await asyncio.wait_for(speaker.client.wait_until_played(), speaker.timeout_s)
+
+            assert speaker.spoken()[-1] == "The alarm will ring today at 10:15 PM."
+            assert speaker.spoken().count("Wake up! It is time.") == 1
+            [alarm] = kept(speaker).alarms
+            assert (alarm.at, alarm.ringing) == (
+                datetime(2026, 10, 13, 22, 15),  # noqa: DTZ001 - civil time
+                False,
+            )
+            await speaker.clock.advance(10 * 60 - RING_EVERY_S * 4)
+            await rung(speaker, 4)
+            assert speaker.spoken()[-1] == "Wake up! It is time."
+            assert speaker.shown.of("violation") == []
+
+    async def test_by_as_long_as_a_person_said(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("alarm", time="10:05 pm")
+            await speaker.says_aloud("Set an alarm for 10:05 pm.")
+            house.model.proposal = proposal("alarm-postpone", by="half an hour")
+
+            await speaker.says_aloud("Put the alarm off by half an hour.")
+
+            assert speaker.spoken()[-1] == "The alarm will ring today at 10:35 PM."
+            [alarm] = kept(speaker).alarms
+            assert alarm.at == datetime(2026, 10, 13, 22, 35)  # noqa: DTZ001 - civil time
+
+    async def test_with_no_alarm_the_person_is_told_so(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("alarm-postpone", "it")
+
+            ended = await speaker.says_aloud("Rimanda la sveglia.")
+
+            assert ended.status is TurnStatus.FINISHED
+            assert speaker.spoken() == ["Non c'è nessuna sveglia da cambiare."]
+
+    async def test_the_trail_says_what_was_asked_of_the_device(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("alarm", time="10:05 pm")
+            await speaker.says_aloud("Set an alarm for 10:05 pm.")
+            house.model.proposal = proposal("alarm-postpone", by="ten minutes")
+
+            await speaker.says_aloud("Put the alarm off by ten minutes.")
+
+            last = (await trail(house)).records[0]  # the trail lists the newest first
+            assert (last.skill_name, last.result, last.detail) == (
+                "alarm-postpone",
+                ActionResult.EXECUTED,
+                "asked to put the alarm off by 600 s",
+            )
+
+
+class TestAnAlarmMoved:
+    async def test_it_rings_at_the_new_hour_and_not_at_the_old_one(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("alarm", time="7")
+            await speaker.says_aloud("Set an alarm for 7.")
+            house.model.proposal = proposal("alarm-change", time="8")
+
+            await speaker.says_aloud("Move the alarm to 8.")
+
+            assert speaker.spoken()[-1] == "The alarm will ring tomorrow at 8 AM."
+            [alarm] = kept(speaker).alarms
+            assert alarm.at == datetime(2026, 10, 14, 8, 0)  # noqa: DTZ001 - civil time
+            await speaker.clock.advance(9 * 3600)  # to seven in the morning
+            assert len(speaker.spoken()) == 2  # nothing rang
+            await speaker.clock.advance(3600)
+            await rung(speaker, 3)
+            assert speaker.spoken()[-1] == "Wake up! It is time."
+
+    async def test_the_one_that_was_named_is_the_one_that_moves(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            for hour in ("7", "9"):
+                house.model.proposal = proposal("alarm", time=hour)
+                await speaker.says_aloud(f"Set an alarm for {hour}.")
+            house.model.proposal = proposal("alarm-change", time="6", **{"from": "9"})
+
+            await speaker.says_aloud("Move the alarm from 9 to 6.")
+
+            assert [alarm.at.hour for alarm in kept(speaker).alarms] == [6, 7]
+
+    async def test_an_hour_that_has_gone_by_moves_nothing_and_is_said(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("alarm", time="7")
+            await speaker.says_aloud("Set an alarm for 7.")
+            house.model.proposal = proposal("alarm-change", "it", time="8", day="oggi")
+
+            await speaker.says_aloud("Sposta la sveglia a oggi alle 8.")
+
+            assert speaker.spoken()[-1] == "Quell'ora è già passata."
+            [alarm] = kept(speaker).alarms
+            assert alarm.at == datetime(2026, 10, 14, 7, 0)  # noqa: DTZ001 - civil time
+
+
+class TestEnough:
+    async def test_it_stops_whatever_rings_a_timer_and_an_alarm_alike(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("timer", duration="a minute")
+            await speaker.says_aloud("Set a timer for a minute.")
+            house.model.proposal = proposal("alarm", time="10:01 pm")
+            await speaker.says_aloud("Set an alarm for 10:01 pm.")
+            await speaker.clock.advance(60)
+            await rung(speaker, 3)  # both are up, and said one after the other
+            await speaker.clock.advance(1)
+            await rung(speaker, 4)
+            rings = len(speaker.spoken())
+
+            house.model.proposal = proposal("stop")
+            await speaker.says_aloud("Enough.")
+            await speaker.clock.advance(RING_EVERY_S * 4)
+            await asyncio.wait_for(speaker.client.wait_until_played(), speaker.timeout_s)
+
+            assert speaker.spoken()[rings:] == ["Stopped."]
+            assert kept(speaker).timers == ()
+            assert kept(speaker).alarms == ()
+
+    async def test_with_nothing_ringing_it_cancels_nothing(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("timer", duration="five minutes")
+            await speaker.says_aloud("Set a timer for five minutes.")
+            house.model.proposal = proposal("stop", "it")
+
+            await speaker.says_aloud("Basta.")
+
+            assert speaker.spoken()[-1] == "Non sta suonando niente."
+            assert len(kept(speaker).timers) == 1  # a timer that has not rung is not stopped
+
+    async def test_it_is_the_device_that_was_spoken_to_that_is_stopped(self) -> None:
+        async with (
+            running(offer_every_skill=True) as house,
+            connected(house, "speaker") as speaker,
+            connected(house, "smart-display") as display,
+        ):
+            house.model.proposal = proposal("timer", duration="a minute")
+            await speaker.says_aloud("Set a timer for a minute.")
+            await speaker.clock.advance(60)
+            await rung(speaker, 2)
+
+            house.model.proposal = proposal("stop")
+            await display.says_aloud("Enough.")
+
+            assert display.spoken() == ["Nothing is ringing."]
+            assert kept(speaker).timers[0].ringing  # the speaker goes on ringing

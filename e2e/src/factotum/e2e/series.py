@@ -542,7 +542,17 @@ def _done(case: PlanCase, window: Window) -> list[str]:
             problems += _muted(case, window)
         case "volume-status":
             problems += _volume_said(case, window)
-        case "timer" | "timer-cancel" | "timer-status" | "alarm" | "alarm-cancel" | "alarm-status":
+        case (
+            "timer"
+            | "timer-cancel"
+            | "timer-status"
+            | "alarm"
+            | "alarm-cancel"
+            | "alarm-postpone"
+            | "alarm-change"
+            | "alarm-status"
+            | "stop"
+        ):
             problems += judge_time(case, window)
         case "announce":
             problems += _announced(case, window)

@@ -13,6 +13,7 @@ device are tested with: ``next_moment``, ``parse_duration``) and the sentences i
 of ``factotum.actions.core.phrases``, which a unit test of their own holds to what they say.
 """
 
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from factotum.actions.core.phrases import (
@@ -22,9 +23,10 @@ from factotum.actions.core.phrases import (
     say_duration,
     say_when,
 )
-from factotum.actions.core.when import parse_alarm, parse_duration
+from factotum.actions.core.when import AlarmWords, parse_alarm, parse_duration
 from factotum.actions.plan_cases import PlanCase
 from factotum.client_core.moments import next_moment
+from factotum.client_core.timekeeping import DEFAULT_SNOOZE_S
 from factotum.contracts.timekeeping import AlarmInfo, TimerInfo, TimeState
 from factotum.e2e.models import is_italian
 
@@ -54,6 +56,14 @@ def judge(case: PlanCase, window: "Window") -> list[str]:
             problems += _alarm_cancelled(
                 case, language, before, after, window.events[target], reply
             )
+        case "alarm-postpone":
+            problems += _alarm_postponed(
+                case, language, before, after, window.events[target], reply
+            )
+        case "alarm-change":
+            problems += _alarm_moved(case, language, before, after, window.events[target], reply)
+        case "stop":
+            problems += _rings_stopped(language, before, after, window.events[target], reply)
         case "alarm-status":
             problems += _alarm_said(language, before, after, window.events[target], reply)
     for name, was in window.time_before.items():
@@ -245,4 +255,158 @@ def _alarm_said(
     problems.extend(f"{said!r} is not in {reply!r}" for said in wanted if said not in reply)
     if len(alarms) > 1 and str(len(alarms)) not in reply:
         problems.append(f"the number of alarms ({len(alarms)}) is not in {reply!r}")
+    return problems
+
+
+def _chosen_alarms(before: TimeState, named: AlarmWords | None) -> list[AlarmInfo]:
+    """The alarm that a device takes for the one meant: the one named by its hour, else the ones
+    that ring, else the next to ring."""
+    held = sorted(before.alarms, key=lambda alarm: (alarm.at, _order(alarm.id)))
+    fitting = [
+        alarm
+        for alarm in held
+        if named is None or (alarm.at.hour, alarm.at.minute) == (named.hour, named.minute)
+    ]
+    return [alarm for alarm in fitting if alarm.ringing] or fitting[:1]
+
+
+def _alarms_changed(
+    language: str,
+    before: TimeState,
+    after: TimeState,
+    events: tuple[str, ...],
+    reply: str,
+    *,
+    chosen: list[AlarmInfo],
+    moments: dict[str, datetime],
+    told: str,
+    many: CoreSay,
+    nothing: str,
+) -> list[str]:
+    """Alarms that were put off or moved: each of the chosen is where ``moments`` says and quiet,
+    the others are as they were, the timers are untouched, the device was told once for each of
+    the chosen, and the person was told where it is (or that there was none)."""
+    problems: list[str] = []
+    wanted = {
+        alarm.id: AlarmInfo(
+            id=alarm.id,
+            at=moments.get(alarm.id, alarm.at),
+            ringing=False if alarm.id in moments else alarm.ringing,
+        )
+        for alarm in before.alarms
+    }
+    if {alarm.id: alarm for alarm in after.alarms} != wanted:
+        problems.append(f"it holds {list(after.alarms)} and not {list(wanted.values())}")
+    if after.timers != before.timers:
+        problems.append("a timer was touched")
+    expected_events = tuple(
+        f"alarm {alarm.id} {told} {moments[alarm.id]:%Y-%m-%d %H:%M}" for alarm in chosen
+    )
+    if events != expected_events:
+        problems.append(f"it was told {events} and not {expected_events}")
+    if not chosen:
+        said = nothing
+    elif len(chosen) > 1:
+        said = core_say(language, many, count=len(chosen))
+    else:
+        when = say_when(language, moments[chosen[0].id], before.now)
+        said = core_say(language, CoreSay.ALARM_WILL_RING, when=when)
+    if reply != said:
+        problems.append(f"it was said {reply!r} instead of {said!r}")
+    return problems
+
+
+def _alarm_postponed(
+    case: PlanCase,
+    language: str,
+    before: TimeState,
+    after: TimeState,
+    events: tuple[str, ...],
+    reply: str,
+) -> list[str]:
+    """An alarm put off: by as long as was said, or by the snooze of the device when nothing was;
+    from now when it was ringing (it is silenced and rings again), from its own moment when it
+    was not."""
+    named = case.params.get("by")
+    seconds = parse_duration(str(named)) if named is not None else DEFAULT_SNOOZE_S
+    if seconds is None:
+        return [f"the case has a length that is not one: {named!r}"]
+    chosen = _chosen_alarms(before, None)
+    delay = timedelta(seconds=seconds)
+    moments = {alarm.id: (before.now if alarm.ringing else alarm.at) + delay for alarm in chosen}
+    return _alarms_changed(
+        language,
+        before,
+        after,
+        events,
+        reply,
+        chosen=chosen,
+        moments=moments,
+        told="put off to",
+        many=CoreSay.ALARMS_POSTPONED,
+        nothing=core_say(language, CoreSay.ALARM_NONE_TO_CHANGE),
+    )
+
+
+def _alarm_moved(
+    case: PlanCase,
+    language: str,
+    before: TimeState,
+    after: TimeState,
+    events: tuple[str, ...],
+    reply: str,
+) -> list[str]:
+    """An alarm moved to the next time the new hour comes, on the day that was said."""
+    words = parse_alarm(f"{case.params.get('day', '')} {case.params['time']}")
+    named = parse_alarm(str(case.params["from"])) if "from" in case.params else None
+    if words is None or ("from" in case.params and named is None):
+        return ["the case has an hour that is not one"]
+    moment = next_moment(before.now, words.hour, words.minute, words.day)
+    if isinstance(moment, str):
+        return [f"the case asks for a moment that cannot be ({moment})"]
+    chosen = _chosen_alarms(before, named)
+    if named is None:
+        nothing = core_say(language, CoreSay.ALARM_NONE_TO_CHANGE)
+    else:
+        nothing = core_say(
+            language, CoreSay.ALARM_NONE_NAMED, at=say_clock(language, named.hour, named.minute)
+        )
+    return _alarms_changed(
+        language,
+        before,
+        after,
+        events,
+        reply,
+        chosen=chosen,
+        moments={alarm.id: moment for alarm in chosen},
+        told="moved to",
+        many=CoreSay.ALARMS_MOVED,
+        nothing=nothing,
+    )
+
+
+def _rings_stopped(
+    language: str, before: TimeState, after: TimeState, events: tuple[str, ...], reply: str
+) -> list[str]:
+    """What rings is stopped and what does not is left alone. The clocks of the series do not move,
+    so nothing rings and the answer is that: but a device that held a ring would have it stopped."""
+    ringing_timers = {timer.id for timer in before.timers if timer.ringing}
+    ringing_alarms = {alarm.id for alarm in before.alarms if alarm.ringing}
+    problems: list[str] = []
+    if {timer.id for timer in after.timers} != {t.id for t in before.timers} - ringing_timers:
+        problems.append(f"it holds the timers {[t.id for t in after.timers]} after stopping")
+    if {alarm.id for alarm in after.alarms} != {a.id for a in before.alarms} - ringing_alarms:
+        problems.append(f"it holds the alarms {[a.id for a in after.alarms]} after stopping")
+    expected = sorted(
+        [*(f"timer {each} stopped" for each in ringing_timers)]
+        + [f"alarm {each} stopped" for each in ringing_alarms]
+    )
+    if sorted(events) != expected:
+        problems.append(f"it was told {events} and not {expected}")
+    wanted = core_say(
+        language,
+        CoreSay.RINGS_STOPPED if ringing_timers or ringing_alarms else CoreSay.NOTHING_RINGS,
+    )
+    if reply != wanted:
+        problems.append(f"it was said {reply!r} instead of {wanted!r}")
     return problems
