@@ -37,6 +37,9 @@ class TestDefaults:
         assert settings.actions_skills_dir is None
         assert settings.actions_enable_skills_dir is False
 
+    def test_it_answers_no_skill_from_a_mock_unless_it_is_told_to(self) -> None:
+        assert load().actions_mock_runner is False
+
     def test_it_knows_no_runner_no_edge_and_no_secrets_and_so_runs_nothing(self) -> None:
         settings = load()
 
@@ -111,6 +114,26 @@ class TestWhatIsRefused:
         self, environment: Environment
     ) -> None:
         assert load(environment=environment, actions_enable_skills_dir=True)
+
+    @pytest.mark.parametrize("environment", [Environment.DEVELOPMENT, Environment.TEST])
+    def test_a_mock_runner_is_for_development_and_for_tests(self, environment: Environment) -> None:
+        assert load(environment=environment, actions_mock_runner=True).actions_mock_runner
+
+    def test_a_mock_runner_is_never_for_production(self) -> None:
+        with pytest.raises(ValidationError, match="is for development"):
+            load(environment=Environment.PRODUCTION, actions_mock_runner=True)
+
+    def test_a_mock_runner_is_never_for_when_the_environment_is_not_said(self) -> None:
+        with pytest.raises(ValidationError, match="is for development"):
+            load(actions_mock_runner=True)
+
+    def test_a_mock_runner_is_for_when_there_is_no_runner(self) -> None:
+        with pytest.raises(ValidationError, match="no runner"):
+            load(
+                environment=Environment.TEST,
+                actions_mock_runner=True,
+                actions_runner_url="http://runner:8086",
+            )
 
     def test_reading_a_folder_never_enables_it_in_production(self) -> None:
         with pytest.raises(ValidationError, match="reviewed and enabled"):

@@ -240,6 +240,18 @@ class TestStartingUp:
         assert "no edge is set" in said
         assert "no file of secrets is set" in said
 
+    def test_it_says_when_it_starts_that_skills_answer_from_their_mocks(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="factotum.actions")
+
+        build_app(
+            ActionsSettings(_env_file=None, environment=Environment.TEST, actions_mock_runner=True)
+        )
+
+        assert "answer from their mock.yaml" in caplog.text
+        assert "what they would run" not in caplog.text
+
     def test_it_does_not_complain_of_what_is_there(
         self, caplog: pytest.LogCaptureFixture, tmp_path: Path
     ) -> None:
@@ -275,6 +287,32 @@ class TestStartingUp:
         with pytest.raises(OSError):  # noqa: PT011 - what is refused is the connection
             async with app.router.lifespan_context(app):
                 pass  # pragma: no cover - the database is not there
+
+
+FAN = """\
+---
+name: fan-speed
+description: Set how fast the fan runs.
+examples:
+  - put the fan on high
+  - metti la ventola a media
+target: none
+parameters:
+  speed: {type: string, enum: ["low", "medium", "high"], description: "how fast the fan is to run"}
+required: [speed]
+effect: reversible
+---
+A mock.
+"""
+
+FAN_MOCK = """\
+replies:
+  - when: {speed: low}
+    it: "Ventola al minimo."
+    en: "Fan on low."
+  - it: "Ventola al massimo."
+    en: "Fan on high."
+"""
 
 
 class Model:
@@ -397,6 +435,67 @@ class TestAgainstARealDatabase:
             assert (await http.delete(f"/v1/skills/{weather['id']}")).status_code == 204
             assert (await http.get(f"/v1/skills/{weather['id']}")).status_code == 404
             assert len((await http.get("/v1/audit")).json()["records"]) == len(trail)
+
+    @respx.mock
+    async def test_a_skill_with_a_mock_answers_as_the_mock_says_when_there_is_no_runner(
+        self, database_settings: DatabaseSettings, tmp_path: Path
+    ) -> None:
+        model = Model()
+        respx.post(f"{GATEWAY}/v1/chat").mock(side_effect=model.chat)
+        respx.post(f"{GATEWAY}/v1/embeddings").mock(side_effect=model.embeddings)
+        home = tmp_path / "devices.yaml"
+        home.write_text(HOME_TEXT, encoding="utf-8", newline="\n")
+        folder = tmp_path / "skills" / "fan-speed"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(FAN, encoding="utf-8", newline="\n")
+        (folder / "mock.yaml").write_text(FAN_MOCK, encoding="utf-8", newline="\n")
+        parsed = parse_home(HOME_TEXT, tenant_id=DEV_TENANT_ID, user_id=DEV_USER_ID)
+        speaker = next(r for r, _ in parsed.system if r.name == "Kitchen speaker")
+        headers = dev_headers(principal_of_device(speaker))
+        app = build_app(
+            settings_for(
+                database_settings,
+                actions_devices_file=home,
+                actions_skills_dir=tmp_path / "skills",
+                actions_enable_skills_dir=True,
+                actions_mock_runner=True,
+            )
+        )
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://actions"
+            ) as http,
+        ):
+            reloaded = await http.post("/v1/skills/reload")
+            assert "fan-speed@1" in reloaded.json()["enabled"]
+            model.plans.extend(
+                [
+                    plan_of("fan-speed", parameters={"speed": "high"}, language="it"),
+                    plan_of("fan-speed", parameters={"speed": "low"}),
+                ]
+            )
+
+            italian = await http.post(
+                "/v1/act", json={"message": "metti la ventola al massimo"}, headers=headers
+            )
+            english = await http.post(
+                "/v1/act", json={"message": "put the fan on low"}, headers=headers
+            )
+            trail = (await http.get("/v1/audit")).json()["records"]
+
+        assert (italian.json()["status"], italian.json()["reply"]) == (
+            "done",
+            "Ventola al massimo.",
+        )
+        assert (english.json()["status"], english.json()["reply"]) == ("done", "Fan on low.")
+        # (the database is the one of every test of the module: the trail has theirs too)
+        fans = [r for r in trail if r["skill_name"] == "fan-speed"]
+        assert [(r["skill_name"], r["result"], r["params"]) for r in fans] == [
+            ("fan-speed", "executed", {"speed": "low"}),
+            ("fan-speed", "executed", {"speed": "high"}),
+        ]
 
     @respx.mock
     async def test_a_skill_with_a_script_is_run_by_the_runner_and_its_command_reaches_a_device(

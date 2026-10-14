@@ -68,6 +68,12 @@ class ActionsSettings(DatabaseSettings):
     """Enable what is read from the folder as it is read, as if it had been reviewed. For
     development, where the folder is one's own: it is refused anywhere else."""
 
+    actions_mock_runner: bool = False
+    """Where no runner is set, answer a skill from the ``mock.yaml`` beside its ``SKILL.md`` instead
+    of saying what it would have run (``MockRunner``): skills that do nothing and answer as they
+    would, to see how the assistant chooses them and calls them. For development: it is refused
+    anywhere else, and where a runner is set."""
+
     actions_match_threshold: float = Field(default=0.45, ge=0, le=1)
     """How near, by meaning, a message must be to what a skill says about itself for the skill to
     be a candidate. Models differ in how near unrelated texts are: tune it to yours."""
@@ -123,6 +129,23 @@ class ActionsSettings(DatabaseSettings):
             raise ValueError(
                 "FACTOTUM_ACTIONS_ENABLE_SKILLS_DIR is for development: a skill runs when an "
                 "administrator has reviewed and enabled it"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _a_mock_runner_is_for_development_and_for_when_there_is_no_runner(self) -> Self:
+        if self.actions_mock_runner and self.environment not in {
+            Environment.DEVELOPMENT,
+            Environment.TEST,
+        }:
+            raise ValueError(
+                "FACTOTUM_ACTIONS_MOCK_RUNNER is for development: a skill that does nothing and "
+                "answers as if it had done it is not one to run for a household"
+            )
+        if self.actions_mock_runner and self.actions_runner_url is not None:
+            raise ValueError(
+                "FACTOTUM_ACTIONS_MOCK_RUNNER is for when there is no runner: with one set, "
+                "skills are run"
             )
         return self
 

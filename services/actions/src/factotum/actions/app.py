@@ -6,7 +6,8 @@ the work in the background) is made when the application starts and closed when 
 lifespan.
 
 What is not set is not there, and it is said when the service starts. Without a runner nothing is
-run: a skill answers with what it would have run (``DryRunRunner``). Without an edge commands do not
+run: a skill answers with what it would have run (``DryRunRunner``), or, in development, as its
+``mock.yaml`` says it would answer (``MockRunner``). Without an edge commands do not
 reach a device (``NullDispatcher``). Without a file of secrets a skill that needs one does not run
 (``NoSecrets``). There is nobody to ask for an approval until the hub (``NullApprover``).
 """
@@ -38,6 +39,7 @@ from factotum.actions.execution import (
 )
 from factotum.actions.instructions.writer import PlanWriter
 from factotum.actions.matching import SkillIndex, SkillMatcher
+from factotum.actions.mock_runner import MockRunner
 from factotum.actions.planner import Planner
 from factotum.actions.runner_client import RemoteRunner
 from factotum.actions.secrets import HubSecretResolver, NoSecrets, SecretResolver, load_secrets
@@ -108,7 +110,9 @@ def build_app(settings: ActionsSettings) -> FastAPI:
     else:
         directory = _file_directory(settings)
         secrets = _file_secrets(settings)
-    if settings.actions_runner_url is None:
+    if settings.actions_runner_url is None and settings.actions_mock_runner:
+        logger.warning("no runner is set: skills are not run, they answer from their mock.yaml")
+    elif settings.actions_runner_url is None:
         logger.warning("no runner is set: skills are not run, they answer with what they would run")
     if settings.actions_edge_url is None:
         logger.warning("no edge is set: the commands of skills do not reach a device")
@@ -141,6 +145,8 @@ def build_app(settings: ActionsSettings) -> FastAPI:
                     )
                 )
                 runner: SkillRunner = DryRunRunner()
+                if settings.actions_mock_runner:
+                    runner = MockRunner(store)
                 if settings.actions_runner_url is not None:
                     runner = RemoteRunner(
                         await clients.enter_async_context(
