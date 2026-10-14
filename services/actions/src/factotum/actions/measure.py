@@ -90,15 +90,23 @@ the same hour (and *ten minutes* and *ten minute* as the same length)."""
 
 
 _INTRODUCING = frozenset({"to", "di", "that", "che"})
+_ARTICLES = frozenset({"a", "an", "the", "il", "lo", "la", "i", "gli", "le", "un", "uno", "una"})
 """The word that begins what is to be remembered or said (*remind me to call*, *ricordami di
-chiamare*, *tell her that*): a model that copies it has copied the words that were said."""
+chiamare*, *tell her that*), and the article that begins the name of something (*una riunione con
+Marco*): a model that copies it has copied the words that were said."""
+
+
+def _bare(text: str) -> str:
+    """The text without the one word in front of it that only begins it (and a word that is all
+    there is is a word)."""
+    first, _, rest = text.strip().partition(" ")
+    return (rest or text) if first.casefold() in _INTRODUCING | _ARTICLES else text
 
 
 def _with_the_word_that_introduces_it(understood: object, wanted: ParamValue) -> bool:
     if not isinstance(understood, str) or not isinstance(wanted, str):
         return False
-    first, _, rest = understood.strip().partition(" ")
-    return first.casefold() in _INTRODUCING and same(rest, wanted)
+    return same(_bare(understood), _bare(wanted))
 
 
 def same_value(skill: str | None, name: str, understood: object, wanted: ParamValue) -> bool:

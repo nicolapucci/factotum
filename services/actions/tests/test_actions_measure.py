@@ -132,6 +132,12 @@ class TestSameValue:
             ("di comprare il pane", "comprare il pane"),
             ("that dinner is ready", "dinner is ready"),
             ("che arrivo tra dieci minuti", "arrivo tra dieci minuti"),
+            ("una riunione con Marco", "riunione con Marco"),
+            ("il pranzo con Luca", "pranzo con Luca"),
+            ("a meeting with Marco", "meeting with Marco"),
+            ("The dentist appointment", "dentist appointment"),
+            ("riunione con Marco", "una riunione con Marco"),
+            ("una", "una"),
         ],
     )
     def test_the_words_that_were_said_with_the_one_that_introduces_them_are_the_same_words(
@@ -145,8 +151,12 @@ class TestSameValue:
             ("call to the dentist", "call the dentist"),
             ("to", "call the dentist"),
             ("to call the vet", "call the dentist"),
-            ("the call the dentist", "call the dentist"),
             ("so call the dentist", "call the dentist"),
+            ("then the call the dentist", "call the dentist"),
+            ("una una riunione", "riunione"),
+            ("la riunione con Anna", "riunione con Marco"),
+            ("una", "riunione"),
+            ("to", "di"),  # a word that is all there is, is a word
         ],
     )
     def test_only_that_one_word_in_front_is_let_through(self, understood: str, wanted: str) -> None:
