@@ -241,6 +241,26 @@ the language of the person: *Sono le 14 e 32*, *È l'una e 5*, *È mezzogiorno*,
   city and not the day of another date (*che giorno è domani*), which nothing in the platform can
   work out without a calendar of its own.
 
+## Mock skills
+
+Whether a skill works is one thing, and whether the assistant chooses it and calls it as its manifest
+says is another. The second can be measured, and listened to, with skills that do nothing, if what
+they answer is plausible. A skill with a `mock.yaml` beside its `SKILL.md` ([`skills.md`](skills.md))
+says what it answers in each language; where no runner is set, `FACTOTUM_ACTIONS_MOCK_RUNNER=true`
+(development and tests only, and refused where a runner is set) makes the service answer from it
+(`MockRunner`): a weather is a weather, an action is *done* with what it was done with. A skill with
+no `mock.yaml` is answered as the dry run does. The runner is told the language of the person
+(`RunRequest.language`, which a script is not given), and nothing is run: the file is data.
+
+`skills/mocks` has 17 of them, written plainly and with nothing in the planner about them, for the
+shapes a manifest can have (a number in a range, a choice from a list, a yes or a no, a decimal, text
+that was said, everything optional, a policy that refuses a shared speaker and one that asks for a
+yes), and for pairs that are near each other on purpose (the thermostat and the oven, the blinds to a
+percentage and open or shut, the shopping list and the reminder, the door and the garage). Their
+corpus is `factotum.actions.mock_cases` (the messages, and what a model that reads them well does
+with each), tested like the other: with a planner that reads every message as it is meant the whole
+service comes to what each case expects and answers as the mock says.
+
 ## Choosing a skill
 
 1. **Candidates by meaning.** The message is embedded and compared with what each enabled skill of
@@ -476,6 +496,7 @@ not there and one that is another person's are the same `404`.
 | `_HUB_URL` | none | where the hub is; once `FACTOTUM_HUB_TOKEN_SECRET` is also set, its devices, bindings and secrets replace the two files above |
 | `_SKILLS_DIR` | none | a folder of skills, read on `POST /v1/skills/reload` |
 | `_ENABLE_SKILLS_DIR` | `false` | enable what is read as it is read (development only) |
+| `_MOCK_RUNNER` | `false` | with no runner, answer a skill from its `mock.yaml` (development only; see [Mock skills](#mock-skills)) |
 | `_MATCH_THRESHOLD` | `0.45` | how near, by meaning, a message must be to a skill (0 to 1) |
 | `_MATCH_CANDIDATES` | `6` | how many skills the model is shown |
 | `_MATCH_TIMEOUT_S`, `_INDEX_TIMEOUT_S` | `4`, `8` | embedding a message, embedding a skill |
@@ -920,6 +941,73 @@ What it found:
   dim the lights to thirty percent* goes to the scene, *make the volume a bit lower* is a level,
   *could you open up the garage for me* asks which garage, *set the movie scene* is no skill, and *what
   is the weather usually like in Rome in August?* is a request.
+
+### Skills that the planner was never shown (the mocks: 17 skills, 110 messages)
+
+How the 8B model does with skills that somebody wrote plainly, with nothing in its prompt about them:
+the 17 mocks of `skills/mocks` (the heating and the oven, the fan, two kinds of blinds, a shopping
+list and a reminder, the television, music, the door, the coffee, the vacuum, the night mode, the
+fridge, a message, a score), beside the examples and the platform's skills, 38 in the catalog, with
+the real search by meaning in front of the model (up to six are shown). 110 messages, 92 that ask
+and 18 that look like asking, said to the speaker, the display and the phone. They do nothing and
+answer as their `mock.yaml` says, because what is judged is the skill and the values it was called
+with (`factotum.actions.measure`).
+
+| | `llama3.1:8b-instruct-q4_K_M` |
+| --- | --- |
+| Commands read exactly as meant | **81 of 92** |
+| Commands with the right skill | **90 of 92** |
+| Questions left as questions | **18 of 18** |
+| A message that is acted on, median (90th percentile) | 1.35 s (1.55 s) |
+| The corpus of the examples, with the 17 mocks beside it (143 + 53) | 124 of 143 exactly, 134 of 143 with the right skill, 51 of 53 questions |
+
+The last row of the table is the one to compare: the corpus of the examples read 125, 135 and 50
+without the mocks (above) and 125, 134 and 51 in the first run with them beside it, so a catalog with
+seventeen more skills in it is not a harder one for the search and the model that reads it (the
+messages that differ are the ones that were already wrong or are close to being wrong). By skill:
+thermostat 7 of 7, television 6 of 6, door 6 of 6, vacuum 6 of 6, fridge 6 of 6, message 5 of 5,
+reminder 5 of 5, shopping list 5 of 5, blinds to a percentage 5 of 5, fan 5 of 6, oven 5 of 6, coffee
+4 of 5, night mode 4 of 5, music 3 of 5, score 3 of 5, how warm it is 3 of 4, blinds all the way 3 of
+5.
+
+The first run of the 110 messages read 78 of 92, 88 of 92 and 18 of 18. What changed before the run
+of the table is told below and none of it is a better model: the judge learned to let the word that
+introduces a reminder through (two messages), the prompt lost an example that was true of another
+catalog (*play some jazz*), and two messages of the corpus that were not clear were replaced by two
+that are: *ricordami di comprare il pane* is a reminder as much as a line of the shopping list, and
+*metti qualcosa di rilassante* names nothing to play (they are *ricordami di chiamare mia madre* and
+*suona Bohemian Rhapsody* now). The numbers vary by a message or two from one run to the next, on a
+card that something else may be using.
+
+What it found:
+
+* **An example that is true of the catalog it was written for is not true of another.** The prompt
+  had *Play some jazz* as the example of a request that no skill does, and the 8B model learned the
+  message and not the reason: with a skill that plays music in the catalog it answered *play some
+  jazz* with no skill. The example is now a request that none of the skills shown does and that
+  nobody will write a skill for (*book me a table for two tonight*), and the reason says so.
+* **A choice from a list that nobody made is made by the model, and the code cannot see it.** *Accendi
+  la ventola* came back as the fan on high, *make me a coffee* as an espresso, *set the night mode* as
+  on, *preriscalda il forno a 200 gradi* with a mode of the oven that was never said: four of 92 (the
+  same weakness as `on` for *accendi* in ADR 0028: a choice is the model's reading and no rule in
+  code searches for it). A sentence in the prompt that says that a choice that the message does not
+  decide is not made for the person changed none of six cases. What stops it is a yes (the skills that
+  cannot be undone ask for one) or a bigger model.
+* **An optional text is filled in with the words around it.** *How warm is it at home* is the room
+  `home`, *play some music* is the query `some music`: the words are in the message, so the check
+  lets them through (it only asks that a text be made of the words that were said, not that it be
+  the thing the value is for).
+* **A value that is required and forgotten is asked for**, and that is the system doing what it
+  should: *open the blinds*, *chiudi le tapparelle* and *alza le tapparelle* each came back, in one
+  run or another, with no `action`, and the person was asked (*Mi serve ancora: action*). The
+  question is the code's own, because the model wrote none.
+* **A question that the model wants to ask is lost when it chooses no skill.** *Risultato del Napoli*
+  came back as `skill: null` with `ask: Which team?`: the model knew a value was missing and did not
+  say for which skill, so the answer is the one for a message that no skill fits.
+* **The judge was too strict about a word that introduces what was said.** *Remind me to call the
+  dentist* is `to call the dentist` as often as `call the dentist` (and *di comprare il pane*), and
+  both are the words that were said: the judge lets that one word in front through (`to`, `di`,
+  `that`, `che`), and the mock says *I will remind you: …* so that neither reads wrong.
 
 ### What the measurements found
 

@@ -84,8 +84,9 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   words never wait for it, and never follows the `turn_ended` of its turn (ADR 0023).
 - The development file of devices, the development file of secrets, the development authentication,
   the development delegation of one service to another (`DevDelegation`, `DevPrincipalDelegation`),
-  the enabling of a folder of skills by reading it and the runner itself refuse to be built outside
-  development and tests, and the environment defaults to production. The hub replaces them
+  the enabling of a folder of skills by reading it, the mock runner (a skill that is answered from its
+  `mock.yaml` and run by nobody) and the runner itself refuse to be built outside development and
+  tests, and the environment defaults to production. The hub replaces them
   (slice 7).
 - **The model proposes, the code decides** (ADR 0014). What plans an action reads the message alone:
   never a document, a page of the web or the conversation. What a model says (the skill, the device,

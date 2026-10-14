@@ -74,6 +74,28 @@ A skill in a folder is read again with `POST /v1/skills/reload`. `POST /v1/skill
 `SKILL.md`, which cannot have files, so it is for instructions. Installing a version does nothing:
 an administrator reads what it declares and enables it, and that is the review.
 
+## A mock, for development
+
+A skill can have a `mock.yaml` beside its `SKILL.md`. Where no runner is set and the service is
+started with `FACTOTUM_ACTIONS_MOCK_RUNNER=true` (development and tests only), the skill is not run:
+it is answered as the file says, in the language of the person, with the values it was called with in
+the blanks. It is how to see whether the assistant chooses a skill and calls it as its manifest says
+without the skill having to work, and what the skills of [`skills/mocks`](../skills/mocks/README.md)
+are for.
+
+```yaml
+replies:
+  - when: {room: "*"}            # "*" is any value that was given; anything else is equal to it
+    it: "In {room} ci sono 21 gradi."
+    en: "It is 21 degrees in the {room}."
+  - it: "In casa ci sono 21 gradi."   # the last is for whatever is given: it has no `when`
+    en: "It is 21 degrees at home."
+```
+
+The first reply that fits is the answer; a blank is a name of a value and nothing more (no
+attributes, no formats), and one that was not given is nothing. It runs no code. A skill with no
+`mock.yaml` is answered with what it would have run, as it is without a runner.
+
 ## Skills that are instructions
 
 ### How one runs
