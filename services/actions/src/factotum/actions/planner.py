@@ -355,7 +355,11 @@ EXAMPLES: tuple[Example, ...] = (
             question="Vuoi davvero che apra il garage?",
         ),
     ),
-    Example("Play some jazz", (_LAMP, _VOLUME), _plan("asks for music, which no skill does")),
+    Example(
+        "Book me a table for two tonight",
+        (_LAMP, _VOLUME),
+        _plan("asks to book a table, which none of the skills shown does"),
+    ),
     Example(
         "Che tempo fa a Torino?",
         (_WEATHER,),

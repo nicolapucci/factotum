@@ -190,6 +190,17 @@ class TestWhatTheExamplesTeach:
             e for e in EXAMPLES if e.plan["skill"] == "volume" and e.plan["language"] == "it"
         ]
 
+    def test_what_is_left_to_no_skill_is_what_none_of_the_skills_shown_does(self) -> None:
+        """*Play some jazz* was the example of a request that no skill does, and it was learned as
+        that message and not as that none of the skills shown does it: with a skill that plays
+        music in the catalog, the 8B model still answered it with no skill (measured)."""
+        example = self.example("Book me a table for two tonight")
+
+        assert example.plan["skill"] is None
+        assert "none of the skills shown" in example.plan["reason"]
+        stale = [e for e in EXAMPLES if "music" in e.plan["reason"] or "jazz" in e.message.lower()]
+        assert stale == []
+
     def test_the_words_of_an_english_message_stay_english(self) -> None:
         """Three examples in Italian that copy the words made the model write *otto* and *domani*
         for *eight* and *monday*: the same is shown in English."""
