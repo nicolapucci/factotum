@@ -24,8 +24,10 @@ STOP_SOURCE = """\
 ---
 name: stop
 description: >-
-  Stop what is ringing on the device that is being spoken to: the timers and the alarms that are
-  up, whichever they are. It cancels none that has not rung.
+  Stop whatever is ringing on the device that is being spoken to, a timer or an alarm, when the
+  person only wants the noise to stop and does not say which it is: enough, stop, be quiet, basta,
+  zitto. If the person says timer or alarm it is not this skill. It does not mute the device and
+  it cancels none that has not rung.
 examples:
   - stop
   - enough

@@ -141,6 +141,82 @@ class TestTheExamples:
         assert weather.plan["ask"]
 
 
+class TestWhatTheExamplesTeach:
+    """What a small model got wrong when it was measured with the skills of the platform (llama3.1
+    8B, ADR 0029), and the example that shows it the other way. The model is not asked here: what is
+    held is that the example is there, and that it says it."""
+
+    @staticmethod
+    def example(message: str) -> Any:
+        [found] = [e for e in EXAMPLES if e.message == message]
+        return found
+
+    def test_a_noise_that_is_not_named_is_stopped_and_not_muted(self) -> None:
+        for message in ("Basta, grazie", "Quiet please"):
+            assert self.example(message).plan["skill"] == "stop"
+        assert {"mute", "stop"} <= {s.name for s in self.example("Quiet please").skills}
+
+    def test_a_timer_that_is_named_is_cancelled_and_not_stopped(self) -> None:
+        example = self.example("Stop my timer please")
+
+        assert example.plan["skill"] == "timer-cancel"
+        assert "stop" in {s.name for s in example.skills}
+
+    def test_a_reminder_is_a_timer_in_the_words_that_were_said(self) -> None:
+        example = self.example("Ricordamelo tra un quarto d'ora")
+
+        assert example.plan["skill"] == "timer"
+        assert example.plan["parameters"] == {"duration": "un quarto d'ora"}
+        assert example.plan["language"] == "it"
+        assert "alarm-postpone" in {s.name for s in example.skills}
+
+    def test_putting_an_alarm_off_with_no_length_leaves_the_length_out(self) -> None:
+        example = self.example("Posticipa la sveglia")
+
+        assert example.plan["skill"] == "alarm-postpone"
+        assert example.plan["parameters"] == {}
+
+    def test_an_hour_is_copied_as_it_was_said_and_not_written_another_way(self) -> None:
+        example = self.example("Svegliami alle sei e un quarto")
+
+        assert example.plan["skill"] == "alarm"
+        assert example.plan["parameters"] == {"time": "sei e un quarto"}
+
+    def test_there_is_no_example_that_sets_the_volume_among_these(self) -> None:
+        """An example of a level (*Porta il volume a 35*) made the model read *alza il volume a 70*
+        and *bump the volume up to 80* as a turn of the volume (measured, three of three): the
+        volume is left to the examples it had, which read it well."""
+        assert not [
+            e for e in EXAMPLES if e.plan["skill"] == "volume" and e.plan["language"] == "it"
+        ]
+
+    def test_the_words_of_an_english_message_stay_english(self) -> None:
+        """Three examples in Italian that copy the words made the model write *otto* and *domani*
+        for *eight* and *monday*: the same is shown in English."""
+        example = self.example("Wake me up on Friday at half past six")
+
+        assert example.plan["skill"] == "alarm"
+        assert example.plan["parameters"] == {"time": "half past six", "day": "Friday"}
+        assert example.plan["language"] == "en"
+
+    def test_the_clock_is_asked_the_time_and_is_not_asked_the_date_of_another_day(self) -> None:
+        assert self.example("Do you know what time it is?").plan["parameters"] == {"about": "time"}
+        elsewhere = self.example("What will the date be next Friday?")
+
+        assert elsewhere.plan["skill"] is None
+        assert "clock" in {s.name for s in elsewhere.skills}
+
+    def test_the_words_of_a_value_that_a_skill_reads_are_copied_and_not_translated(self) -> None:
+        assert "copied in the very words and language of the message" in SYSTEM_PROMPT
+        assert "never translated" in SYSTEM_PROMPT
+
+    def test_the_examples_name_the_skill_by_the_name_it_has(self) -> None:
+        names = {skill.name for example in EXAMPLES for skill in example.skills}
+        chosen = {e.plan["skill"] for e in EXAMPLES if e.plan["skill"] is not None}
+
+        assert chosen <= names
+
+
 class TestWhatTheModelIsShown:
     def test_a_skill_is_shown_with_what_it_is_for_the_values_it_takes_and_the_devices(self) -> None:
         view = view_of(LAMP, list(lamps()))

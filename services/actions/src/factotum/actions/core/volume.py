@@ -109,7 +109,8 @@ VOLUME_STATUS_SOURCE = """\
 ---
 name: volume-status
 description: >-
-  Say how loud the device that is being spoken to is, and whether its sound is muted.
+  Say how loud the device that is being spoken to is, and whether its sound is muted. It only
+  tells and sets nothing.
 examples:
   - what is the volume
   - how loud is it

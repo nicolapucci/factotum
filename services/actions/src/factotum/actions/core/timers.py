@@ -38,8 +38,9 @@ TIMER_SOURCE = """\
 ---
 name: timer
 description: >-
-  Set a timer on the device that is being spoken to, for a length of time the person says. The
-  device rings by itself when the time is up.
+  Set a timer on the device that is being spoken to, for a length of time the person says: a
+  countdown, or a reminder in some minutes (remind me in ten minutes). The device rings by itself
+  when the time is up.
 examples:
   - set a timer for five minutes
   - start a ten minute timer
@@ -69,7 +70,8 @@ TIMER_CANCEL_SOURCE = """\
 name: timer-cancel
 description: >-
   Cancel a timer on the device that is being spoken to, or stop one that is ringing: the one the
-  person names by its length, or else the one that is ringing, or else the next one to ring.
+  person names by its length, or else the one that is ringing, or else the next one to ring. Use it
+  whenever the person says timer, to cancel it, stop it or turn it off.
 examples:
   - cancel the timer
   - stop the timer

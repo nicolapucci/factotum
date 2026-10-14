@@ -88,7 +88,8 @@ ALARM_CANCEL_SOURCE = """\
 name: alarm-cancel
 description: >-
   Cancel an alarm on the device that is being spoken to, or stop one that is ringing: the one at
-  the hour the person names, or else the one that is ringing, or else the next one to ring.
+  the hour the person names, or else the one that is ringing, or else the next one to ring. Use it
+  whenever the person says alarm (sveglia), to cancel it, stop it or turn it off.
 examples:
   - cancel the alarm
   - stop the alarm
@@ -116,8 +117,9 @@ ALARM_POSTPONE_SOURCE = """\
 name: alarm-postpone
 description: >-
   Put an alarm off on the device that is being spoken to, or snooze one that is ringing, by as
-  long as the person says: it rings again by itself later. When they say none, the device puts it
-  off by its own snooze.
+  long as the person says: it rings again by itself later (snooze, rimanda la sveglia, five more
+  minutes, ancora cinque minuti). Only for an alarm that is set or ringing, never for a new
+  countdown. When they say no length, the device puts it off by its own snooze.
 examples:
   - snooze the alarm
   - put the alarm off by ten minutes
@@ -170,8 +172,8 @@ parameters:
   from:
     type: string
     description: >-
-      the hour the alarm to move has now, in the words the person said, when they say which one
-      (leave it out when they do not)
+      the hour the alarm to move has now, in the words the person said, only when they name that
+      alarm (it is not the hour it is moved to; leave it out when they do not name it)
 required: [time]
 effect: reversible
 ---
@@ -185,7 +187,8 @@ ALARM_STATUS_SOURCE = """\
 ---
 name: alarm-status
 description: >-
-  Say what alarms are set on the device that is being spoken to, and when the next one rings.
+  Say what alarms are set on the device that is being spoken to, and when the next one rings (when
+  is my alarm, quali sveglie ho).
 examples:
   - what alarms do I have
   - when is my alarm

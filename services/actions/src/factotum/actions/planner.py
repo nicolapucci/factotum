@@ -22,6 +22,13 @@ from typing import Any
 
 from pydantic import Field, ValidationError, field_validator
 
+from factotum.actions.core.alarms import ALARM_POSTPONE_SOURCE, ALARM_SOURCE
+from factotum.actions.core.announce import SOURCE as ANNOUNCE_SOURCE
+from factotum.actions.core.clock import CLOCK_SOURCE
+from factotum.actions.core.stop import STOP_SOURCE
+from factotum.actions.core.timers import TIMER_CANCEL_SOURCE, TIMER_SOURCE
+from factotum.actions.core.volume import MUTE_SOURCE, VOLUME_CHANGE_SOURCE, VOLUME_SOURCE
+from factotum.actions.skills import parse_skill
 from factotum.contracts.base import Contract
 from factotum.contracts.chat import ChatMessage, ChatRequest, MessageRole
 from factotum.contracts.devices import ExternalDeviceRecord, SystemDeviceRecord
@@ -105,7 +112,10 @@ message does not name one (for a skill that acts on the device that is spoken to
 "parameters" has the values the message gives, by the names the skill declares, with the types it \
 declares. A number or a text is only what the message says (a number in digits or in words): \
 leave out the ones it does not say, even when it would be easy to guess, and never make one up. \
-A choice from a list is the one the message means, as the skill's description says.
+A choice from a list is the one the message means, as the skill's description says. A text that a \
+skill reads itself (a length of time, an hour, a day) is copied in the very words and language of \
+the message (alle sette e mezza, ten minutes), never translated and never written another way \
+(not 7:30, not seven thirty).
 
 "language" is the language of the message as a two-letter code.
 
@@ -217,9 +227,25 @@ class Example:
         return json.dumps(self.plan, ensure_ascii=False)
 
 
+def _of_the_platform(source: str) -> SkillView:
+    """A skill of the platform as the model is shown it, made of the very text that the platform
+    carries: what the model has been shown how to read is always what it is given."""
+    return view_of(parse_skill(source, where="an example of the planner").manifest)
+
+
 # The skills of the examples are shown as the ones that come with the project are, with what each
 # value is for (a test keeps the two the same): what is shown of a real skill is what the model has
-# been shown how to read.
+# been shown how to read. The skills of the platform are made of their own text.
+_VOLUME = _of_the_platform(VOLUME_SOURCE)
+_VOLUME_CHANGE = _of_the_platform(VOLUME_CHANGE_SOURCE)
+_ANNOUNCE = _of_the_platform(ANNOUNCE_SOURCE)
+_TIMER = _of_the_platform(TIMER_SOURCE)
+_TIMER_CANCEL = _of_the_platform(TIMER_CANCEL_SOURCE)
+_ALARM = _of_the_platform(ALARM_SOURCE)
+_ALARM_POSTPONE = _of_the_platform(ALARM_POSTPONE_SOURCE)
+_STOP = _of_the_platform(STOP_SOURCE)
+_MUTE = _of_the_platform(MUTE_SOURCE)
+_CLOCK = _of_the_platform(CLOCK_SOURCE)
 _LAMP = SkillView(
     name="lamp",
     description="Turn a lamp on or off, or set how bright it is.",
@@ -236,31 +262,6 @@ _WEATHER = SkillView(
     description="Say what the weather is like now in a city.",
     target=SkillTarget.NONE,
     values=("place (text, required): the city, as the person said it",),
-)
-_VOLUME = SkillView(
-    name="volume",
-    description="Set the volume of the device that is being spoken to, to a level the person says.",
-    target=SkillTarget.SYSTEM,
-    values=("level (whole number 0 to 100, required): the volume, in percent",),
-)
-_VOLUME_CHANGE = SkillView(
-    name="volume-change",
-    description=(
-        "Turn the volume of the device that is being spoken to up or down, by an amount if the "
-        "person says one."
-    ),
-    target=SkillTarget.SYSTEM,
-    values=(
-        "direction (up or down, required): whether the volume is to go up or to go down",
-        "amount (whole number 1 to 100): by how much, in percent, when the person says it (leave "
-        "it out when they do not)",
-    ),
-)
-_ANNOUNCE = SkillView(
-    name="announce",
-    description="Say something out loud on a device, such as that dinner is ready.",
-    target=SkillTarget.SYSTEM,
-    values=("message (text, required): what to say, as the person said it",),
 )
 _SCENE = SkillView(
     name="movie-scene",
@@ -449,6 +450,91 @@ EXAMPLES: tuple[Example, ...] = (
             language="it",
             question="Vuoi che dica che la pizza è arrivata?",
         ),
+    ),
+    Example(
+        "Basta, grazie",
+        (_STOP, _TIMER_CANCEL),
+        _plan(
+            "asks for the noise to stop, and names neither a timer nor an alarm",
+            skill=_STOP.name,
+            language="it",
+            question="Vuoi che fermi il suono?",
+        ),
+    ),
+    Example(
+        "Stop my timer please",
+        (_TIMER_CANCEL, _STOP),
+        _plan(
+            "names the timer, so it is the timer that is cancelled",
+            skill=_TIMER_CANCEL.name,
+            question="Do you want me to cancel the timer?",
+        ),
+    ),
+    Example(
+        "Quiet please",
+        (_MUTE, _STOP),
+        _plan(
+            "asks for the noise to stop and not for the sound of the device to be muted",
+            skill=_STOP.name,
+            question="Do you want me to stop the noise?",
+        ),
+    ),
+    Example(
+        "Ricordamelo tra un quarto d'ora",
+        (_ALARM_POSTPONE, _TIMER),
+        _plan(
+            "asks to be told in a quarter of an hour, which is a timer, copied as it was said",
+            skill=_TIMER.name,
+            parameters={"duration": "un quarto d'ora"},
+            language="it",
+            question="Vuoi che imposti un timer di un quarto d'ora?",
+        ),
+    ),
+    Example(
+        "Posticipa la sveglia",
+        (_ALARM_POSTPONE, _TIMER),
+        _plan(
+            "asks to put the alarm off and does not say by how long, which the device decides",
+            skill=_ALARM_POSTPONE.name,
+            language="it",
+            question="Vuoi che rimandi la sveglia?",
+        ),
+    ),
+    Example(
+        "Svegliami alle sei e un quarto",
+        (_ALARM, _TIMER),
+        _plan(
+            "asks for an alarm at an hour, copied as it was said",
+            skill=_ALARM.name,
+            parameters={"time": "sei e un quarto"},
+            language="it",
+            question="Vuoi che imposti la sveglia alle sei e un quarto?",
+        ),
+    ),
+    Example(
+        "Wake me up on Friday at half past six",
+        (_ALARM, _TIMER),
+        _plan(
+            "asks for an alarm on a day at an hour, copied as it was said",
+            skill=_ALARM.name,
+            parameters={"time": "half past six", "day": "Friday"},
+            question="Do you want me to set the alarm for Friday at half past six?",
+        ),
+    ),
+    Example(
+        "Do you know what time it is?",
+        (_CLOCK, _TIMER),
+        _plan(
+            "asks what time it is",
+            skill=_CLOCK.name,
+            parameters={"about": "time"},
+            question="Do you want to know what time it is?",
+        ),
+    ),
+    Example(
+        "What will the date be next Friday?",
+        (_CLOCK, _TIMER),
+        _plan("asks for the date of another day, which the clock of the device cannot tell"),
     ),
     Example(
         "Perché a Milano c'è sempre la nebbia?",
