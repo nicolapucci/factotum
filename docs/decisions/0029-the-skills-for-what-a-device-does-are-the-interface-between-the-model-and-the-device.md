@@ -1,6 +1,7 @@
 # 0029. The skills for what a device does are the interface between the model and the device
 
-Status: accepted, 2026-10-13. Built: the sound (volume, mute, how it is), and the timers and the alarms.
+Status: accepted, 2026-10-13. Built: the sound (volume, mute, how it is), the timers and the alarms,
+and what puts an alarm off or moves it and what stops whatever rings.
 
 ## Context
 
@@ -78,14 +79,40 @@ default belongs to the device and not to the skill.
     a mute silences is still every other sound, an announcement included.
   - *What a device holds is lost when its program stops* in the first version (it is held in memory),
     and a repeating alarm (every morning) is not in it: both are for a decision of their own.
+- **What lasts can be changed and stopped** (the maintainer, 2026-10-14). A skill that starts
+  something that a device keeps going, in time or for as long as it is not stopped (a timer, an
+  alarm, a ring, later music), comes with the skills that change it in time and the skills that stop
+  it, and everything that is the device's own stays so: which one is meant when none is named, how
+  long a snooze is when nobody says. For the alarm and for whatever rings that is:
+  - *`alarm-postpone`* (*rimanda la sveglia*, *ancora cinque minuti*, *snooze*): the one that rings
+    is silenced and rings again later, and one that has not rung is moved later. The person's words
+    for how long are read by code, as for a timer; when there are none the device puts it off by
+    its own snooze (`timekeeping.snooze_minutes` of the device application, 10), and the skill has
+    none to tell. `postpone_alarm` carries `seconds` only when a person said it.
+  - *`alarm-change`* (*sposta la sveglia alle otto*): the alarm is moved to the next time the new
+    hour comes, on the day that was said (the same `AlarmDay`, the same reading by the device), in
+    one command: a moment that has gone by, or a date that never comes, moves nothing and the old
+    alarm stays, which a cancel followed by a new alarm could not promise. An alarm may be named by
+    its hour (*dalle sette*), else the one that rings, else the next to ring (`move_alarm`).
+  - *`stop`* (*basta*, *ferma*, *zitto*): everything that rings on the device that was spoken to,
+    a timer or an alarm, is stopped, and nothing that has not rung is touched. A person who says
+    *enough* does not say which it is, and *ferma* alone could be `timer-cancel` or `alarm-cancel`
+    to a model, which answers *there is no timer* while an alarm rings. `stop_ringing` takes
+    nothing. The cancels remain for a timer or an alarm that has not rung.
+  - *The timer stays as it was* (set, cancel, status): the maintainer chose not to add a way to
+    lengthen or pause it. *`media`* (pause, resume, stop for the commands that are already in the
+    vocabulary) is not built either.
 
 ## Consequences
 
 - A device that has the hands for a function implements it once, for every skill that may use it, and
   the skills stay thin. The same *turn it up* is a different number of points on a speaker and on a
   television, because the number is the device's.
-- The vocabulary of commands is version 4 (`set_mute`, `get_state`, the `data` of a result), and a
-  device that does not know a command says *unsupported* and the skill is told the truth.
+- The vocabulary of commands is version 6 (`set_mute` and `get_state` with the `data` of a result,
+  the timers and the alarms, and `postpone_alarm`, `move_alarm` and `stop_ringing`), and a device that
+  does not know a command says *unsupported* and the skill is told the truth.
+- Whoever adds a skill that starts something that lasts adds the means to change it and to stop it,
+  or says in its record why not (the timer, on purpose; music, later).
 - A planner that has more skills to choose from is asked about more messages that are near a skill
   (*what is the volume?* is a question in form and a command in effect); how well a small model tells
   them is measured with the corpus (`factotum.actions.plan_cases`) when a model is free to be asked.
@@ -104,6 +131,35 @@ default belongs to the device and not to the skill.
 - **Mute as a volume of 0.** Unmuting would not know what the volume was.
 
 ## What was built, and what it found
+
+**The third slice**: what changes an alarm and what stops a ring. The vocabulary is version 6
+(`postpone_alarm`, `move_alarm`, `stop_ringing`, all the platform's), the answers of the device are
+`AlarmsPostponed`, `AlarmsMoved` and `RingsStopped` (`factotum.contracts.timekeeping`), the keeper
+puts an alarm off, moves it and stops what rings (`Timekeeper`), the snooze of the device is a setting
+of the device application (`timekeeping.snooze_minutes`), and the three skills are `alarm-postpone`
+and `alarm-change` (`core/alarms.py`) and `stop` (`core/stop.py`). The corpus has 34 new cases (25
+that ask, 9 questions that look like asking), the series of `e2e` judges them from what each device
+held before and after (`series_time.py` works out which alarm the device should have taken, and
+where it should have put it), and tests with a clock that moves ring an alarm, put it off, hear it
+again ten minutes later, and stop a timer and an alarm that ring together. The same message from the
+maintainer made a ring an alert: it goes through a mute.
+
+What it found:
+
+* **Nothing to change is a thing to say, not a failure.** *Rimanda la sveglia* with no alarm set is
+  answered *Non c'è nessuna sveglia da cambiare*, as a cancel with nothing to cancel is. Only a moment
+  that cannot be (gone by, a date that never comes) is a skill that failed, because the alarm that was
+  asked for does not exist. It also keeps the corpus free of the order the cases are said in.
+* **An answer made only of defaults is no answer.** `RingsStopped` with nothing in it is what a device
+  that said nothing looks like, and it would have been read as *nothing was ringing*: it carries the
+  time of the wall, so that an empty answer is not that.
+* **Two rings that are up together are said one after the other, and the second waits for the next
+  look at the clock** (at most a second): a test that moves time has to move it that second too.
+* **The device decides which alarm is meant** (the named one, else the ones that ring, else the next
+  to ring), and so does its snooze: the skill has neither, and a model that wrote *twenty minutes* for
+  *snooze* gets none of it (ADR 0028).
+
+Nothing was measured with a model (the graphics card was in use).
 
 **The second slice**: timers and alarms. The vocabulary is version 5 (`set_timer`, `cancel_timer`,
 `set_alarm`, `cancel_alarm`), all four the platform's (`PLATFORM_COMMAND_MODELS`: a ring is a clip that

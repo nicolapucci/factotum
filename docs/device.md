@@ -95,6 +95,7 @@ is said by its name (`audio.volume: ...`) and never by its value, and nothing is
 | `listening.silence_level` | `150` | the mean level, of 32768, under which a stretch of sound is quiet |
 | `listening.max_seconds` | `12` | the most that one thing said may last |
 | `listening.listen_while_answering` | `false` | go on listening while the answer is said, so that a person who speaks over it stops it: only for headphones, or a device that cancels its own echo (a speaker hears itself) |
+| `timekeeping.snooze_minutes` | `10` | how long an alarm is put off by when a person does not say by how much (*snooze*, *rimanda la sveglia*): the snooze of this device, which a skill does not know |
 | `reconnect.first_s`, `reconnect.max_s` | `1`, `30` | a device that loses the edge asks again after the first, and after twice as long each time, up to the second |
 | `log_level` | `INFO` | `DEBUG` shows what the libraries say as well, the connection among them |
 
@@ -196,6 +197,16 @@ not through the volume: the speaker plays it as an *alert* (`alert` of `VoiceOut
 `VoiceSink.begin`), which a mute does not silence, at the level the volume is at; a speaker whose
 volume is zero is silent, because that is the volume and not the mute. Up to eight of each are held.
 The console shows `timer t1 set for 300 s`, `timer t1 is up` and `alarm a1 set for 2026-10-14 07:00`.
+
+What is set can be changed and stopped. An alarm is **put off** (*rimanda la sveglia*): one that
+rings is silenced and rings again later, one that has not rung is moved later; when nobody says by
+how much the device uses its own snooze, `timekeeping.snooze_minutes` in the settings (10), which a
+skill does not know. It is **moved** to another hour (*sposta la sveglia alle otto*), which the device
+works out as it does for a new alarm (a moment that has gone by moves nothing). And **everything that
+rings is stopped** at once (*basta*), a timer or an alarm, leaving what has not rung. Which alarm is
+meant when none is named is the device's choice: the one that rings, else the next to ring. The
+console shows `alarm a1 put off to 2026-10-14 07:10`, `alarm a1 moved to 2026-10-14 08:00`,
+`timer t1 stopped` and `alarm a1 stopped`.
 
 A device is its hands, and what the hands of `audio_out` do is set the volume. Saying is not the
 hands' work: the client core plays a clip, and a text never reaches a device that takes clips, because

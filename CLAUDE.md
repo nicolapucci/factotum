@@ -136,7 +136,11 @@ On Windows `uv` was installed with winget; a shell started before that may not h
   the speaker); the platform has **no clock**, so a skill passes on the
   hour and the *way a day was said* (`AlarmDay`: tomorrow, Monday, the 15th), never a date, and the
   device works out which day that is; the words of a length, an hour and a day are read by code
-  (`core/when.py`), because a number of seconds that a model wrote is one nobody said. A model is
+  (`core/when.py`), because a number of seconds that a model wrote is one nobody said. **What lasts
+  can be changed and stopped**: a skill that starts something a device keeps going comes with the
+  skills that change it in time and stop it (`alarm-postpone`, `alarm-change`, `stop`; the timer
+  stays basic on purpose), and which one is meant and how long a snooze is when nobody says belong to
+  the device (`timekeeping.snooze_minutes`). A model is
   never asked to quote the
   words a value came from: the check is in code. Several skills in one request are not built, and
   nothing may assume that there is exactly one.

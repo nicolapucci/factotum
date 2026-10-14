@@ -199,6 +199,28 @@ rings is made a voice by the gateway when the timer or the alarm is set, and tra
 * **A ring goes through a mute, not through the volume.** The device plays it as an alert: a muted
   speaker rings, at the level its volume is at (and a volume of zero is silent).
 
+**Changing and stopping what was set** (same decision: what lasts comes with the means to change it
+and to stop it): `alarm-postpone` (*rimanda la sveglia di dieci minuti*, *ancora cinque minuti*,
+*snooze the alarm*), `alarm-change` (*sposta la sveglia alle otto*, *sposta la sveglia delle sette
+alle otto*, *move the alarm to 7:30 tomorrow*) and `stop` (*basta*, *ferma*, *zitto*, *enough*). The
+timer stays as it is: set, cancel, status.
+
+* **How long a snooze is belongs to the device.** The words of how long (*dieci minuti*, *half an
+  hour*) are read by code, as for a timer, and passed on only when a person said them: *snooze* alone
+  puts the alarm off by the snooze of the device (`timekeeping.snooze_minutes`, 10), and a length that
+  a model wrote and nobody said is left out (ADR 0028). An alarm that rings is silenced and rings
+  again after that long from now; one that has not rung is moved later by it.
+* **Moving an alarm is one command**, not a cancel and a new alarm: if the new moment has gone by, or
+  the date never comes, the old alarm is still there. The new hour and day are said as for a new
+  alarm, and which alarm is moved (the one named by its hour, *sposta la sveglia delle sette alle
+  otto*, else the one that rings, else the next to ring) is the device's choice.
+* **Stop is not cancel.** `stop` stops what rings on the device that was spoken to, a timer or an
+  alarm alike, without saying which; it never touches what has not rung. With nothing ringing the
+  person is told so (*Non sta suonando niente*). `timer-cancel` and `alarm-cancel` are for what has
+  not rung.
+* **Nothing to change is a thing to say**, as for a cancel (*Non c'è nessuna sveglia da cambiare*);
+  a moment that has gone by or a date that never comes is a skill that failed, in its own words.
+
 ## Choosing a skill
 
 1. **Candidates by meaning.** The message is embedded and compared with what each enabled skill of
