@@ -1,0 +1,6 @@
+replies:
+  - when: {mode: "*"}
+    it: "Forno in preriscaldamento a {temperature} gradi, modalità {mode}."
+    en: "The oven is preheating to {temperature} degrees, {mode} mode."
+  - it: "Forno in preriscaldamento a {temperature} gradi."
+    en: "The oven is preheating to {temperature} degrees."

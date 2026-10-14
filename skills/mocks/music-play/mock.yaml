@@ -1,0 +1,6 @@
+replies:
+  - when: {query: "*"}
+    it: "Metto {query}."
+    en: "Playing {query}."
+  - it: "Metto un po' di musica."
+    en: "Playing some music."

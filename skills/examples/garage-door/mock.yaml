@@ -1,0 +1,6 @@
+replies:
+  - when: {action: open}
+    it: "Garage aperto."
+    en: "The garage door is open."
+  - it: "Garage chiuso."
+    en: "The garage door is closed."

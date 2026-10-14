@@ -1,0 +1,6 @@
+replies:
+  - when: {room: "*"}
+    it: "L'aspirapolvere è partito: {room}."
+    en: "The vacuum started in the {room}."
+  - it: "L'aspirapolvere è partito in tutta la casa."
+    en: "The vacuum started in the whole home."

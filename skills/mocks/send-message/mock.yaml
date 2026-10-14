@@ -1,0 +1,3 @@
+replies:
+  - it: "Ho mandato a {to}: {text}"
+    en: "I sent {to}: {text}"

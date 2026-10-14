@@ -1,0 +1,6 @@
+replies:
+  - when: {enabled: true}
+    it: "Modalità notte attivata."
+    en: "Night mode on."
+  - it: "Modalità notte disattivata."
+    en: "Night mode off."

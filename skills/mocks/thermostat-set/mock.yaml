@@ -1,0 +1,6 @@
+replies:
+  - when: {room: "*"}
+    it: "Ho impostato il termostato di {room} a {temperature} gradi."
+    en: "The {room} thermostat is set to {temperature} degrees."
+  - it: "Ho impostato il termostato a {temperature} gradi."
+    en: "The thermostat is set to {temperature} degrees."

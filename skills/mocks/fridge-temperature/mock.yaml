@@ -1,0 +1,3 @@
+replies:
+  - it: "Frigorifero impostato a {temperature} gradi."
+    en: "The fridge is set to {temperature} degrees."

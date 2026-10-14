@@ -1,0 +1,6 @@
+replies:
+  - when: {when: "*"}
+    it: "Va bene, ti ricorderò: {what} ({when})."
+    en: "Okay, I will remind you: {what} ({when})."
+  - it: "Va bene, ti ricorderò: {what}."
+    en: "Okay, I will remind you: {what}."

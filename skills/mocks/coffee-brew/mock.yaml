@@ -1,0 +1,6 @@
+replies:
+  - when: {cups: "*"}
+    it: "Preparo {cups} {kind}."
+    en: "Making {cups} {kind}."
+  - it: "Preparo un {kind}."
+    en: "Making a {kind}."

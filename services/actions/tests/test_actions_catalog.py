@@ -534,8 +534,11 @@ class TestReadingAFolder:
         files = await rig.store.get_files(rig.tenant, by_name["lamp"], 1)
         assert files is not None
         assert "scripts/run.py" in files
-        # a skill that is instructions has no files: what it says is the text of the document
-        assert await rig.store.get_files(rig.tenant, by_name["movie-scene"], 1) == {}
+        # a skill that is instructions has no script: what it says is the text of the document, and
+        # the only file it may have is how it answers as a mock
+        held = await rig.store.get_files(rig.tenant, by_name["movie-scene"], 1)
+        assert held is not None
+        assert set(held) <= {"mock.yaml"}
 
 
 class TestTheSkillsOfThePlatform:

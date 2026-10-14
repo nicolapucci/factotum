@@ -1,0 +1,6 @@
+replies:
+  - when: {room: "*"}
+    it: "In {room} ci sono 21 gradi."
+    en: "It is 21 degrees in the {room}."
+  - it: "In casa ci sono 21 gradi e il termostato è a 20."
+    en: "It is 21 degrees at home and the thermostat is at 20."

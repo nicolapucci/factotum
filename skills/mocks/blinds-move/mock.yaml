@@ -1,0 +1,6 @@
+replies:
+  - when: {action: open}
+    it: "Tapparelle aperte."
+    en: "Blinds open."
+  - it: "Tapparelle chiuse."
+    en: "Blinds closed."

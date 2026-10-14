@@ -1,0 +1,9 @@
+replies:
+  - when: {speed: low}
+    it: "Ventola al minimo."
+    en: "Fan on low."
+  - when: {speed: medium}
+    it: "Ventola a velocità media."
+    en: "Fan on medium."
+  - it: "Ventola al massimo."
+    en: "Fan on high."

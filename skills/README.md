@@ -26,6 +26,12 @@ what rings (`stop`) and for what time it is (`clock`)
 a `speak` (a command, no network, nothing granted) works the way the example `announce` used to, and
 the edge makes the voice of it.
 
-Point `FACTOTUM_ACTIONS_SKILLS_DIR` at a folder of skills (`skills/examples` to try them) and the
-actions service installs what it finds. An installed skill does not run until an administrator has
+`mocks/` has skills that do nothing and answer as they would (a weather that is a weather, an action
+that is *done*), to see how the assistant chooses a skill and calls it without anything having to
+work: [`mocks/README.md`](mocks/README.md). A `mock.yaml` beside a `SKILL.md` (the examples have one
+too) says how a skill answers when no runner is set and `FACTOTUM_ACTIONS_MOCK_RUNNER` is on, for
+development.
+
+Point `FACTOTUM_ACTIONS_SKILLS_DIR` at a folder of skills (`skills/examples` to try them, `skills`
+for them and the mocks) and the actions service installs what it finds. An installed skill does not run until an administrator has
 reviewed it and enabled it: `POST /v1/skills/{id}/enable`.

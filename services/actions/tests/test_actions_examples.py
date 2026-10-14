@@ -447,12 +447,12 @@ class TestTheSkillsThatAreInstructions:
     answer."""
 
     @pytest.mark.parametrize("name", sorted(PLANS))
-    def test_it_is_instructions_that_a_model_can_follow_and_has_no_files(self, name: str) -> None:
+    def test_it_is_instructions_that_a_model_can_follow_and_has_no_script(self, name: str) -> None:
         skill = examples()[name]
 
         assert skill.manifest.mode is SkillMode.INSTRUCTIONS
         assert skill.manifest.entrypoint is None
-        assert skill.files == {}
+        assert set(skill.files) <= {"mock.yaml"}  # nothing to run: only how it answers as a mock
         assert 100 < len(skill.instructions) <= MAX_INSTRUCTIONS_CHARS
 
     def test_the_examples_that_are_instructions_are_the_ones_that_have_a_plan_here(self) -> None:

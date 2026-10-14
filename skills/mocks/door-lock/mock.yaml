@@ -1,0 +1,6 @@
+replies:
+  - when: {action: lock}
+    it: "La porta di casa è chiusa a chiave."
+    en: "The front door is locked."
+  - it: "La porta di casa è sbloccata."
+    en: "The front door is unlocked."

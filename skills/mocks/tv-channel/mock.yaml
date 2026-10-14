@@ -1,0 +1,3 @@
+replies:
+  - it: "Ho messo il canale {channel}."
+    en: "Switched to channel {channel}."

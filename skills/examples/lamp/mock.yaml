@@ -1,0 +1,9 @@
+replies:
+  - when: {state: "on", brightness: "*"}
+    it: "Luce accesa al {brightness} per cento."
+    en: "The lamp is on at {brightness} percent."
+  - when: {state: "on"}
+    it: "Luce accesa."
+    en: "The lamp is on."
+  - it: "Luce spenta."
+    en: "The lamp is off."
