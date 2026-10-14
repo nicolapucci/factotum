@@ -16,6 +16,7 @@ from pydantic import Field, field_validator, model_validator
 
 from factotum.contracts.base import Contract
 from factotum.contracts.effects import Effect
+from factotum.contracts.formats import ValueFormat, problem_with_format
 
 ParamValue = str | int | float | bool
 
@@ -144,6 +145,28 @@ class ParameterSpec(Contract):
     minimum: float | None = None
     maximum: float | None = None
 
+    formats: tuple[ValueFormat, ...] | None = Field(default=None, min_length=1, max_length=5)
+    """The forms the skill takes a value that is said in words in (a time, a length of time, a day:
+    ADR 0030). The person says *sette e mezza*; the skill is given ``07:30``, if that is the form it
+    declared. More than one is a skill that takes the same thing in more than one way, and the
+    system writes it in the first that fits what was said."""
+
+    @field_validator("formats", mode="before")
+    @classmethod
+    def _a_format_may_be_written_as_its_kind_and_its_pattern(cls, raw: Any) -> Any:
+        """In a ``SKILL.md``: ``- time: "HH:mm"``. A model written back in full (``kind`` and
+        ``pattern``) is read as it is."""
+        if not isinstance(raw, list | tuple):
+            return raw
+        formats: list[Any] = []
+        for item in raw:
+            if isinstance(item, dict) and len(item) == 1 and not {"kind", "pattern"} & set(item):
+                [(kind, pattern)] = item.items()
+                formats.append({"kind": kind, "pattern": pattern})
+            else:
+                formats.append(item)
+        return formats
+
     @model_validator(mode="after")
     def _is_consistent(self) -> Self:
         numeric = self.type in {ParamType.INTEGER, ParamType.NUMBER}
@@ -155,7 +178,25 @@ class ParameterSpec(Contract):
             mismatched = [value for value in self.enum if not _matches(self.type, value)]
             if mismatched:
                 raise ValueError(f"enum values {mismatched} do not match type {self.type.value}")
+        if self.formats is not None:
+            self._formats_are_consistent(self.formats)
         return self
+
+    def _formats_are_consistent(self, formats: tuple[ValueFormat, ...]) -> None:
+        if self.enum is not None:
+            raise ValueError("a parameter with formats takes what is said, not a list of choices")
+        kinds = [fmt.kind for fmt in formats]
+        if len(set(kinds)) != len(kinds):
+            raise ValueError("a kind of format is declared once")
+        if len({fmt.group for fmt in formats}) > 1:
+            raise ValueError(
+                "the formats of a parameter are ways of writing the same words: a time of day, a "
+                "length of time or a day, and not a mix"
+            )
+        for fmt in formats:
+            problem = problem_with_format(fmt, self.type.value)
+            if problem is not None:
+                raise ValueError(f"format {fmt.kind.value} {fmt.pattern!r}: {problem}")
 
     def to_json_schema(self) -> dict[str, Any]:
         schema: dict[str, Any] = {"type": self.type.value}
@@ -167,6 +208,10 @@ class ParameterSpec(Contract):
             schema["minimum"] = self.minimum
         if self.maximum is not None:
             schema["maximum"] = self.maximum
+        if self.formats is not None:
+            schema["x-formats"] = [
+                {"kind": fmt.kind.value, "pattern": fmt.pattern} for fmt in self.formats
+            ]
         return schema
 
 
@@ -292,6 +337,9 @@ class SkillManifest(Contract):
             )
         if self.device_parameters and self.target is not SkillTarget.EXTERNAL:
             raise ValueError("device_parameters are only allowed when the target is 'external'")
+        said = sorted(name for name, spec in self.device_parameters.items() if spec.formats)
+        if said:
+            raise ValueError(f"device_parameters {said} are set up, not said: they have no formats")
         missing = sorted(self.permissions.device_templates() - set(self.device_parameters))
         if missing:
             raise ValueError(f"network refers to undeclared device parameters {missing}")
