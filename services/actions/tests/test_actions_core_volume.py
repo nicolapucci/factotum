@@ -357,7 +357,7 @@ class TestTheSentences:
     def test_each_is_in_each_language(self) -> None:
         assert {"en", "it"} == LANGUAGES
         every_field: dict[str, str | int] = dict.fromkeys(
-            ("level", "duration", "left", "count", "when", "at", "list"), 50
+            ("level", "duration", "left", "count", "when", "at", "list", "time", "date"), 50
         )
         for language in LANGUAGES:
             for key in CoreSay:
@@ -603,4 +603,5 @@ class TestFromAMessageToADevice:
             "alarm-change",
             "alarm-status",
             "stop",
+            "clock",
         )

@@ -19,9 +19,11 @@ from typing import TYPE_CHECKING
 from factotum.actions.core.phrases import (
     CoreSay,
     core_say,
+    date_sentence,
     say_clock,
     say_duration,
     say_when,
+    time_sentence,
 )
 from factotum.actions.core.when import AlarmWords, parse_alarm, parse_duration
 from factotum.actions.plan_cases import PlanCase
@@ -66,6 +68,8 @@ def judge(case: PlanCase, window: "Window") -> list[str]:
             problems += _rings_stopped(language, before, after, window.events[target], reply)
         case "alarm-status":
             problems += _alarm_said(language, before, after, window.events[target], reply)
+        case "clock":
+            problems += _clock_said(case, language, before, after, window.events[target], reply)
     for name, was in window.time_before.items():
         if name != target and window.time[name] != was:
             problems.append(f"{name} had its timers or its alarms changed")
@@ -255,6 +259,31 @@ def _alarm_said(
     problems.extend(f"{said!r} is not in {reply!r}" for said in wanted if said not in reply)
     if len(alarms) > 1 and str(len(alarms)) not in reply:
         problems.append(f"the number of alarms ({len(alarms)}) is not in {reply!r}")
+    return problems
+
+
+def _clock_said(
+    case: PlanCase,
+    language: str,
+    before: TimeState,
+    after: TimeState,
+    events: tuple[str, ...],
+    reply: str,
+) -> list[str]:
+    """The wall of the device, said as it shows it: the time, the day, or both when nobody said
+    which. A question changes nothing."""
+    problems: list[str] = []
+    if after != before or events:
+        problems.append(f"a question changed something: {events}")
+    about = case.params.get("about")
+    sentences = []
+    if about != "date":
+        sentences.append(time_sentence(language, before.now))
+    if about != "time":
+        sentences.append(date_sentence(language, before.now))
+    wanted = " ".join(sentences)
+    if reply != wanted:
+        problems.append(f"it was said {reply!r} instead of {wanted!r}")
     return problems
 
 

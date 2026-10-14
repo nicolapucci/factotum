@@ -552,6 +552,7 @@ def _done(case: PlanCase, window: Window) -> list[str]:
             | "alarm-change"
             | "alarm-status"
             | "stop"
+            | "clock"
         ):
             problems += judge_time(case, window)
         case "announce":

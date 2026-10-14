@@ -33,6 +33,7 @@ class TestWhatIsItalian:
             "Accendi la luce del soggiorno.",
             "Sì, apri pure.",
             "Forse più tardi.",
+            "Dimmi l'ora.",
         ],
     )
     def test_it_is_told_by_a_word_that_is_not_english_or_by_an_accent(self, text: str) -> None:

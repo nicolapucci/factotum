@@ -918,6 +918,74 @@ class TestWhatRingsThatWasStopped:
         assert "'Stopped.'" in found
 
 
+class TestTheTimeAndTheDayThatWereSaid:
+    """The wall of every device of the series shows Tuesday the 13th of October, ten at night."""
+
+    TIME = case("what time is it", "clock", about="time")
+    DAY = case("what day is it today", "clock", about="date")
+    BOTH = case("what time and what day is it", "clock")
+
+    SAID_TIME = "It is 10 PM."
+    SAID_DAY = "Today is Tuesday, October 13, 2026."
+
+    def test_the_time_is_said_as_the_wall_of_the_device_shows_it(self) -> None:
+        assert problems(self.TIME, window(self.SAID_TIME, "clock")) == []
+
+    def test_the_day_is_said_as_the_wall_of_the_device_shows_it(self) -> None:
+        assert problems(self.DAY, window(self.SAID_DAY, "clock")) == []
+
+    def test_both_are_said_when_nobody_said_which(self) -> None:
+        both = window(f"{self.SAID_TIME} {self.SAID_DAY}", "clock")
+
+        assert problems(self.BOTH, both) == []
+
+    def test_what_was_not_asked_for_is_not_said_and_what_was_is(self) -> None:
+        time_only = window(self.SAID_TIME, "clock")
+        day_only = window(self.SAID_DAY, "clock")
+        both = window(f"{self.SAID_TIME} {self.SAID_DAY}", "clock")
+
+        assert problems(self.BOTH, time_only) != []
+        assert problems(self.BOTH, day_only) != []
+        assert problems(self.TIME, both) != []
+        assert problems(self.TIME, day_only) != []
+        assert problems(self.DAY, both) != []
+        assert problems(self.DAY, time_only) != []
+
+    def test_another_hour_is_said(self) -> None:
+        [found] = problems(self.TIME, window("It is 9 PM.", "clock"))
+
+        assert "'It is 9 PM.'" in found
+        assert "'It is 10 PM.'" in found
+
+    def test_in_italian_it_is_said_in_italian(self) -> None:
+        time = case("che ore sono", "clock", about="time")
+        day = case("che giorno è oggi", "clock", about="date")
+
+        assert problems(time, window("Sono le 22.", "clock")) == []
+        assert problems(day, window("Oggi è martedì 13 ottobre 2026.", "clock")) == []
+        assert problems(time, window(self.SAID_TIME, "clock")) != []  # English to an Italian
+        assert problems(day, window(self.SAID_DAY, "clock")) != []
+
+    def test_a_device_that_holds_things_is_asked_and_keeps_them(self) -> None:
+        held = kept(timer(300), alarm(TOMORROW_AT_SEVEN, 2))
+
+        assert problems(self.TIME, window(self.SAID_TIME, "clock", before=held, after=held)) == []
+
+    def test_a_question_that_changed_what_the_device_holds_is_said(self) -> None:
+        held = kept(timer(300))
+        cancelled = window(
+            self.SAID_TIME, "clock", before=held, after=kept(), told=("timer t1 cancelled",)
+        )
+
+        [found] = problems(self.TIME, cancelled)
+        assert found.startswith("a question changed something")
+
+    def test_a_device_that_was_told_something_is_said_even_if_it_holds_the_same(self) -> None:
+        told = window(self.SAID_TIME, "clock", told=("timer t1 cancelled",))
+
+        assert len(problems(self.TIME, told)) == 1
+
+
 @pytest.mark.parametrize("speaker", [KITCHEN, DISPLAY, PHONE])
 def test_whichever_device_was_spoken_to_is_the_one_that_is_looked_at(speaker: str) -> None:
     a_case = PlanCase(

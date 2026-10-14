@@ -5,8 +5,9 @@ A sentence is chosen by the code and not written by a model, as every sentence a
 (``factotum.actions.phrases``): the same each time, and checked in each language by a test. English
 and Italian are here; another language is answered in English until somebody adds it.
 
-So are the words for a length of time, an hour and a day (*5 minutes*, *alle 7 e 30*, *domani*): a
-device answers with numbers and the skill that asked says them.
+So are the words for a length of time, an hour and a day (*5 minutes*, *alle 7 e 30*, *domani*), and
+for the time and the date as the wall of a device shows them (*sono le 14 e 32*, *mercoledì 14
+ottobre 2026*): a device answers with numbers and the skill that asked says them.
 """
 
 from collections.abc import Sequence
@@ -78,6 +79,16 @@ class CoreSay(StrEnum):
     NOTHING_RINGS = "nothing_rings"
     RINGS_STOPPED = "rings_stopped"
 
+    # ---- the clock
+    CLOCK_TIME = "clock_time"
+    """What time it is (*Sono le 14 e 32*, *It is 2:32 PM*)."""
+
+    CLOCK_TIME_ONE = "clock_time_one"
+    """What time it is when Italian says it in the singular (*È l'una e 5*, *È mezzogiorno*)."""
+
+    CLOCK_DATE = "clock_date"
+    """What day it is."""
+
 
 _CATALOG: dict[str, dict[CoreSay, str]] = {
     "en": {
@@ -123,6 +134,9 @@ _CATALOG: dict[str, dict[CoreSay, str]] = {
         CoreSay.ALARM_NONE_TO_CHANGE: "There is no alarm to change.",
         CoreSay.NOTHING_RINGS: "Nothing is ringing.",
         CoreSay.RINGS_STOPPED: "Stopped.",
+        CoreSay.CLOCK_TIME: "It is {time}.",
+        CoreSay.CLOCK_TIME_ONE: "It is {time}.",
+        CoreSay.CLOCK_DATE: "Today is {date}.",
     },
     "it": {
         CoreSay.VOLUME_AT: "Volume al {level} per cento.",
@@ -167,6 +181,9 @@ _CATALOG: dict[str, dict[CoreSay, str]] = {
         CoreSay.ALARM_NONE_TO_CHANGE: "Non c'è nessuna sveglia da cambiare.",
         CoreSay.NOTHING_RINGS: "Non sta suonando niente.",
         CoreSay.RINGS_STOPPED: "Fermato.",
+        CoreSay.CLOCK_TIME: "Sono le {time}.",
+        CoreSay.CLOCK_TIME_ONE: "È {time}.",
+        CoreSay.CLOCK_DATE: "Oggi è {date}.",
     },
 }
 
@@ -274,6 +291,50 @@ def say_when(language: str | None, at: datetime, now: datetime) -> str:
     if 2 < days < 7:
         return f"{weekday} {clock}"
     return f"{month} {at.day} {clock}"
+
+
+_SINGULAR_HOURS = {0: "mezzanotte", 1: "l'una", 12: "mezzogiorno"}
+"""The hours that Italian says in the singular: *è l'una*, *è mezzogiorno*, *è mezzanotte*, and not
+*sono le*."""
+
+
+def say_time(language: str | None, hour: int, minute: int) -> str:
+    """The time of day as it goes after *it is* and *sono le*: *14 e 32*, *l'una e 5*,
+    *mezzogiorno*, *2:32 PM*, *noon*."""
+    if language_of(language) == "it":
+        word = _SINGULAR_HOURS.get(hour, str(hour))
+        return f"{word} e {minute}" if minute else word
+    if (hour, minute) == (0, 0):
+        return "midnight"
+    if (hour, minute) == (12, 0):
+        return "noon"
+    clock = f"{hour % 12 or 12}:{minute:02d}" if minute else f"{hour % 12 or 12}"
+    return f"{clock} {'AM' if hour < 12 else 'PM'}"
+
+
+def say_date(language: str | None, day: datetime) -> str:
+    """A day with its name and its year, as it goes after *today is*: *mercoledì 14 ottobre 2026*,
+    *Wednesday, October 14, 2026*. The first of a month is *primo* in Italian, which a digit would
+    not be read as."""
+    spoken = language_of(language)
+    weekday = _WEEKDAYS[spoken][day.weekday()]
+    month = _MONTHS[spoken][day.month - 1]
+    if spoken == "it":
+        number = "primo" if day.day == 1 else str(day.day)
+        return f"{weekday} {number} {month} {day.year}"
+    return f"{weekday}, {month} {day.day}, {day.year}"
+
+
+def time_sentence(language: str | None, moment: datetime) -> str:
+    """What time it is by the wall of a device, as a sentence: *Sono le 14 e 32.*, *È l'una.*,
+    *It is 2:32 PM.*"""
+    key = CoreSay.CLOCK_TIME_ONE if moment.hour in _SINGULAR_HOURS else CoreSay.CLOCK_TIME
+    return core_say(language, key, time=say_time(language, moment.hour, moment.minute))
+
+
+def date_sentence(language: str | None, moment: datetime) -> str:
+    """What day it is by the wall of a device, as a sentence: *Oggi è mercoledì 14 ottobre 2026.*"""
+    return core_say(language, CoreSay.CLOCK_DATE, date=say_date(language, moment))
 
 
 def say_list(items: Sequence[str]) -> str:

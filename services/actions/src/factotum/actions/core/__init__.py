@@ -8,6 +8,7 @@ from factotum.actions.core.alarms import (
     AlarmStatus,
 )
 from factotum.actions.core.announce import Announce
+from factotum.actions.core.clock import Clock
 from factotum.actions.core.skills import CoreResult, CoreSkill, CoreSkills, SpeechMaker
 from factotum.actions.core.stop import Stop
 from factotum.actions.core.timers import Timer, TimerCancel, TimerStatus
@@ -31,6 +32,7 @@ def platform_skills(speech: SpeechMaker) -> CoreSkills:
         AlarmChange(),
         AlarmStatus(),
         Stop(),
+        Clock(),
     )
 
 
@@ -41,6 +43,7 @@ __all__ = [
     "AlarmPostpone",
     "AlarmStatus",
     "Announce",
+    "Clock",
     "CoreResult",
     "CoreSkill",
     "CoreSkills",

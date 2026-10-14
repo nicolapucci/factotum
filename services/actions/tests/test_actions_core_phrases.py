@@ -25,6 +25,8 @@ EVERY_FIELD: dict[str, str | int] = {
     "when": "tomorrow at 7",
     "at": "at 7",
     "list": "a, b",
+    "time": "2:32 PM",
+    "date": "Wednesday, October 14, 2026",
 }
 """Every blank that a sentence has, filled: a test of all of them at once."""
 

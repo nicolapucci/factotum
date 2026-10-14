@@ -417,3 +417,93 @@ class TestEnough:
 
             assert display.spoken() == ["Nothing is ringing."]
             assert kept(speaker).timers[0].ringing  # the speaker goes on ringing
+
+
+class TestTheClock:
+    """What time it is, and what day, is asked of the device, which has the only clock there is:
+    the platform has none, and a model never says a time."""
+
+    async def test_the_device_says_what_its_own_wall_shows(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            speaker.clock.set_wall(datetime(2031, 3, 9, 6, 45))  # noqa: DTZ001 - civil time
+            house.model.proposal = proposal("clock", about="time")
+
+            ended = await speaker.says_aloud("What time is it?")
+
+            assert ended.status is TurnStatus.FINISHED, ended
+            assert speaker.spoken() == ["It is 6:45 AM."]
+            assert speaker.shown.of("violation") == []
+
+    async def test_the_day_is_said_in_the_language_of_the_person(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            speaker.clock.set_wall(datetime(2031, 3, 9, 6, 45))  # noqa: DTZ001 - civil time
+            house.model.proposal = proposal("clock", "it", about="date")
+
+            await speaker.says_aloud("Che giorno è oggi?")
+
+            assert speaker.spoken() == ["Oggi è domenica 9 marzo 2031."]
+
+    async def test_both_are_said_when_nobody_said_which(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            speaker.clock.set_wall(datetime(2031, 3, 9, 13, 5))  # noqa: DTZ001 - civil time
+            house.model.proposal = proposal("clock", "it")
+
+            await speaker.says_aloud("Dimmi che ore sono e che giorno è.")
+
+            assert speaker.spoken() == ["Sono le 13 e 5. Oggi è domenica 9 marzo 2031."]
+
+    async def test_time_goes_on_by_the_clock_of_the_device(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            speaker.clock.set_wall(datetime(2031, 3, 9, 23, 59, 30))  # noqa: DTZ001
+            house.model.proposal = proposal("clock", about="date")
+            await speaker.says_aloud("What day is it?")
+            await speaker.clock.advance(45)  # past midnight
+
+            await speaker.says_aloud("What day is it?")
+
+            assert speaker.spoken() == [
+                "Today is Sunday, March 9, 2031.",
+                "Today is Monday, March 10, 2031.",
+            ]
+
+    async def test_each_device_says_its_own_time_and_nobody_elses(self) -> None:
+        async with (
+            running(offer_every_skill=True) as house,
+            connected(house, "speaker") as speaker,
+            connected(house, "smart-display") as display,
+        ):
+            speaker.clock.set_wall(datetime(2031, 3, 9, 6, 45))  # noqa: DTZ001 - civil time
+            display.clock.set_wall(datetime(2031, 3, 9, 21, 0))  # noqa: DTZ001 - civil time
+            house.model.proposal = proposal("clock", about="time")
+
+            await speaker.says_aloud("What time is it?")
+            await display.says_aloud("What time is it?")
+
+            assert speaker.spoken() == ["It is 6:45 AM."]
+            assert display.spoken() == ["It is 9 PM."]
+
+    async def test_asking_changes_nothing_that_the_device_keeps(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("timer", duration="five minutes")
+            await speaker.says_aloud("Set a timer for five minutes.")
+            house.model.proposal = proposal("alarm", time="seven")
+            await speaker.says_aloud("Set an alarm for seven.")
+            held = kept(speaker)
+
+            house.model.proposal = proposal("clock", about="time")
+            await speaker.says_aloud("What time is it?")
+
+            assert kept(speaker) == held
+
+    async def test_the_question_is_in_the_trail_as_a_skill_that_only_reads(self) -> None:
+        async with running(offer_every_skill=True) as house, connected(house, "speaker") as speaker:
+            house.model.proposal = proposal("clock", about="time")
+
+            await speaker.says_aloud("What time is it?")
+
+            [record] = (await trail(house)).records
+            assert (record.skill_name, record.result, record.detail) == (
+                "clock",
+                ActionResult.EXECUTED,
+                "asked the device what time it is",
+            )
